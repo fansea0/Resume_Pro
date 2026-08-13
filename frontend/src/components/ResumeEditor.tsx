@@ -12,11 +12,8 @@ interface ResumeEditorProps {
   onChange: (document: ResumeDocument) => void;
 }
 
-let itemSequence = 0;
-
-function nextId(prefix: string) {
-  itemSequence += 1;
-  return `${prefix}-${itemSequence}`;
+function nextId() {
+  return crypto.randomUUID();
 }
 
 function Field({ label, value, onChange, multiline = false }: {
@@ -64,15 +61,15 @@ export function ResumeEditor({ document, onChange }: ResumeEditorProps) {
     onChange({ ...document, [key]: document[key].filter((item) => item.id !== id) });
   };
   const addExperience = () => onChange({ ...document, experiences: [...document.experiences, {
-    id: nextId('experience'), company: '', role: '', startDate: '', endDate: '', highlights: [],
+    id: nextId(), company: '', role: '', startDate: '', endDate: '', highlights: [],
   }] });
   const addProject = () => onChange({ ...document, projects: [...document.projects, {
-    id: nextId('project'), name: '', role: '', link: '', startDate: '', endDate: '', description: '', highlights: [],
+    id: nextId(), name: '', role: '', link: '', startDate: '', endDate: '', description: '', highlights: [],
   }] });
   const addEducation = () => onChange({ ...document, education: [...document.education, {
-    id: nextId('education'), school: '', degree: '', field: '', startDate: '', endDate: '',
+    id: nextId(), school: '', degree: '', field: '', startDate: '', endDate: '',
   }] });
-  const addSkill = () => onChange({ ...document, skills: [...document.skills, { id: nextId('skill'), name: '', level: '' }] });
+  const addSkill = () => onChange({ ...document, skills: [...document.skills, { id: nextId(), name: '', level: '' }] });
 
   return (
     <form className="resume-editor" onSubmit={(event) => event.preventDefault()}>

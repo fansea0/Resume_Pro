@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '../app';
+import { ResumeEditor } from './ResumeEditor';
+import { createEmptyResumeDocument } from '../types/resume';
 
 afterEach(cleanup);
 
@@ -29,5 +31,23 @@ describe('ResumeEditor', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '删除工作经历 1' }));
     expect(screen.queryByLabelText('公司 1')).not.toBeInTheDocument();
+  });
+
+  it('uses a UUID when adding an experience to a loaded resume', () => {
+    const document = createEmptyResumeDocument();
+    document.experiences = [{
+      id: 'experience-1', company: '已保存公司', role: '', startDate: '', endDate: '', highlights: [],
+    }];
+    const onChange = vi.fn();
+    const randomUUID = vi.fn(() => 'new-uuid');
+    vi.stubGlobal('crypto', { randomUUID });
+
+    render(<ResumeEditor document={document} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加工作经历' }));
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      experiences: expect.arrayContaining([expect.objectContaining({ id: 'new-uuid' })]),
+    }));
+    vi.unstubAllGlobals();
   });
 });
