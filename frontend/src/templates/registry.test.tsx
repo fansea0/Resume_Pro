@@ -44,6 +44,10 @@ describe('templateRegistry', () => {
     ]);
   });
 
+  it.each(templateRegistry)('defines a static preview cover for $id', (template) => {
+    expect(template.previewImage).toMatch(/^\/template-previews\/.+\.svg$/);
+  });
+
   it.each([
     ['tech', 'CAREER SIGNAL'],
     ['editorial', 'PROFILE'],
