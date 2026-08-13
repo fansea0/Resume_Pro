@@ -1,0 +1,67 @@
+.resume-template {
+  background: #fff;
+  color: #1e293b;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.55;
+  min-height: 297mm;
+  padding: 16mm 18mm;
+}
+
+.resume-template h1, .resume-template h2, .resume-template h3, .resume-template p { margin-top: 0; }
+.resume-template h1 { font-size: 2rem; letter-spacing: .03em; margin-bottom: .2rem; }
+.resume-template h2 { font-size: .82rem; letter-spacing: .12em; margin: 1.5rem 0 .75rem; text-transform: uppercase; }
+.resume-template h3 { font-size: 1rem; margin-bottom: .15rem; }
+.resume-template section { break-inside: avoid; }
+
+.template-minimal { max-width: 210mm; }
+.template-minimal__header { border-bottom: 2px solid #172033; padding-bottom: 1.1rem; }
+.template-minimal__headline { color: #475569; font-size: 1.05rem; margin-bottom: .45rem; }
+.template-minimal__contact { color: #64748b; font-size: .85rem; margin-bottom: 0; }
+.template-minimal__summary { color: #475569; margin: 1.25rem 0 0; }
+.template-minimal h2 { border-bottom: 1px solid #cbd5e1; padding-bottom: .35rem; }
+.template-minimal__entry { margin: .85rem 0; }
+.template-minimal__entry > div { display: flex; gap: .75rem; justify-content: space-between; }
+.template-minimal__entry span { color: #475569; }
+.template-minimal__entry time { color: #64748b; float: right; font-size: .82rem; margin-top: -.1rem; }
+.template-minimal__entry p { font-size: .9rem; margin: .3rem 0; }
+
+.template-business { border-top: 7px solid #1e3a5f; }
+.template-business__header { align-items: end; display: flex; justify-content: space-between; padding: .4rem 0 1.2rem; }
+.template-business__header h1 { color: #12233a; margin: .1rem 0; }
+.template-business__header > div > p:not(.template-business__eyebrow) { color: #52657c; margin: 0; }
+.template-business__eyebrow { color: #2d6497; font-size: .7rem; font-weight: 700; letter-spacing: .18em; margin-bottom: .35rem; }
+.template-business address { color: #52657c; font-size: .78rem; font-style: normal; text-align: right; }
+.template-business address span { display: block; }
+.template-business h2 { color: #1e3a5f; border-bottom: 1px solid #9bb0c4; }
+.template-business__intro { background: #eef4f8; border-left: 3px solid #2d6497; padding: .75rem 1rem; }
+.template-business__intro h2 { border: 0; margin-top: 0; }
+.template-business__entry { display: grid; gap: 1.2rem; grid-template-columns: 5rem 1fr; margin: 1rem 0; }
+.template-business__period { color: #64748b; font-size: .75rem; font-weight: 600; }
+.template-business__entry p { font-size: .9rem; margin-bottom: .3rem; }
+.template-business__company { color: #2d6497; font-weight: 600; }
+
+.template-creative { display: grid; grid-template-columns: 32% 68%; padding: 0; }
+.template-creative__sidebar { background: #202e42; color: #eff6ff; padding: 17mm 10mm; }
+.template-creative__sidebar h1 { color: #fff; font-size: 1.85rem; line-height: 1.15; }
+.template-creative__label { color: #83d5c9; font-size: .7rem; font-weight: 700; letter-spacing: .18em; }
+.template-creative__headline { color: #b7c8dc; font-size: .95rem; }
+.template-creative__sidebar h2 { border-bottom: 1px solid #52677f; color: #83d5c9; margin-top: 1.6rem; }
+.template-creative__sidebar section p { color: #d9e4ef; font-size: .78rem; margin-bottom: .6rem; overflow-wrap: anywhere; }
+.template-creative__sidebar strong { color: #fff; }
+.template-creative__sidebar small { color: #83d5c9; display: block; margin-top: .05rem; }
+.template-creative__content { padding: 17mm 12mm; }
+.template-creative__content h2 { color: #0f766e; border-bottom: 2px solid #9ddbd3; }
+.template-creative__summary { color: #475569; font-size: .94rem; }
+.template-creative__entry { border-left: 2px solid #9ddbd3; margin: 1rem 0; padding-left: 1rem; position: relative; }
+.template-creative__entry::before { background: #0f766e; border-radius: 50%; content: ''; height: .45rem; left: -.28rem; position: absolute; top: .2rem; width: .45rem; }
+.template-creative__entry h3 { color: #172033; margin-bottom: 0; }
+.template-creative__entry p { font-size: .88rem; margin-bottom: .35rem; }
+.template-creative__date, .template-creative__role { color: #0f766e; font-size: .78rem !important; font-weight: 600; }
+
+@media (max-width: 640px) {
+  .resume-template { min-height: auto; padding: 1.5rem; }
+  .template-business__header { align-items: start; flex-direction: column; gap: .75rem; }
+  .template-business address { text-align: left; }
+  .template-creative { display: block; }
+  .template-creative__sidebar, .template-creative__content { padding: 1.5rem; }
+}
