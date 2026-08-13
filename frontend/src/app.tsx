@@ -3,6 +3,7 @@ import { ResumeEditor } from './components/ResumeEditor';
 import { ResumeLibrary } from './components/ResumeLibrary';
 import { ResumePreview } from './components/ResumePreview';
 import { TemplateGallery } from './components/TemplateGallery';
+import { templateRegistry } from './templates/registry';
 import { createSampleResumeDocument } from './types/resume';
 
 export default function App() {
@@ -13,6 +14,7 @@ export default function App() {
     setResume((current) => ({ ...current, templateId }));
     setView('editor');
   };
+  const currentTemplate = templateRegistry.find((template) => template.id === resume.templateId);
 
   return (
     <main className="app-shell">
@@ -25,7 +27,7 @@ export default function App() {
           <aside className="resume-workspace__editor">
             <div className="editor-navigation">
               <button onClick={() => setView('gallery')} type="button">返回模板库</button>
-              <span>当前模板：{resume.templateId}</span>
+              <span>当前模板：{currentTemplate?.name ?? resume.templateId}</span>
             </div>
             <ResumeLibrary document={resume} onChange={setResume} onRestoreSample={() => setResume(createSampleResumeDocument())} onSelect={setResume} />
             <ResumeEditor document={resume} onChange={setResume} />

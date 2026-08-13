@@ -19,10 +19,22 @@ describe('template gallery workflow', () => {
 
     expect(screen.getByTestId('resume-preview')).toHaveTextContent('林知夏');
     expect(screen.getByTestId('active-template')).toHaveTextContent('business');
+    expect(screen.getByText('当前模板：现代商务')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '返回模板库' }));
 
     expect(screen.queryByTestId('resume-preview')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '选择简历模板' })).toBeInTheDocument();
+  });
+
+  it('gives every static cover a descriptive alternative text', () => {
+    render(<App />);
+
+    for (const template of templateRegistry) {
+      expect(screen.getByRole('img', { name: `${template.name} 模板预览` })).toHaveAttribute(
+        'alt',
+        `${template.name} 模板预览`,
+      );
+    }
   });
 });

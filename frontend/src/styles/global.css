@@ -23,7 +23,7 @@ body { margin: 0; }
 .template-gallery__heading h2 { font-size: 1.65rem; margin: .2rem 0 .45rem; }
 .template-gallery__heading p { color: #60708a; margin: 0; }
 .template-gallery__eyebrow { color: #3267d6 !important; font-size: .75rem; font-weight: 700; letter-spacing: .12em; }
-.template-gallery__grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.template-gallery__grid { display: grid; gap: 1.25rem; grid-template-columns: 1fr; }
 .template-card { background: #fff; border: 1px solid #e0e6ef; border-radius: 14px; box-shadow: 0 4px 18px rgba(32, 51, 85, .05); overflow: hidden; }
 .template-card__image { aspect-ratio: 210 / 297; background: #f5f7fb; display: block; object-fit: contain; width: 100%; }
 .template-card__body { display: grid; gap: .55rem; padding: 1rem; }
@@ -32,6 +32,15 @@ body { margin: 0; }
 .template-card__body button, .editor-navigation button { background: #255abe; border: 1px solid #255abe; border-radius: 7px; color: #fff; cursor: pointer; font: inherit; padding: .55rem .7rem; }
 .editor-navigation { align-items: center; display: flex; gap: .75rem; justify-content: space-between; }
 .editor-navigation span { color: #60708a; font-size: .82rem; }
+.template-card__body button:focus-visible,
+.editor-navigation button:focus-visible,
+.resume-editor button:focus-visible,
+.resume-library button:focus-visible,
+.editor-field input:focus-visible,
+.editor-field textarea:focus-visible {
+  outline: 3px solid #83aaf5;
+  outline-offset: 2px;
+}
 .resume-editor { display: grid; gap: 1.5rem; }
 .editor-section { display: grid; gap: .8rem; }
 .editor-section + .editor-section { border-top: 1px solid #e8ecf2; padding-top: 1.5rem; }
@@ -61,6 +70,8 @@ body { margin: 0; }
 .resume-library__error { color: #b42318; margin: 0; }
 
 @media (max-width: 900px) { .resume-workspace { grid-template-columns: 1fr; } .resume-preview { position: static; } }
+@media (min-width: 600px) { .template-gallery__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .template-gallery__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .app-shell { padding: 1.25rem .75rem 2rem; } .editor-fields--two, .editor-card--inline { grid-template-columns: 1fr; } .resume-preview { margin-inline: -.75rem; padding: .75rem; } }
 
 @media print {
