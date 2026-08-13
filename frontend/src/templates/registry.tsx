@@ -6,6 +6,7 @@ import { MinimalTemplate } from './minimal';
 import { TechTemplate } from './tech';
 import { EditorialTemplate } from './editorial';
 import { RedlineTemplate } from './redline';
+import { VioletTemplate } from './violet';
 import './templates.css';
 
 export interface ResumeTemplate {
@@ -22,6 +23,7 @@ export const templateRegistry: ResumeTemplate[] = [
   { id: 'tech', name: '深色科技感', description: '深色信号感，突出技术实力与项目成果。', Renderer: TechTemplate },
   { id: 'editorial', name: '高级杂志风', description: '留白与大字排版，适合产品、设计与运营岗位。', Renderer: EditorialTemplate },
   { id: 'redline', name: '赤线单栏', description: '红色章节线与紧凑单栏，适合中文互联网求职。', Renderer: RedlineTemplate },
+  { id: 'violet', name: '紫韵单栏', description: '淡紫章节与居中信息区，适合校园与技术求职。', Renderer: VioletTemplate },
 ];
 
 export function getTemplate(templateId: TemplateId): ResumeTemplate {

@@ -32,7 +32,7 @@ const sampleResume: ResumeDocument = {
 afterEach(cleanup);
 
 describe('templateRegistry', () => {
-  it('registers the minimal, business, creative, tech, editorial, and redline templates', () => {
+  it('registers the minimal, business, creative, tech, editorial, redline, and violet templates', () => {
     expect(templateRegistry.map((template) => template.id)).toEqual([
       'minimal',
       'business',
@@ -40,6 +40,7 @@ describe('templateRegistry', () => {
       'tech',
       'editorial',
       'redline',
+      'violet',
     ]);
   });
 
@@ -47,6 +48,7 @@ describe('templateRegistry', () => {
     ['tech', 'CAREER SIGNAL'],
     ['editorial', 'PROFILE'],
     ['redline', '个人总结'],
+    ['violet', '个人总结'],
   ])('renders the distinctive heading in %s', (templateId, heading) => {
     const template = templateRegistry.find(({ id }) => id === templateId);
 

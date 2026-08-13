@@ -1,4 +1,4 @@
-export type TemplateId = 'minimal' | 'business' | 'creative' | 'tech' | 'editorial' | 'redline';
+export type TemplateId = 'minimal' | 'business' | 'creative' | 'tech' | 'editorial' | 'redline' | 'violet';
 
 export interface ResumeProfile {
   fullName: string;

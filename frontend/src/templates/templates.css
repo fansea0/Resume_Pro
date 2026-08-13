@@ -122,6 +122,27 @@
 .template-redline__skills span { border: 1px solid #dfc2bc; color: #2e2e2e; font-size: .8rem; padding: .6mm 2.2mm; }
 .template-redline__skills small { color: #a93831; margin-left: 1.2mm; }
 
+.template-violet { background: #fff; color: #222; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; font-size: .89rem; line-height: 1.58; padding: 0 14mm 16mm; position: relative; }
+.template-violet::before { background: #a961d6; content: ''; height: 1.5px; left: 0; position: absolute; right: 0; top: 0; }
+.template-violet__header { align-items: flex-start; background: radial-gradient(circle at 22% 55%, #f4f0f7 0 6mm, transparent 6.2mm), radial-gradient(circle at 76% 30%, #f7f3f8 0 5mm, transparent 5.2mm); display: flex; justify-content: center; min-height: 42mm; padding: 11mm 0 5mm; position: relative; }
+.template-violet__identity { text-align: center; }
+.template-violet__identity h1 { font-family: Georgia, "Songti SC", serif; font-size: 1.72rem; font-weight: 600; letter-spacing: -.04em; margin: 0 0 .5rem; }
+.template-violet__identity p { font-size: .81rem; margin: .16rem 0; }
+.template-violet__avatar { align-items: center; background: linear-gradient(145deg, #f1e5f7, #fff); border: 1px solid #d6b6e6; border-radius: 50%; color: #9450bb; display: flex; font-family: Georgia, "Songti SC", serif; font-size: 1.8rem; font-weight: 700; height: 19mm; justify-content: center; position: absolute; right: 0; top: 9mm; width: 19mm; }
+.template-violet__section-heading { background: linear-gradient(90deg, #fbf6fd, #fff); border-left: 4px solid #a761d1; color: #9b59c3; font-family: Georgia, "Songti SC", serif; font-size: 1rem; font-weight: 600; letter-spacing: -.01em; margin: 4.2mm 0 2.8mm; padding: 1mm 0 1mm 4mm; text-transform: none; }
+.template-violet__summary { margin-bottom: 0; }
+.template-violet__entry { break-inside: avoid; margin: 2.6mm 0 3.8mm; }
+.template-violet__entry-top { align-items: baseline; display: flex; gap: 1rem; justify-content: space-between; }
+.template-violet__entry h3 { font-size: .95rem; margin-bottom: .15rem; }
+.template-violet__entry-meta { flex: 0 0 auto; font-size: .77rem; text-align: right; white-space: nowrap; }
+.template-violet__role { color: #424242; font-size: .84rem; margin-bottom: .8mm; }
+.template-violet__entry p { margin-bottom: .8mm; }
+.template-violet__entry ul { margin: 1mm 0 0; padding-left: 1.15rem; }
+.template-violet__entry li { margin: .5mm 0; padding-left: .12rem; }
+.template-violet__skills { display: flex; flex-wrap: wrap; gap: 1.5mm; }
+.template-violet__skills span { background: #faf6fc; border-left: 2px solid #b67bda; font-size: .8rem; padding: .65mm 2mm; }
+.template-violet__skills small { color: #9450bb; margin-left: 1.2mm; }
+
 @media (max-width: 640px) {
   .resume-template { min-height: auto; padding: 1.5rem; }
   .template-business__header { align-items: start; flex-direction: column; gap: .75rem; }
@@ -136,4 +157,8 @@
   .template-editorial__sidebar, .template-editorial__content { padding: 1.5rem; }
   .template-redline { padding: 1.5rem; }
   .template-redline__entry-heading { align-items: flex-start; flex-direction: column; gap: 0; }
+  .template-violet { padding: 0 1.5rem 1.5rem; }
+  .template-violet__header { min-height: 10rem; padding-top: 3.5rem; }
+  .template-violet__avatar { right: .3rem; top: .75rem; }
+  .template-violet__entry-top { align-items: flex-start; flex-direction: column; gap: 0; }
 }
