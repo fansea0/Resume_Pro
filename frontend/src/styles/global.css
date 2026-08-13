@@ -25,7 +25,7 @@ body { margin: 0; }
 .template-gallery__eyebrow { color: #3267d6 !important; font-size: .75rem; font-weight: 700; letter-spacing: .12em; }
 .template-gallery__grid { display: grid; gap: 1.25rem; grid-template-columns: 1fr; }
 .template-card { background: #fff; border: 1px solid #e0e6ef; border-radius: 14px; box-shadow: 0 4px 18px rgba(32, 51, 85, .05); overflow: hidden; }
-.template-card__image { aspect-ratio: 210 / 297; background: #f5f7fb; display: block; object-fit: contain; width: 100%; }
+.template-card__image { aspect-ratio: 4 / 3; background: #e8edf6; display: block; object-fit: cover; object-position: center top; width: 100%; }
 .template-card__body { display: grid; gap: .55rem; padding: 1rem; }
 .template-card__body h3, .template-card__body p { margin: 0; }
 .template-card__body p { color: #60708a; font-size: .86rem; min-height: 2.6em; }
