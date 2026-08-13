@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ResumeEditor } from './components/ResumeEditor';
 import { ResumeLibrary } from './components/ResumeLibrary';
 import { ResumePreview } from './components/ResumePreview';
@@ -9,6 +9,7 @@ import { createSampleResumeDocument } from './types/resume';
 export default function App() {
   const [resume, setResume] = useState(createSampleResumeDocument);
   const [view, setView] = useState<'gallery' | 'editor'>('gallery');
+  const previewRef = useRef<HTMLDivElement>(null);
 
   const selectTemplate = (templateId: typeof resume.templateId) => {
     setResume((current) => ({ ...current, templateId }));
@@ -29,10 +30,10 @@ export default function App() {
               <button onClick={() => setView('gallery')} type="button">返回模板库</button>
               <span>当前模板：{currentTemplate?.name ?? resume.templateId}</span>
             </div>
-            <ResumeLibrary document={resume} onChange={setResume} onRestoreSample={() => setResume(createSampleResumeDocument())} onSelect={setResume} />
+            <ResumeLibrary document={resume} onChange={setResume} onRestoreSample={() => setResume(createSampleResumeDocument())} onSelect={setResume} previewRef={previewRef} />
             <ResumeEditor document={resume} onChange={setResume} />
           </aside>
-          <ResumePreview document={resume} />
+          <ResumePreview document={resume} ref={previewRef} />
         </div>
       )}
     </main>

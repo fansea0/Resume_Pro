@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ResumeLibrary } from './ResumeLibrary';
 import { createEmptyResumeDocument } from '../types/resume';
@@ -8,12 +9,17 @@ const createResume = vi.fn();
 const listResumes = vi.fn().mockResolvedValue([]);
 const updateResume = vi.fn();
 const deleteResume = vi.fn();
+const exportResumePng = vi.fn();
 
 vi.mock('../api/resumes', () => ({
   createResume: (...args: unknown[]) => createResume(...args),
   listResumes: (...args: unknown[]) => listResumes(...args),
   updateResume: (...args: unknown[]) => updateResume(...args),
   deleteResume: (...args: unknown[]) => deleteResume(...args),
+}));
+
+vi.mock('../utils/exportResumePng', () => ({
+  exportResumePng: (...args: unknown[]) => exportResumePng(...args),
 }));
 
 afterEach(() => {
@@ -46,6 +52,30 @@ describe('ResumeLibrary', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '导出 PDF' }));
     expect(print).toHaveBeenCalledOnce();
+  });
+
+  it('exports the active preview as a PNG', async () => {
+    const preview = document.createElement('article');
+    const previewRef = createRef<HTMLElement>();
+    Object.defineProperty(previewRef, 'current', { value: preview });
+    exportResumePng.mockResolvedValueOnce(undefined);
+
+    render(<ResumeLibrary document={createEmptyResumeDocument()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} previewRef={previewRef} />);
+    fireEvent.click(screen.getByRole('button', { name: '导出 PNG' }));
+
+    await waitFor(() => expect(exportResumePng).toHaveBeenCalledWith(preview, '我的简历'));
+  });
+
+  it('shows a recoverable error when PNG export fails', async () => {
+    const preview = document.createElement('article');
+    const previewRef = createRef<HTMLElement>();
+    Object.defineProperty(previewRef, 'current', { value: preview });
+    exportResumePng.mockRejectedValueOnce(new Error('render failed'));
+
+    render(<ResumeLibrary document={createEmptyResumeDocument()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} previewRef={previewRef} />);
+    fireEvent.click(screen.getByRole('button', { name: '导出 PNG' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('导出 PNG 失败，请稍后重试。');
   });
 
   it('shows sample content by default and restores it without saving', async () => {

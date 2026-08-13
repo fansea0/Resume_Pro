@@ -1,19 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type RefObject } from 'react';
 import { createResume, deleteResume, documentFromStored, listResumes, type StoredResume, updateResume } from '../api/resumes';
 import type { ResumeDocument } from '../types/resume';
+import { exportResumePng } from '../utils/exportResumePng';
 
 interface ResumeLibraryProps {
   document: ResumeDocument;
   onChange: (document: ResumeDocument) => void;
   onRestoreSample: () => void;
   onSelect: (document: ResumeDocument) => void;
+  previewRef?: RefObject<HTMLElement>;
 }
 
-export function ResumeLibrary({ document, onChange, onRestoreSample, onSelect }: ResumeLibraryProps) {
+export function ResumeLibrary({ document, onChange, onRestoreSample, onSelect, previewRef }: ResumeLibraryProps) {
   const [items, setItems] = useState<StoredResume[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -66,9 +69,22 @@ export function ResumeLibrary({ document, onChange, onRestoreSample, onSelect }:
     } catch { setError('删除失败，请稍后重试。'); } finally { setSaving(false); }
   };
 
+  const exportPng = async () => {
+    if (!previewRef?.current) {
+      setError('简历预览尚未准备好，请稍后重试。');
+      return;
+    }
+    setExporting(true); setError(null);
+    try {
+      await exportResumePng(previewRef.current, document.title);
+    } catch {
+      setError('导出 PNG 失败，请稍后重试。');
+    } finally { setExporting(false); }
+  };
+
   return (
     <section className="resume-library" aria-label="简历管理">
-      <div className="resume-library__heading"><h2>简历管理</h2><button onClick={() => window.print()} type="button">导出 PDF</button></div>
+      <div className="resume-library__heading"><h2>简历管理</h2><div><button disabled={exporting} onClick={() => window.print()} type="button">导出 PDF</button><button disabled={exporting} onClick={exportPng} type="button">{exporting ? '正在导出 PNG…' : '导出 PNG'}</button></div></div>
       <label className="editor-field" htmlFor="resume-title"><span>简历名称</span><input id="resume-title" onChange={(event) => onChange({ ...document, title: event.target.value })} value={document.title} /></label>
       <div className="resume-library__actions">
         <button disabled={saving} onClick={saveNew} type="button">新建并保存</button>
