@@ -3,6 +3,8 @@ import type { ResumeDocument, TemplateId } from '../types/resume';
 import { BusinessTemplate } from './business';
 import { CreativeTemplate } from './creative';
 import { MinimalTemplate } from './minimal';
+import { TechTemplate } from './tech';
+import { EditorialTemplate } from './editorial';
 import './templates.css';
 
 export interface ResumeTemplate {
@@ -16,6 +18,8 @@ export const templateRegistry: ResumeTemplate[] = [
   { id: 'minimal', name: '极简专业', description: '清晰克制，适合技术与产品岗位。', Renderer: MinimalTemplate },
   { id: 'business', name: '现代商务', description: '稳重有序，突出职业经历与成果。', Renderer: BusinessTemplate },
   { id: 'creative', name: '创意双栏', description: '个性醒目，适合设计与创意岗位。', Renderer: CreativeTemplate },
+  { id: 'tech', name: '深色科技感', description: '深色信号感，突出技术实力与项目成果。', Renderer: TechTemplate },
+  { id: 'editorial', name: '高级杂志风', description: '留白与大字排版，适合产品、设计与运营岗位。', Renderer: EditorialTemplate },
 ];
 
 export function getTemplate(templateId: TemplateId): ResumeTemplate {

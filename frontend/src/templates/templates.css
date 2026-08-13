@@ -58,10 +58,60 @@
 .template-creative__entry p { font-size: .88rem; margin-bottom: .35rem; }
 .template-creative__date, .template-creative__role { color: #0f766e; font-size: .78rem !important; font-weight: 600; }
 
+.template-tech { background: #071827; color: #d9e8ef; padding: 0; }
+.template-tech__header { background: linear-gradient(120deg, #071827 0%, #102c41 100%); border-bottom: 1px solid #1d5266; padding: 17mm 18mm 13mm; }
+.template-tech__eyebrow { color: #43e4dd; font-size: .68rem; font-weight: 800; letter-spacing: .24em; margin-bottom: .7rem; }
+.template-tech__header h1 { color: #fff; font-size: 2.45rem; letter-spacing: .05em; line-height: 1; margin-bottom: .45rem; }
+.template-tech__headline { color: #7dd3fc; font-size: 1.05rem; margin-bottom: .8rem; }
+.template-tech__contact { color: #a6c7d2; font-size: .75rem; margin-bottom: 0; overflow-wrap: anywhere; }
+.template-tech__content { padding: 7mm 18mm 16mm; }
+.template-tech h2 { border-bottom: 1px solid #1b5365; color: #43e4dd; font-size: .72rem; margin-top: 1.4rem; padding-bottom: .4rem; }
+.template-tech__summary { border-left: 2px solid #43e4dd; color: #c3d7df; padding-left: .9rem; }
+.template-tech__entry { border-left: 1px solid #286073; margin: .9rem 0; padding: 0 0 .2rem 1rem; position: relative; }
+.template-tech__entry::before { background: #43e4dd; border-radius: 50%; box-shadow: 0 0 0 3px #0b2636; content: ''; height: .38rem; left: -.22rem; position: absolute; top: .28rem; width: .38rem; }
+.template-tech__entry h3 { color: #fff; display: inline; }
+.template-tech__entry p { font-size: .88rem; margin-bottom: .3rem; }
+.template-tech__date { color: #7aa5b4; float: right; font-size: .72rem !important; }
+.template-tech__company { color: #62d9d2; font-weight: 600; }
+.template-tech__education { display: grid; gap: .2rem 1rem; grid-template-columns: 1fr auto; margin: .7rem 0; }
+.template-tech__education strong { color: #fff; }
+.template-tech__education span { color: #a6c7d2; font-size: .86rem; }
+.template-tech__education time { color: #7aa5b4; font-size: .72rem; grid-column: 2; grid-row: 1 / span 2; }
+.template-tech__skills { display: flex; flex-wrap: wrap; gap: .45rem; }
+.template-tech__skills span { border: 1px solid #286073; color: #d9e8ef; font-size: .78rem; padding: .28rem .55rem; }
+.template-tech__skills small { color: #43e4dd; margin-left: .35rem; }
+
+.template-editorial { background: #f7f4ee; color: #292b27; padding: 0; }
+.template-editorial__header { border-bottom: 1px solid #99978e; padding: 15mm 18mm 7mm; }
+.template-editorial__header > p { color: #7b826a; font-size: .65rem; font-weight: 800; letter-spacing: .25em; margin-bottom: .8rem; }
+.template-editorial__header h1 { font-family: Georgia, "Songti SC", serif; font-size: 3.2rem; font-weight: 500; letter-spacing: -.05em; line-height: .95; margin-bottom: 1.2rem; }
+.template-editorial__header div { display: flex; font-size: .78rem; justify-content: space-between; gap: 1rem; }
+.template-editorial__header div span:last-child { color: #666860; text-align: right; overflow-wrap: anywhere; }
+.template-editorial__layout { display: grid; grid-template-columns: 31% 69%; }
+.template-editorial__sidebar { background: #e8e3d8; padding: 9mm 9mm 16mm 18mm; }
+.template-editorial__sidebar h2, .template-editorial__content h2 { border-bottom: 1px solid #aca99e; color: #657053; font-size: .68rem; margin-top: 1.25rem; padding-bottom: .35rem; }
+.template-editorial__sidebar section > p { font-size: .8rem; line-height: 1.6; margin-bottom: .7rem; }
+.template-editorial__sidebar strong, .template-editorial__sidebar span, .template-editorial__sidebar small { display: block; }
+.template-editorial__sidebar strong { font-size: .82rem; }
+.template-editorial__sidebar span, .template-editorial__sidebar small { color: #676960; font-size: .74rem; }
+.template-editorial__content { padding: 9mm 18mm 16mm 11mm; }
+.template-editorial__content h2 { color: #30372c; }
+.template-editorial__entry { border-bottom: 1px solid #cfcbc0; margin: .9rem 0; padding-bottom: .8rem; }
+.template-editorial__entry h3 { font-family: Georgia, "Songti SC", serif; font-size: 1.2rem; font-weight: 500; margin-bottom: .1rem; }
+.template-editorial__entry p { font-size: .87rem; margin-bottom: .3rem; }
+.template-editorial__date { color: #73756e; float: right; font-size: .72rem !important; }
+.template-editorial__role { color: #657053; font-weight: 700; }
+
 @media (max-width: 640px) {
   .resume-template { min-height: auto; padding: 1.5rem; }
   .template-business__header { align-items: start; flex-direction: column; gap: .75rem; }
   .template-business address { text-align: left; }
   .template-creative { display: block; }
   .template-creative__sidebar, .template-creative__content { padding: 1.5rem; }
+  .template-tech__header, .template-tech__content { padding: 1.5rem; }
+  .template-editorial__header { padding: 1.5rem; }
+  .template-editorial__header div { flex-direction: column; }
+  .template-editorial__header div span:last-child { text-align: left; }
+  .template-editorial__layout { display: block; }
+  .template-editorial__sidebar, .template-editorial__content { padding: 1.5rem; }
 }

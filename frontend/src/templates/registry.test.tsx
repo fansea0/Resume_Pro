@@ -32,12 +32,29 @@ const sampleResume: ResumeDocument = {
 afterEach(cleanup);
 
 describe('templateRegistry', () => {
-  it('registers the minimal, business, and creative templates', () => {
+  it('registers the minimal, business, creative, tech, and editorial templates', () => {
     expect(templateRegistry.map((template) => template.id)).toEqual([
       'minimal',
       'business',
       'creative',
+      'tech',
+      'editorial',
     ]);
+  });
+
+  it.each([
+    ['tech', 'CAREER SIGNAL'],
+    ['editorial', 'PROFILE'],
+  ])('renders the distinctive heading in %s', (templateId, heading) => {
+    const template = templateRegistry.find(({ id }) => id === templateId);
+
+    expect(template).toBeDefined();
+    const Renderer = template!.Renderer;
+    render(<Renderer document={sampleResume} />);
+
+    expect(screen.getByText('林晓')).toBeInTheDocument();
+    expect(screen.getByText('星云科技')).toBeInTheDocument();
+    expect(screen.getByText(heading)).toBeInTheDocument();
   });
 
   it.each(templateRegistry)('renders profile and experience content in $id', ({ Renderer }) => {
