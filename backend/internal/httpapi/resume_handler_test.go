@@ -17,40 +17,84 @@ import (
 
 func TestResumeCRUD(t *testing.T) {
 	router := testRouter(t)
-	created := requestJSON(t, router, http.MethodPost, "/api/resumes", `{"title":"Backend Engineer","templateId":"minimal","content":{"profile":{"name":"Ada"}}}`)
-	if created.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, want %d: %s", created.Code, http.StatusCreated, created.Body.String())
-	}
-	item := decodeResume(t, created)
-	if item.Title != "Backend Engineer" || item.TemplateID != "minimal" || item.ID == 0 {
-		t.Fatalf("created item = %#v", item)
+	var created resume.Resume
+	cases := []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		wantStatus int
+		assert     func(*testing.T, *httptest.ResponseRecorder)
+	}{
+		{
+			name:       "create",
+			method:     http.MethodPost,
+			path:       "/api/resumes",
+			body:       `{"title":"Backend Engineer","templateId":"minimal","content":{"profile":{"name":"Ada"}}}`,
+			wantStatus: http.StatusCreated,
+			assert: func(t *testing.T, response *httptest.ResponseRecorder) {
+				created = decodeResume(t, response)
+				if created.Title != "Backend Engineer" || created.TemplateID != "minimal" || created.ID == 0 {
+					t.Fatalf("created item = %#v", created)
+				}
+			},
+		},
+		{
+			name:       "list",
+			method:     http.MethodGet,
+			path:       "/api/resumes",
+			wantStatus: http.StatusOK,
+			assert: func(t *testing.T, response *httptest.ResponseRecorder) {
+				var items []resume.Resume
+				if err := json.NewDecoder(response.Body).Decode(&items); err != nil {
+					t.Fatal(err)
+				}
+				if len(items) != 1 || items[0].ID != created.ID {
+					t.Fatalf("list = %#v", items)
+				}
+			},
+		},
+		{
+			name:       "get",
+			method:     http.MethodGet,
+			path:       "/api/resumes/1",
+			wantStatus: http.StatusOK,
+			assert: func(t *testing.T, response *httptest.ResponseRecorder) {
+				if item := decodeResume(t, response); item.Title != "Backend Engineer" {
+					t.Fatalf("got item = %#v", item)
+				}
+			},
+		},
+		{
+			name:       "update",
+			method:     http.MethodPut,
+			path:       "/api/resumes/1",
+			body:       `{"title":"Staff Engineer","templateId":"business","content":{"profile":{"name":"Ada Lovelace"}}}`,
+			wantStatus: http.StatusOK,
+			assert: func(t *testing.T, response *httptest.ResponseRecorder) {
+				if item := decodeResume(t, response); item.Title != "Staff Engineer" {
+					t.Fatalf("updated item = %#v", item)
+				}
+			},
+		},
+		{
+			name:       "delete",
+			method:     http.MethodDelete,
+			path:       "/api/resumes/1",
+			wantStatus: http.StatusNoContent,
+		},
 	}
 
-	list := requestJSON(t, router, http.MethodGet, "/api/resumes", "")
-	if list.Code != http.StatusOK {
-		t.Fatalf("list status = %d, want %d", list.Code, http.StatusOK)
-	}
-	var items []resume.Resume
-	if err := json.NewDecoder(list.Body).Decode(&items); err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 1 || items[0].ID != item.ID {
-		t.Fatalf("list = %#v", items)
-	}
-
-	got := requestJSON(t, router, http.MethodGet, "/api/resumes/1", "")
-	if got.Code != http.StatusOK || decodeResume(t, got).Title != "Backend Engineer" {
-		t.Fatalf("get = %d %s", got.Code, got.Body.String())
-	}
-
-	updated := requestJSON(t, router, http.MethodPut, "/api/resumes/1", `{"title":"Staff Engineer","templateId":"business","content":{"profile":{"name":"Ada Lovelace"}}}`)
-	if updated.Code != http.StatusOK || decodeResume(t, updated).Title != "Staff Engineer" {
-		t.Fatalf("update = %d %s", updated.Code, updated.Body.String())
-	}
-
-	deleted := requestJSON(t, router, http.MethodDelete, "/api/resumes/1", "")
-	if deleted.Code != http.StatusNoContent {
-		t.Fatalf("delete status = %d, want %d", deleted.Code, http.StatusNoContent)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			response := requestJSON(t, router, tc.method, tc.path, tc.body)
+			if response.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", response.Code, tc.wantStatus, response.Body.String())
+			}
+			if tc.assert != nil {
+				tc.assert(t, response)
+			}
+		})
 	}
 }
 
