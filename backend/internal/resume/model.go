@@ -5,6 +5,7 @@ import "time"
 // Resume is a persisted, structured resume document.
 type Resume struct {
 	ID         int64     `db:"id" json:"id"`
+	TenantID   int64     `db:"tenant_id" json:"-"`
 	Title      string    `db:"title" json:"title"`
 	TemplateID string    `db:"template_id" json:"template_id"`
 	Content    string    `db:"content" json:"content"`
@@ -13,6 +14,7 @@ type Resume struct {
 }
 
 type CreateInput struct {
+	TenantID   int64
 	Title      string
 	TemplateID string
 	Content    string
