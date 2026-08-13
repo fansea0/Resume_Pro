@@ -18,7 +18,6 @@ describe('template gallery workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: '使用此模板：现代商务' }));
 
     expect(screen.getByTestId('resume-preview')).toHaveTextContent('林知夏');
-    expect(screen.getByTestId('active-template')).toHaveTextContent('business');
     expect(screen.getByText('当前模板：现代商务')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '返回模板库' }));

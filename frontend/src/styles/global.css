@@ -55,7 +55,6 @@ body { margin: 0; }
 .editor-field input, .editor-field textarea { border: 1px solid #cfd8e6; border-radius: 6px; color: #172033; font: inherit; padding: .55rem .6rem; width: 100%; }
 .editor-field textarea { min-height: 72px; resize: vertical; }
 .resume-preview { background: #e8edf6; min-height: 760px; padding: 1.5rem; position: sticky; top: 1rem; }
-.resume-preview__template { color: #6a7890; font-size: .75rem; margin: 0 0 .75rem; text-align: center; }
 .resume-library { display: grid; gap: .75rem; }
 .resume-library__heading, .resume-library__actions { align-items: center; display: flex; gap: .6rem; justify-content: space-between; }
 .resume-library__actions { justify-content: flex-start; }
@@ -78,8 +77,8 @@ body { margin: 0; }
   @page { size: A4; margin: 0; }
   body { background: #fff; }
   .app-shell { max-width: none; padding: 0; }
-  .app-shell > h1, .app-shell > p, .resume-workspace__editor, .resume-preview__template, .template-gallery { display: none !important; }
+  .app-shell > h1, .app-shell > p, .resume-workspace__editor, .template-gallery { display: none !important; }
   .resume-workspace { display: block; }
   .resume-preview { background: #fff; min-height: auto; padding: 0; position: static; }
-  .resume-preview > :not(.resume-preview__template) { box-shadow: none; margin: 0; min-height: 297mm; width: 210mm; }
+  .resume-preview > div { box-shadow: none; margin: 0; min-height: 297mm; width: 210mm; }
 }

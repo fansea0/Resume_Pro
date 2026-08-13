@@ -11,7 +11,6 @@ export const ResumePreview = forwardRef<HTMLDivElement, ResumePreviewProps>(func
 
   return (
     <section className="resume-preview" aria-label="简历预览" data-testid="resume-preview">
-      <p className="resume-preview__template" data-testid="active-template">{document.templateId}</p>
       <div ref={ref}><Renderer document={document} /></div>
     </section>
   );
