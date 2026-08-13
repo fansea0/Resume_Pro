@@ -24,7 +24,12 @@ func newResumeHandler(repository *resume.Repository) *resumeHandler {
 }
 
 func (h *resumeHandler) list(writer http.ResponseWriter, request *http.Request) {
-	items, err := h.repository.List(request.Context())
+	principal, ok := principalFromRequest(request)
+	if !ok {
+		writeError(writer, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	items, err := h.repository.List(request.Context(), principal.TenantID)
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "could not list resumes")
 		return
@@ -37,8 +42,13 @@ func (h *resumeHandler) create(writer http.ResponseWriter, request *http.Request
 	if !ok {
 		return
 	}
+	principal, ok := principalFromRequest(request)
+	if !ok {
+		writeError(writer, http.StatusUnauthorized, "authentication required")
+		return
+	}
 	item, err := h.repository.Create(request.Context(), resume.CreateInput{
-		Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content),
+		TenantID: principal.TenantID, Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content),
 	})
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "could not create resume")
@@ -52,7 +62,12 @@ func (h *resumeHandler) get(writer http.ResponseWriter, request *http.Request) {
 	if !ok {
 		return
 	}
-	item, err := h.repository.Get(request.Context(), id)
+	principal, ok := principalFromRequest(request)
+	if !ok {
+		writeError(writer, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	item, err := h.repository.Get(request.Context(), principal.TenantID, id)
 	if !handleRepositoryError(writer, err) {
 		return
 	}
@@ -68,7 +83,12 @@ func (h *resumeHandler) update(writer http.ResponseWriter, request *http.Request
 	if !ok {
 		return
 	}
-	item, err := h.repository.Update(request.Context(), id, resume.UpdateInput{
+	principal, ok := principalFromRequest(request)
+	if !ok {
+		writeError(writer, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	item, err := h.repository.Update(request.Context(), principal.TenantID, id, resume.UpdateInput{
 		Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content),
 	})
 	if !handleRepositoryError(writer, err) {
@@ -82,7 +102,12 @@ func (h *resumeHandler) delete(writer http.ResponseWriter, request *http.Request
 	if !ok {
 		return
 	}
-	if !handleRepositoryError(writer, h.repository.Delete(request.Context(), id)) {
+	principal, ok := principalFromRequest(request)
+	if !ok {
+		writeError(writer, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if !handleRepositoryError(writer, h.repository.Delete(request.Context(), principal.TenantID, id)) {
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)

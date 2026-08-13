@@ -11,12 +11,13 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 
+	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/store"
 )
 
 func TestResumeCRUD(t *testing.T) {
-	router := testRouter(t)
+	router, session := testRouter(t)
 	var created resume.Resume
 	cases := []struct {
 		name       string
@@ -87,7 +88,7 @@ func TestResumeCRUD(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			response := requestJSON(t, router, tc.method, tc.path, tc.body)
+			response := requestJSON(t, router, tc.method, tc.path, tc.body, session)
 			if response.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", response.Code, tc.wantStatus, response.Body.String())
 			}
@@ -99,7 +100,7 @@ func TestResumeCRUD(t *testing.T) {
 }
 
 func TestResumeInvalidCreateReturnsBadRequest(t *testing.T) {
-	router := testRouter(t)
+	router, session := testRouter(t)
 	for _, body := range []string{
 		`{"title":"","templateId":"minimal","content":{}}`,
 		`{"title":"Valid","templateId":"","content":{}}`,
@@ -107,7 +108,7 @@ func TestResumeInvalidCreateReturnsBadRequest(t *testing.T) {
 		`{"title":"Valid","templateId":"minimal","content":{},"unexpected":true}`,
 		`{"title":"Valid","templateId":"minimal","content":{}} {}`,
 	} {
-		response := requestJSON(t, router, http.MethodPost, "/api/resumes", body)
+		response := requestJSON(t, router, http.MethodPost, "/api/resumes", body, session)
 		if response.Code != http.StatusBadRequest {
 			t.Errorf("body %s: status = %d, want %d", body, response.Code, http.StatusBadRequest)
 		}
@@ -115,16 +116,16 @@ func TestResumeInvalidCreateReturnsBadRequest(t *testing.T) {
 }
 
 func TestResumeMissingReturnsNotFound(t *testing.T) {
-	router := testRouter(t)
+	router, session := testRouter(t)
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
-		response := requestJSON(t, router, method, "/api/resumes/999", `{"title":"Valid","templateId":"minimal","content":{}}`)
+		response := requestJSON(t, router, method, "/api/resumes/999", `{"title":"Valid","templateId":"minimal","content":{}}`, session)
 		if response.Code != http.StatusNotFound {
 			t.Errorf("%s status = %d, want %d", method, response.Code, http.StatusNotFound)
 		}
 	}
 }
 
-func testRouter(t *testing.T) http.Handler {
+func testRouter(t *testing.T) (http.Handler, *http.Cookie) {
 	t.Helper()
 	db, err := sqlx.Open("sqlite", ":memory:")
 	if err != nil {
@@ -134,14 +135,18 @@ func testRouter(t *testing.T) http.Handler {
 	if err := store.Migrate(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	return NewRouter(resume.NewRepository(db))
+	router := NewRouter(auth.NewRepository(db), resume.NewRepository(db), RouterConfig{JWTSecret: "resume-handler-test-secret"})
+	return router, registerAuthUser(t, router, "resume-handler@example.com")
 }
 
-func requestJSON(t *testing.T, router http.Handler, method, path, body string) *httptest.ResponseRecorder {
+func requestJSON(t *testing.T, router http.Handler, method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
+	}
+	if cookie != nil {
+		request.AddCookie(cookie)
 	}
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
