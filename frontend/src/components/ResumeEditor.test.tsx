@@ -9,6 +9,7 @@ afterEach(cleanup);
 describe('ResumeEditor', () => {
   it('updates the preview when the profile name changes', () => {
     render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '使用此模板：赤线单栏' }));
 
     fireEvent.change(screen.getByLabelText('姓名'), { target: { value: '林然' } });
 
@@ -18,13 +19,14 @@ describe('ResumeEditor', () => {
   it('selects the business template', () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: /现代商务/ }));
+    fireEvent.click(screen.getByRole('button', { name: '使用此模板：现代商务' }));
 
     expect(screen.getByTestId('active-template')).toHaveTextContent('business');
   });
 
   it('adds and removes a work experience', () => {
     render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '使用此模板：赤线单栏' }));
 
     fireEvent.click(screen.getByRole('button', { name: '添加工作经历' }));
     expect(screen.getByLabelText('公司 3')).toBeInTheDocument();

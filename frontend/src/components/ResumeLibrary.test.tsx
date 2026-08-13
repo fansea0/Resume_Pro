@@ -50,6 +50,7 @@ describe('ResumeLibrary', () => {
 
   it('shows sample content by default and restores it without saving', async () => {
     render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '使用此模板：赤线单栏' }));
 
     expect(await screen.findByText('林知夏')).toBeInTheDocument();
     const title = screen.getByLabelText('简历名称');

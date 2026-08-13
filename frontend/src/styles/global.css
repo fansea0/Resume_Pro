@@ -16,12 +16,22 @@ body { margin: 0; }
 
 .resume-workspace { display: grid; grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr); gap: 2rem; align-items: start; }
 .resume-workspace__editor { display: grid; gap: 1.25rem; }
-.template-picker, .resume-editor, .resume-library { background: #fff; border: 1px solid #e5eaf2; border-radius: 12px; padding: 1.25rem; box-shadow: 0 4px 16px rgba(32, 51, 85, 0.05); }
-.template-picker h2, .editor-section h2, .resume-library h2 { margin: 0; font-size: 1rem; }
-.template-picker__options { display: grid; gap: .6rem; margin-top: .9rem; }
-.template-picker__option { background: #fff; border: 1px solid #dbe2ed; border-radius: 8px; color: inherit; cursor: pointer; display: grid; gap: .2rem; padding: .7rem .8rem; text-align: left; }
-.template-picker__option[aria-pressed="true"] { border-color: #3267d6; box-shadow: 0 0 0 2px #dbe7ff; }
-.template-picker__option span { color: #60708a; font-size: .8rem; }
+.resume-editor, .resume-library { background: #fff; border: 1px solid #e5eaf2; border-radius: 12px; padding: 1.25rem; box-shadow: 0 4px 16px rgba(32, 51, 85, 0.05); }
+.editor-section h2, .resume-library h2 { margin: 0; font-size: 1rem; }
+.template-gallery { display: grid; gap: 1.5rem; }
+.template-gallery__heading { max-width: 42rem; }
+.template-gallery__heading h2 { font-size: 1.65rem; margin: .2rem 0 .45rem; }
+.template-gallery__heading p { color: #60708a; margin: 0; }
+.template-gallery__eyebrow { color: #3267d6 !important; font-size: .75rem; font-weight: 700; letter-spacing: .12em; }
+.template-gallery__grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.template-card { background: #fff; border: 1px solid #e0e6ef; border-radius: 14px; box-shadow: 0 4px 18px rgba(32, 51, 85, .05); overflow: hidden; }
+.template-card__image { aspect-ratio: 210 / 297; background: #f5f7fb; display: block; object-fit: contain; width: 100%; }
+.template-card__body { display: grid; gap: .55rem; padding: 1rem; }
+.template-card__body h3, .template-card__body p { margin: 0; }
+.template-card__body p { color: #60708a; font-size: .86rem; min-height: 2.6em; }
+.template-card__body button, .editor-navigation button { background: #255abe; border: 1px solid #255abe; border-radius: 7px; color: #fff; cursor: pointer; font: inherit; padding: .55rem .7rem; }
+.editor-navigation { align-items: center; display: flex; gap: .75rem; justify-content: space-between; }
+.editor-navigation span { color: #60708a; font-size: .82rem; }
 .resume-editor { display: grid; gap: 1.5rem; }
 .editor-section { display: grid; gap: .8rem; }
 .editor-section + .editor-section { border-top: 1px solid #e8ecf2; padding-top: 1.5rem; }
@@ -57,7 +67,7 @@ body { margin: 0; }
   @page { size: A4; margin: 0; }
   body { background: #fff; }
   .app-shell { max-width: none; padding: 0; }
-  .app-shell > h1, .app-shell > p, .resume-workspace__editor, .resume-preview__template { display: none !important; }
+  .app-shell > h1, .app-shell > p, .resume-workspace__editor, .resume-preview__template, .template-gallery { display: none !important; }
   .resume-workspace { display: block; }
   .resume-preview { background: #fff; min-height: auto; padding: 0; position: static; }
   .resume-preview > :not(.resume-preview__template) { box-shadow: none; margin: 0; min-height: 297mm; width: 210mm; }
