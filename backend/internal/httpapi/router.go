@@ -6,7 +6,7 @@ import (
 )
 
 // NewRouter creates the HTTP API router.
-func NewRouter(_ any) http.Handler {
+func NewRouter() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

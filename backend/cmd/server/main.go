@@ -11,7 +11,7 @@ func main() {
 	logger := logrus.New()
 	logger.WithField("address", ":8080").Info("starting resume API server")
 
-	if err := http.ListenAndServe(":8080", httpapi.NewRouter(logger)); err != nil {
+	if err := http.ListenAndServe(":8080", httpapi.NewRouter()); err != nil {
 		logger.WithError(err).Fatal("resume API server stopped")
 	}
 }
