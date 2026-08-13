@@ -32,7 +32,7 @@ const sampleResume: ResumeDocument = {
 afterEach(cleanup);
 
 describe('templateRegistry', () => {
-  it('registers the minimal, business, creative, tech, editorial, redline, and violet templates', () => {
+  it('registers the minimal, business, creative, tech, editorial, redline, violet, and azure chronicle templates', () => {
     expect(templateRegistry.map((template) => template.id)).toEqual([
       'minimal',
       'business',
@@ -41,11 +41,12 @@ describe('templateRegistry', () => {
       'editorial',
       'redline',
       'violet',
+      'azure-chronicle',
     ]);
   });
 
   it.each(templateRegistry)('defines a static preview cover for $id', (template) => {
-    expect(template.previewImage).toMatch(/^\/template-previews\/.+\.svg$/);
+    expect(template.previewImage).toBe(`/template-previews/${template.id}.png`);
   });
 
   it.each([
@@ -53,6 +54,7 @@ describe('templateRegistry', () => {
     ['editorial', 'PROFILE'],
     ['redline', '个人总结'],
     ['violet', '个人总结'],
+    ['azure-chronicle', '个人总结'],
   ])('renders the distinctive heading in %s', (templateId, heading) => {
     const template = templateRegistry.find(({ id }) => id === templateId);
 
