@@ -11,6 +11,11 @@ const updateResume = vi.fn();
 const deleteResume = vi.fn();
 const exportResumePng = vi.fn();
 
+vi.mock('../api/auth', () => ({
+  getCurrentUser: vi.fn().mockResolvedValue({ id: 1, email: 'ada@example.com', tenantId: 1 }),
+  login: vi.fn(), register: vi.fn(), logout: vi.fn(),
+}));
+
 vi.mock('../api/resumes', () => ({
   createResume: (...args: unknown[]) => createResume(...args),
   listResumes: (...args: unknown[]) => listResumes(...args),
@@ -80,7 +85,7 @@ describe('ResumeLibrary', () => {
 
   it('shows sample content by default and restores it without saving', async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '使用此模板：赤线单栏' }));
+    fireEvent.click(await screen.findByRole('button', { name: '使用此模板：赤线单栏' }));
 
     expect(await screen.findByText('林知夏')).toBeInTheDocument();
     const title = screen.getByLabelText('简历名称');

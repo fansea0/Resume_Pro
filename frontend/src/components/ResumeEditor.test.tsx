@@ -4,28 +4,33 @@ import App from '../app';
 import { ResumeEditor } from './ResumeEditor';
 import { createEmptyResumeDocument } from '../types/resume';
 
+vi.mock('../api/auth', () => ({
+  getCurrentUser: vi.fn().mockResolvedValue({ id: 1, email: 'ada@example.com', tenantId: 1 }),
+  login: vi.fn(), register: vi.fn(), logout: vi.fn(),
+}));
+
 afterEach(cleanup);
 
 describe('ResumeEditor', () => {
-  it('updates the preview when the profile name changes', () => {
+  it('updates the preview when the profile name changes', async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '使用此模板：赤线单栏' }));
+    fireEvent.click(await screen.findByRole('button', { name: '使用此模板：赤线单栏' }));
 
     fireEvent.change(screen.getByLabelText('姓名'), { target: { value: '林然' } });
 
     expect(screen.getByTestId('resume-preview')).toHaveTextContent('林然');
   });
 
-  it('selects the business template', () => {
+  it('selects the business template', async () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: '使用此模板：现代商务' }));
+    fireEvent.click(await screen.findByRole('button', { name: '使用此模板：现代商务' }));
 
   });
 
-  it('adds and removes a work experience', () => {
+  it('adds and removes a work experience', async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '使用此模板：赤线单栏' }));
+    fireEvent.click(await screen.findByRole('button', { name: '使用此模板：赤线单栏' }));
 
     fireEvent.click(screen.getByRole('button', { name: '添加工作经历' }));
     expect(screen.getByLabelText('公司 3')).toBeInTheDocument();

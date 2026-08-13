@@ -13,6 +13,21 @@ body { margin: 0; }
   margin: 0 auto;
   padding: 2rem 1.5rem 4rem;
 }
+.app-header { align-items: center; display: flex; gap: 1rem; justify-content: space-between; margin-bottom: 1.5rem; }
+.app-header h1 { margin: 0 0 .35rem; }
+.app-header p { margin: 0; }
+.account-menu { align-items: center; display: flex; flex-wrap: wrap; gap: .75rem; }
+.account-menu__email { color: #60708a; font-size: .88rem; }
+.account-menu button, .auth-form button { background: #255abe; border: 1px solid #255abe; border-radius: 7px; color: #fff; cursor: pointer; font: inherit; padding: .55rem .8rem; }
+.auth-screen { background: #fff; border: 1px solid #e5eaf2; border-radius: 16px; box-shadow: 0 12px 34px rgba(32, 51, 85, .08); display: grid; gap: 1.5rem; margin: 8vh auto 0; max-width: 440px; padding: 2rem; }
+.auth-screen__intro h2 { margin: .35rem 0 .5rem; }
+.auth-screen__intro p:not(.auth-screen__eyebrow) { color: #60708a; margin: 0; }
+.auth-screen__eyebrow { color: #3267d6; font-size: .75rem; font-weight: 700; letter-spacing: .12em; margin: 0; }
+.auth-form { display: grid; gap: 1rem; }
+.auth-form__hint, .auth-screen__switch { color: #60708a; font-size: .84rem; margin: 0; }
+.auth-form__error { color: #b42318; font-size: .85rem; margin: 0; }
+.auth-screen__switch button { background: transparent; border: 0; color: #255abe; cursor: pointer; font: inherit; font-weight: 600; margin-left: .25rem; padding: 0; }
+.auth-form button:disabled { cursor: wait; opacity: .65; }
 
 .resume-workspace { display: grid; grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr); gap: 2rem; align-items: start; }
 .resume-workspace__editor { display: grid; gap: 1.25rem; }

@@ -1,13 +1,20 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '../app';
 import { templateRegistry } from '../templates/registry';
+
+vi.mock('../api/auth', () => ({
+  getCurrentUser: vi.fn().mockResolvedValue({ id: 1, email: 'ada@example.com', tenantId: 1 }),
+  login: vi.fn(), register: vi.fn(), logout: vi.fn(),
+}));
 
 afterEach(cleanup);
 
 describe('template gallery workflow', () => {
-  it('shows static cards first, enters the selected editor without resetting content, and returns to the gallery', () => {
+  it('shows static cards first, enters the selected editor without resetting content, and returns to the gallery', async () => {
     render(<App />);
+
+    await screen.findByRole('heading', { name: '选择简历模板' });
 
     expect(screen.queryByTestId('resume-preview')).not.toBeInTheDocument();
     for (const template of templateRegistry) {
@@ -26,8 +33,10 @@ describe('template gallery workflow', () => {
     expect(screen.getByRole('heading', { name: '选择简历模板' })).toBeInTheDocument();
   });
 
-  it('gives every static cover a descriptive alternative text', () => {
+  it('gives every static cover a descriptive alternative text', async () => {
     render(<App />);
+
+    await screen.findByRole('heading', { name: '选择简历模板' });
 
     for (const template of templateRegistry) {
       expect(screen.getByRole('img', { name: `${template.name} 模板预览` })).toHaveAttribute(
