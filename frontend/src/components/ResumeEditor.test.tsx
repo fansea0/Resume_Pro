@@ -27,10 +27,10 @@ describe('ResumeEditor', () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole('button', { name: '添加工作经历' }));
-    expect(screen.getByLabelText('公司 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('公司 3')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '删除工作经历 1' }));
-    expect(screen.queryByLabelText('公司 1')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '删除工作经历 3' }));
+    expect(screen.queryByLabelText('公司 3')).not.toBeInTheDocument();
   });
 
   it('uses a UUID when adding an experience to a loaded resume', () => {

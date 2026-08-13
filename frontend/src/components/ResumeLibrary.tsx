@@ -5,10 +5,11 @@ import type { ResumeDocument } from '../types/resume';
 interface ResumeLibraryProps {
   document: ResumeDocument;
   onChange: (document: ResumeDocument) => void;
+  onRestoreSample: () => void;
   onSelect: (document: ResumeDocument) => void;
 }
 
-export function ResumeLibrary({ document, onChange, onSelect }: ResumeLibraryProps) {
+export function ResumeLibrary({ document, onChange, onRestoreSample, onSelect }: ResumeLibraryProps) {
   const [items, setItems] = useState<StoredResume[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,6 +74,10 @@ export function ResumeLibrary({ document, onChange, onSelect }: ResumeLibraryPro
         <button disabled={saving} onClick={saveNew} type="button">新建并保存</button>
         <button disabled={saving} onClick={saveCurrent} type="button">保存更改</button>
         <button disabled={saving || selectedId === null} onClick={remove} type="button">删除</button>
+      </div>
+      <div className="resume-library__sample">
+        <button onClick={onRestoreSample} type="button">恢复示例内容</button>
+        <p>恢复示例不会自动保存；仅在你选择保存时才会写入简历库。</p>
       </div>
       {loading ? <p>正在加载简历…</p> : <ul className="resume-library__list">{items.map((item) => <li key={item.id}><button aria-pressed={item.id === selectedId} onClick={() => select(item)} type="button">{item.title}</button></li>)}</ul>}
       {error && <p className="resume-library__error" role="alert">{error}</p>}
