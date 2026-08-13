@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ResumeEditor } from './components/ResumeEditor';
+import { ResumeLibrary } from './components/ResumeLibrary';
 import { ResumePreview } from './components/ResumePreview';
 import { TemplatePicker } from './components/TemplatePicker';
 import { createEmptyResumeDocument } from './types/resume';
@@ -13,6 +14,7 @@ export default function App() {
       <p>为互联网求职打造专业、美观的简历。</p>
       <div className="resume-workspace">
         <aside className="resume-workspace__editor">
+          <ResumeLibrary document={resume} onChange={setResume} onSelect={setResume} />
           <TemplatePicker onSelect={(templateId) => setResume((current) => ({ ...current, templateId }))} selectedTemplateId={resume.templateId} />
           <ResumeEditor document={resume} onChange={setResume} />
         </aside>
