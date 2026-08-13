@@ -9,7 +9,34 @@
 body { margin: 0; }
 
 .app-shell {
-  max-width: 960px;
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 3rem 1.5rem;
+  padding: 2rem 1.5rem 4rem;
 }
+
+.resume-workspace { display: grid; grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr); gap: 2rem; align-items: start; }
+.resume-workspace__editor { display: grid; gap: 1.25rem; }
+.template-picker, .resume-editor { background: #fff; border: 1px solid #e5eaf2; border-radius: 12px; padding: 1.25rem; box-shadow: 0 4px 16px rgba(32, 51, 85, 0.05); }
+.template-picker h2, .editor-section h2 { margin: 0; font-size: 1rem; }
+.template-picker__options { display: grid; gap: .6rem; margin-top: .9rem; }
+.template-picker__option { background: #fff; border: 1px solid #dbe2ed; border-radius: 8px; color: inherit; cursor: pointer; display: grid; gap: .2rem; padding: .7rem .8rem; text-align: left; }
+.template-picker__option[aria-pressed="true"] { border-color: #3267d6; box-shadow: 0 0 0 2px #dbe7ff; }
+.template-picker__option span { color: #60708a; font-size: .8rem; }
+.resume-editor { display: grid; gap: 1.5rem; }
+.editor-section { display: grid; gap: .8rem; }
+.editor-section + .editor-section { border-top: 1px solid #e8ecf2; padding-top: 1.5rem; }
+.editor-section__heading, .editor-card__heading { align-items: center; display: flex; justify-content: space-between; gap: .75rem; }
+.editor-section__heading button, .editor-card button { background: #edf3ff; border: 0; border-radius: 6px; color: #255abe; cursor: pointer; padding: .45rem .65rem; }
+.editor-card { background: #f8faff; border-radius: 8px; display: grid; gap: .75rem; padding: .85rem; }
+.editor-card h3 { font-size: .9rem; margin: 0; }
+.editor-card--inline { align-items: end; grid-template-columns: 1fr 1fr auto; }
+.editor-fields { display: grid; gap: .75rem; }
+.editor-fields--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.editor-field { color: #4f5d73; display: grid; font-size: .8rem; gap: .35rem; }
+.editor-field input, .editor-field textarea { border: 1px solid #cfd8e6; border-radius: 6px; color: #172033; font: inherit; padding: .55rem .6rem; width: 100%; }
+.editor-field textarea { min-height: 72px; resize: vertical; }
+.resume-preview { background: #e8edf6; min-height: 760px; padding: 1.5rem; position: sticky; top: 1rem; }
+.resume-preview__template { color: #6a7890; font-size: .75rem; margin: 0 0 .75rem; text-align: center; }
+
+@media (max-width: 900px) { .resume-workspace { grid-template-columns: 1fr; } .resume-preview { position: static; } }
+@media (max-width: 520px) { .app-shell { padding: 1.25rem .75rem 2rem; } .editor-fields--two, .editor-card--inline { grid-template-columns: 1fr; } .resume-preview { margin-inline: -.75rem; padding: .75rem; } }
