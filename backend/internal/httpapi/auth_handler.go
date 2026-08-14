@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"resumepro/backend/internal/auth"
 )
 
@@ -25,6 +27,7 @@ type credentialsInput struct {
 type developmentLoginInput struct {
 	Email string `json:"email"`
 }
+
 type publicUser struct {
 	ID       int64  `json:"id"`
 	Email    string `json:"email"`
@@ -35,107 +38,107 @@ func newAuthHandler(service *auth.Service, cookieSecure bool) *authHandler {
 	return &authHandler{service: service, cookieSecure: cookieSecure}
 }
 
-func (h *authHandler) register(writer http.ResponseWriter, request *http.Request) {
-	noStore(writer)
-	input, ok := decodeCredentials(writer, request)
+func (h *authHandler) register(context *gin.Context) {
+	noStore(context)
+	input, ok := decodeCredentials(context)
 	if !ok {
 		return
 	}
-	user, err := h.service.Register(request.Context(), auth.CreateUserInput{Email: input.Email, Password: input.Password})
+	user, err := h.service.Register(context.Request.Context(), auth.CreateUserInput{Email: input.Email, Password: input.Password})
 	if errors.Is(err, auth.ErrInvalidRegistration) {
-		writeError(writer, http.StatusBadRequest, "valid email and password of at least 12 characters are required")
+		writeError(context, http.StatusBadRequest, "valid email and password of at least 12 characters are required")
 		return
 	}
 	if errors.Is(err, auth.ErrEmailAlreadyRegistered) {
-		writeError(writer, http.StatusConflict, "email already registered")
+		writeError(context, http.StatusConflict, "email already registered")
 		return
 	}
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "could not register account")
+		writeError(context, http.StatusInternalServerError, "could not register account")
 		return
 	}
-	h.writeAuthenticated(writer, http.StatusCreated, user)
+	h.writeAuthenticated(context, http.StatusCreated, user)
 }
 
-func (h *authHandler) login(writer http.ResponseWriter, request *http.Request) {
-	noStore(writer)
-	input, ok := decodeCredentials(writer, request)
+func (h *authHandler) login(context *gin.Context) {
+	noStore(context)
+	input, ok := decodeCredentials(context)
 	if !ok {
 		return
 	}
-	user, err := h.service.Login(request.Context(), input.Email, input.Password)
+	user, err := h.service.Login(context.Request.Context(), input.Email, input.Password)
 	if err != nil {
-		writeError(writer, http.StatusUnauthorized, "invalid email or password")
+		writeError(context, http.StatusUnauthorized, "invalid email or password")
 		return
 	}
-	h.writeAuthenticated(writer, http.StatusOK, user)
+	h.writeAuthenticated(context, http.StatusOK, user)
 }
 
-func (h *authHandler) developmentLogin(writer http.ResponseWriter, request *http.Request) {
-	noStore(writer)
-	if !isLoopbackRequest(request) {
-		writeError(writer, http.StatusForbidden, "development login requires a loopback request")
+func (h *authHandler) developmentLogin(context *gin.Context) {
+	noStore(context)
+	if !isLoopbackRequest(context.Request) {
+		writeError(context, http.StatusForbidden, "development login requires a loopback request")
 		return
 	}
-	input, ok := decodeDevelopmentLogin(writer, request)
+	input, ok := decodeDevelopmentLogin(context)
 	if !ok {
 		return
 	}
-	user, err := h.service.FindUserByEmail(request.Context(), input.Email)
+	user, err := h.service.FindUserByEmail(context.Request.Context(), input.Email)
 	if err != nil {
-		writeError(writer, http.StatusUnauthorized, "invalid email or password")
+		writeError(context, http.StatusUnauthorized, "invalid email or password")
 		return
 	}
-	h.writeAuthenticated(writer, http.StatusOK, user)
+	h.writeAuthenticated(context, http.StatusOK, user)
 }
 
-func (h *authHandler) logout(writer http.ResponseWriter, _ *http.Request) {
-	noStore(writer)
-	h.setCookie(writer, "", -1, time.Unix(1, 0))
-	writer.WriteHeader(http.StatusNoContent)
+func (h *authHandler) logout(context *gin.Context) {
+	noStore(context)
+	h.setCookie(context, "", -1, time.Unix(1, 0))
+	context.Status(http.StatusNoContent)
 }
 
-func (h *authHandler) me(writer http.ResponseWriter, request *http.Request) {
-	noStore(writer)
-	principal, ok := principalFromRequest(request)
+func (h *authHandler) me(context *gin.Context) {
+	noStore(context)
+	principal, ok := principalFromContext(context)
 	if !ok {
-		writeError(writer, http.StatusUnauthorized, "authentication required")
+		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]publicUser{"user": {ID: principal.UserID, Email: principal.Email, TenantID: principal.TenantID}})
+	writeJSON(context, http.StatusOK, map[string]publicUser{"user": {ID: principal.UserID, Email: principal.Email, TenantID: principal.TenantID}})
 }
 
-func (h *authHandler) writeAuthenticated(writer http.ResponseWriter, status int, user auth.User) {
+func (h *authHandler) writeAuthenticated(context *gin.Context, status int, user auth.User) {
 	token, err := h.service.IssueToken(user)
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "could not start session")
+		writeError(context, http.StatusInternalServerError, "could not start session")
 		return
 	}
-	h.setCookie(writer, token, int((7 * 24 * time.Hour).Seconds()), time.Now().Add(7*24*time.Hour))
-	writeJSON(writer, status, map[string]publicUser{"user": {ID: user.ID, Email: user.Email, TenantID: user.TenantID}})
+	h.setCookie(context, token, int((7 * 24 * time.Hour).Seconds()), time.Now().Add(7*24*time.Hour))
+	writeJSON(context, status, map[string]publicUser{"user": {ID: user.ID, Email: user.Email, TenantID: user.TenantID}})
 }
 
-func (h *authHandler) setCookie(writer http.ResponseWriter, value string, maxAge int, expires time.Time) {
-	http.SetCookie(writer, &http.Cookie{Name: sessionCookieName, Value: value, Path: "/", HttpOnly: true, Secure: h.cookieSecure, SameSite: http.SameSiteLaxMode, MaxAge: maxAge, Expires: expires})
+func (h *authHandler) setCookie(context *gin.Context, value string, maxAge int, expires time.Time) {
+	http.SetCookie(context.Writer, &http.Cookie{Name: sessionCookieName, Value: value, Path: "/", HttpOnly: true, Secure: h.cookieSecure, SameSite: http.SameSiteLaxMode, MaxAge: maxAge, Expires: expires})
 }
 
-func decodeCredentials(writer http.ResponseWriter, request *http.Request) (credentialsInput, bool) {
-	decoder := json.NewDecoder(request.Body)
+func decodeCredentials(context *gin.Context) (credentialsInput, bool) {
+	decoder := json.NewDecoder(context.Request.Body)
 	decoder.DisallowUnknownFields()
 	var input credentialsInput
 	if err := decoder.Decode(&input); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
-		writeError(writer, http.StatusBadRequest, "email and password are required")
+		writeError(context, http.StatusBadRequest, "email and password are required")
 		return credentialsInput{}, false
 	}
 	return input, true
 }
 
-func decodeDevelopmentLogin(writer http.ResponseWriter, request *http.Request) (developmentLoginInput, bool) {
-	decoder := json.NewDecoder(request.Body)
+func decodeDevelopmentLogin(context *gin.Context) (developmentLoginInput, bool) {
+	decoder := json.NewDecoder(context.Request.Body)
 	decoder.DisallowUnknownFields()
 	var input developmentLoginInput
 	if err := decoder.Decode(&input); err != nil || decoder.Decode(&struct{}{}) != io.EOF || !auth.ValidEmail(input.Email) {
-		writeError(writer, http.StatusBadRequest, "a valid email is required")
+		writeError(context, http.StatusBadRequest, "a valid email is required")
 		return developmentLoginInput{}, false
 	}
 	return input, true
@@ -150,4 +153,4 @@ func isLoopbackRequest(request *http.Request) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func noStore(writer http.ResponseWriter) { writer.Header().Set("Cache-Control", "no-store") }
+func noStore(context *gin.Context) { context.Header("Cache-Control", "no-store") }

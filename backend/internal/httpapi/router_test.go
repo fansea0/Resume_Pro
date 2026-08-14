@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestHealth(t *testing.T) {
@@ -18,5 +20,12 @@ func TestHealth(t *testing.T) {
 
 	if body := recorder.Body.String(); body != "{\"status\":\"ok\"}\n" {
 		t.Fatalf("body = %q, want %q", body, "{\"status\":\"ok\"}\n")
+	}
+}
+
+func TestNewRouterUsesGinEngine(t *testing.T) {
+	var router *gin.Engine = NewRouter(nil, nil, RouterConfig{})
+	if router == nil {
+		t.Fatal("router is nil")
 	}
 }

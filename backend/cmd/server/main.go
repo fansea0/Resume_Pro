@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"net/http"
 	"os"
 	"strings"
 
@@ -50,7 +49,7 @@ func main() {
 		"database_path": databasePath,
 	}).Info("starting resume API server")
 
-	if err := http.ListenAndServe(":8080", httpapi.NewRouter(auth.NewRepository(db), resume.NewRepository(db), httpapi.RouterConfig{JWTSecret: jwtSecret, CookieSecure: cookieSecure, EnableDevLogin: os.Getenv("APP_ENV") == "development"})); err != nil {
+	if err := httpapi.NewRouter(auth.NewRepository(db), resume.NewRepository(db), httpapi.RouterConfig{JWTSecret: jwtSecret, CookieSecure: cookieSecure, EnableDevLogin: os.Getenv("APP_ENV") == "development"}).Run(":8080"); err != nil {
 		logger.WithError(err).Fatal("resume API server stopped")
 	}
 }

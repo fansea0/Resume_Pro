@@ -1,8 +1,9 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/resume"
@@ -14,50 +15,37 @@ type RouterConfig struct {
 	EnableDevLogin bool
 }
 
-// NewRouter creates the HTTP API router.
-func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Repository, config RouterConfig) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/health", func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "ok"})
+// NewRouter creates the Gin HTTP API router.
+func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Repository, config RouterConfig) *gin.Engine {
+	router := gin.New()
+	router.GET("/api/health", func(context *gin.Context) {
+		writeJSON(context, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	if authRepository == nil || resumeRepository == nil {
-		return mux
+		return router
 	}
+
 	service, err := auth.NewService(authRepository, config.JWTSecret)
 	if err != nil {
 		panic(err)
 	}
 	authHandler := newAuthHandler(service, config.CookieSecure)
-	mux.HandleFunc("POST /api/auth/register", authHandler.register)
-	mux.HandleFunc("POST /api/auth/login", authHandler.login)
-	mux.HandleFunc("POST /api/auth/logout", authHandler.logout)
+	router.POST("/api/auth/register", authHandler.register)
+	router.POST("/api/auth/login", authHandler.login)
+	router.POST("/api/auth/logout", authHandler.logout)
 	if config.EnableDevLogin {
-		mux.HandleFunc("POST /api/dev/login", authHandler.developmentLogin)
+		router.POST("/api/dev/login", authHandler.developmentLogin)
 	}
-	mux.Handle("GET /api/auth/me", requireAuthentication(service, http.HandlerFunc(authHandler.me)))
-	resumeHandler := newResumeHandler(resumeRepository)
-	protected := requireAuthentication(service, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch request.Method {
-		case http.MethodGet:
-			if request.PathValue("id") == "" {
-				resumeHandler.list(writer, request)
-			} else {
-				resumeHandler.get(writer, request)
-			}
-		case http.MethodPost:
-			resumeHandler.create(writer, request)
-		case http.MethodPut:
-			resumeHandler.update(writer, request)
-		case http.MethodDelete:
-			resumeHandler.delete(writer, request)
-		}
-	}))
-	mux.Handle("GET /api/resumes", protected)
-	mux.Handle("POST /api/resumes", protected)
-	mux.Handle("GET /api/resumes/{id}", protected)
-	mux.Handle("PUT /api/resumes/{id}", protected)
-	mux.Handle("DELETE /api/resumes/{id}", protected)
+	router.GET("/api/auth/me", requireAuthentication(service), authHandler.me)
 
-	return mux
+	resumeHandler := newResumeHandler(resumeRepository)
+	protected := router.Group("/api/resumes")
+	protected.Use(requireAuthentication(service))
+	protected.GET("", resumeHandler.list)
+	protected.POST("", resumeHandler.create)
+	protected.GET("/:id", resumeHandler.get)
+	protected.PUT("/:id", resumeHandler.update)
+	protected.DELETE("/:id", resumeHandler.delete)
+
+	return router
 }

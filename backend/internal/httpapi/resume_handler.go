@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gin-gonic/gin"
+
 	"resumepro/backend/internal/resume"
 )
 
@@ -23,102 +25,98 @@ func newResumeHandler(repository *resume.Repository) *resumeHandler {
 	return &resumeHandler{repository: repository}
 }
 
-func (h *resumeHandler) list(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := principalFromRequest(request)
+func (h *resumeHandler) list(context *gin.Context) {
+	principal, ok := principalFromContext(context)
 	if !ok {
-		writeError(writer, http.StatusUnauthorized, "authentication required")
+		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	items, err := h.repository.List(request.Context(), principal.TenantID)
+	items, err := h.repository.List(context.Request.Context(), principal.TenantID)
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "could not list resumes")
+		writeError(context, http.StatusInternalServerError, "could not list resumes")
 		return
 	}
-	writeJSON(writer, http.StatusOK, items)
+	writeJSON(context, http.StatusOK, items)
 }
 
-func (h *resumeHandler) create(writer http.ResponseWriter, request *http.Request) {
-	input, ok := decodeInput(writer, request)
+func (h *resumeHandler) create(context *gin.Context) {
+	input, ok := decodeInput(context)
 	if !ok {
 		return
 	}
-	principal, ok := principalFromRequest(request)
+	principal, ok := principalFromContext(context)
 	if !ok {
-		writeError(writer, http.StatusUnauthorized, "authentication required")
+		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	item, err := h.repository.Create(request.Context(), resume.CreateInput{
-		TenantID: principal.TenantID, Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content),
-	})
+	item, err := h.repository.Create(context.Request.Context(), resume.CreateInput{TenantID: principal.TenantID, Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "could not create resume")
+		writeError(context, http.StatusInternalServerError, "could not create resume")
 		return
 	}
-	writeJSON(writer, http.StatusCreated, item)
+	writeJSON(context, http.StatusCreated, item)
 }
 
-func (h *resumeHandler) get(writer http.ResponseWriter, request *http.Request) {
-	id, ok := routeID(writer, request)
+func (h *resumeHandler) get(context *gin.Context) {
+	id, ok := routeID(context)
 	if !ok {
 		return
 	}
-	principal, ok := principalFromRequest(request)
+	principal, ok := principalFromContext(context)
 	if !ok {
-		writeError(writer, http.StatusUnauthorized, "authentication required")
+		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	item, err := h.repository.Get(request.Context(), principal.TenantID, id)
-	if !handleRepositoryError(writer, err) {
+	item, err := h.repository.Get(context.Request.Context(), principal.TenantID, id)
+	if !handleRepositoryError(context, err) {
 		return
 	}
-	writeJSON(writer, http.StatusOK, item)
+	writeJSON(context, http.StatusOK, item)
 }
 
-func (h *resumeHandler) update(writer http.ResponseWriter, request *http.Request) {
-	id, ok := routeID(writer, request)
+func (h *resumeHandler) update(context *gin.Context) {
+	id, ok := routeID(context)
 	if !ok {
 		return
 	}
-	input, ok := decodeInput(writer, request)
+	input, ok := decodeInput(context)
 	if !ok {
 		return
 	}
-	principal, ok := principalFromRequest(request)
+	principal, ok := principalFromContext(context)
 	if !ok {
-		writeError(writer, http.StatusUnauthorized, "authentication required")
+		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	item, err := h.repository.Update(request.Context(), principal.TenantID, id, resume.UpdateInput{
-		Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content),
-	})
-	if !handleRepositoryError(writer, err) {
+	item, err := h.repository.Update(context.Request.Context(), principal.TenantID, id, resume.UpdateInput{Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
+	if !handleRepositoryError(context, err) {
 		return
 	}
-	writeJSON(writer, http.StatusOK, item)
+	writeJSON(context, http.StatusOK, item)
 }
 
-func (h *resumeHandler) delete(writer http.ResponseWriter, request *http.Request) {
-	id, ok := routeID(writer, request)
+func (h *resumeHandler) delete(context *gin.Context) {
+	id, ok := routeID(context)
 	if !ok {
 		return
 	}
-	principal, ok := principalFromRequest(request)
+	principal, ok := principalFromContext(context)
 	if !ok {
-		writeError(writer, http.StatusUnauthorized, "authentication required")
+		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	if !handleRepositoryError(writer, h.repository.Delete(request.Context(), principal.TenantID, id)) {
+	if !handleRepositoryError(context, h.repository.Delete(context.Request.Context(), principal.TenantID, id)) {
 		return
 	}
-	writer.WriteHeader(http.StatusNoContent)
+	context.Status(http.StatusNoContent)
 }
 
-func decodeInput(writer http.ResponseWriter, request *http.Request) (resumeInput, bool) {
-	decoder := json.NewDecoder(request.Body)
+func decodeInput(context *gin.Context) (resumeInput, bool) {
+	decoder := json.NewDecoder(context.Request.Body)
 	decoder.DisallowUnknownFields()
 	var input resumeInput
 	if err := decoder.Decode(&input); err != nil || decoder.Decode(&struct{}{}) != io.EOF || !validInput(input) {
-		writeError(writer, http.StatusBadRequest, "title, templateId, and object content are required")
+		writeError(context, http.StatusBadRequest, "title, templateId, and object content are required")
 		return resumeInput{}, false
 	}
 	return input, true
@@ -132,33 +130,33 @@ func validInput(input resumeInput) bool {
 	return json.Unmarshal(input.Content, &object) == nil && object != nil
 }
 
-func routeID(writer http.ResponseWriter, request *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
+func routeID(context *gin.Context) (int64, bool) {
+	id, err := strconv.ParseInt(context.Param("id"), 10, 64)
 	if err != nil || id < 1 {
-		writeError(writer, http.StatusNotFound, "resume not found")
+		writeError(context, http.StatusNotFound, "resume not found")
 		return 0, false
 	}
 	return id, true
 }
 
-func handleRepositoryError(writer http.ResponseWriter, err error) bool {
+func handleRepositoryError(context *gin.Context, err error) bool {
 	if err == nil {
 		return true
 	}
 	if errors.Is(err, resume.ErrNotFound) {
-		writeError(writer, http.StatusNotFound, "resume not found")
+		writeError(context, http.StatusNotFound, "resume not found")
 	} else {
-		writeError(writer, http.StatusInternalServerError, "resume operation failed")
+		writeError(context, http.StatusInternalServerError, "resume operation failed")
 	}
 	return false
 }
 
-func writeJSON(writer http.ResponseWriter, status int, value any) {
-	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(status)
-	_ = json.NewEncoder(writer).Encode(value)
+func writeJSON(context *gin.Context, status int, value any) {
+	context.Header("Content-Type", "application/json")
+	context.Status(status)
+	_ = json.NewEncoder(context.Writer).Encode(value)
 }
 
-func writeError(writer http.ResponseWriter, status int, message string) {
-	writeJSON(writer, status, map[string]string{"error": message})
+func writeError(context *gin.Context, status int, message string) {
+	writeJSON(context, status, map[string]string{"error": message})
 }

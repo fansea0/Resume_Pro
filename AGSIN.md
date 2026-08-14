@@ -2,7 +2,7 @@
 
 ## 后端技术基线
 
-- 后端使用 Go；HTTP 接口保持在 `backend/internal/httpapi`，并通过 `NewRouter` 构造，以便在不启动真实服务的情况下测试。
+- 后端使用 Go 与 Gin；HTTP 接口保持在 `backend/internal/httpapi`，并通过 `NewRouter` 构造，以便在不启动真实服务的情况下测试。
 - 数据访问统一使用 `sqlx`，SQL、迁移和事务边界必须可测试；当前 SQLite 实现继续保留。
 - 日志统一使用 `logrus`，启动、错误和关键请求上下文应使用结构化字段记录。
 - 需要编排 LLM、工具调用或工作流时使用 Eino。未涉及 AI 能力的普通业务逻辑不得为了使用 Eino 而增加依赖。

@@ -1,33 +1,41 @@
 package httpapi
 
 import (
-	"context"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 
 	"resumepro/backend/internal/auth"
 )
 
-const sessionCookieName = "resume_session"
+const (
+	sessionCookieName   = "resume_session"
+	principalContextKey = "authenticated_principal"
+)
 
-type principalContextKey struct{}
-
-func requireAuthentication(service *auth.Service, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		cookie, err := request.Cookie(sessionCookieName)
+func requireAuthentication(service *auth.Service) gin.HandlerFunc {
+	return func(context *gin.Context) {
+		cookie, err := context.Request.Cookie(sessionCookieName)
 		if err != nil {
-			writeError(writer, http.StatusUnauthorized, "authentication required")
+			writeError(context, http.StatusUnauthorized, "authentication required")
+			context.Abort()
 			return
 		}
 		principal, err := service.VerifyToken(cookie.Value)
 		if err != nil {
-			writeError(writer, http.StatusUnauthorized, "authentication required")
+			writeError(context, http.StatusUnauthorized, "authentication required")
+			context.Abort()
 			return
 		}
-		next.ServeHTTP(writer, request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal)))
-	})
+		context.Set(principalContextKey, principal)
+	}
 }
 
-func principalFromRequest(request *http.Request) (auth.Principal, bool) {
-	principal, ok := request.Context().Value(principalContextKey{}).(auth.Principal)
-	return principal, ok
+func principalFromContext(context *gin.Context) (auth.Principal, bool) {
+	principal, ok := context.Get(principalContextKey)
+	if !ok {
+		return auth.Principal{}, false
+	}
+	value, ok := principal.(auth.Principal)
+	return value, ok
 }
