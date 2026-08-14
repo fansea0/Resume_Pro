@@ -162,9 +162,10 @@
 .template-azure-chronicle__entry p { margin-bottom: .8mm; }
 .template-azure-chronicle__entry ul { margin: 1mm 0 0; padding-left: 1.15rem; }
 .template-azure-chronicle__entry li { margin: .5mm 0; padding-left: .12rem; }
-.template-azure-chronicle__skills { display: flex; flex-wrap: wrap; gap: 1.5mm; }
-.template-azure-chronicle__skills span { background: #f6f9ff; border-left: 2px solid var(--azure-accent); font-size: .8rem; padding: .65mm 2mm; }
-.template-azure-chronicle__skills small { color: #2767d9; margin-left: 1.2mm; }
+.template-azure-chronicle__skills { border-top: 1px solid var(--azure-rule); display: grid; gap: 0 5mm; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
+.template-azure-chronicle__skills > div { align-items: baseline; border-bottom: 1px solid #e9f0ff; display: flex; gap: 2mm; min-width: 0; padding: 1.45mm 0; }
+.template-azure-chronicle__skills dt { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; font-size: .8rem; font-weight: 650; min-width: 0; }
+.template-azure-chronicle__skills dd { color: #2767d9; flex: 0 0 auto; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; font-size: .68rem; font-weight: 600; margin: 0 0 0 auto; white-space: nowrap; }
 
 @media (max-width: 640px) {
   .resume-template { min-height: auto; padding: 1.5rem; }
@@ -187,4 +188,5 @@
   .template-azure-chronicle { padding: 0 1.5rem 1.5rem; }
   .template-azure-chronicle__entry-heading { align-items: flex-start; flex-direction: column; gap: 0; }
   .template-azure-chronicle__entry-meta { align-items: flex-start; flex-direction: row; gap: .35rem; text-align: left; }
+  .template-azure-chronicle__skills { grid-template-columns: 1fr; }
 }
