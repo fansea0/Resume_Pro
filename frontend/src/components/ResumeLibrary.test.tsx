@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ResumeLibrary } from './ResumeLibrary';
@@ -34,6 +34,7 @@ vi.mock('../utils/exportResumePng', () => ({
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
@@ -87,6 +88,22 @@ describe('ResumeLibrary', () => {
     fireEvent.click(screen.getByRole('button', { name: '新建并保存' }));
     await waitFor(() => expect(createResume).toHaveBeenCalledWith(document));
     expect(updateResume).not.toHaveBeenCalled();
+  });
+
+  it('cancels an in-flight autosave before deleting the selected draft', async () => {
+    vi.useFakeTimers();
+    const document = createEmptyResumeDocument();
+    let resolveUpdate!: (value: { id: number; title: string; templateId: string; content: string; createdAt: string; updatedAt: string }) => void;
+    updateResume.mockImplementationOnce(() => new Promise((resolve) => { resolveUpdate = resolve; }));
+    deleteResume.mockResolvedValueOnce(undefined);
+    render(<ResumeLibrary document={document} selectedId={7} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await act(async () => { resolveUpdate({ id: 7, title: document.title, templateId: document.templateId, content: JSON.stringify(document), createdAt: '', updatedAt: '' }); await vi.advanceTimersByTimeAsync(800); });
+
+    expect(deleteResume).toHaveBeenCalledWith(7);
+    expect(createResume).not.toHaveBeenCalled();
   });
 
   it('exports with the browser print dialog', () => {

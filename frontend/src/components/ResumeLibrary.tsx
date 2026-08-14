@@ -41,6 +41,7 @@ export function ResumeLibrary({ document, selectedId, onSelectedIdChange, onChan
   const select = (item: StoredResume) => {
     try {
       const next = documentFromStored(item);
+      autosave.cancel();
       onSelectedIdChange(item.id);
       onSelect(next);
       setError(null);
@@ -49,6 +50,7 @@ export function ResumeLibrary({ document, selectedId, onSelectedIdChange, onChan
 
   const remove = async () => {
     if (selectedId === null) return;
+    autosave.cancel();
     setDeleting(true); setError(null);
     try {
       await deleteResume(selectedId);
@@ -78,13 +80,14 @@ export function ResumeLibrary({ document, selectedId, onSelectedIdChange, onChan
         <button disabled={autosave.status === 'saving' || deleting} onClick={() => { onSelectedIdChange(null); void autosave.saveNow({ newDraft: true }); }} type="button">新建并保存</button>
         <button disabled={autosave.status === 'saving' || deleting} onClick={() => void autosave.saveNow()} type="button">保存更改</button>
         <button disabled={autosave.status === 'saving' || deleting} onClick={() => void autosave.saveNow()} type="button">立即保存</button>
-        <button disabled={autosave.status === 'saving' || deleting || selectedId === null} onClick={remove} type="button">删除</button>
+        <button disabled={deleting || selectedId === null} onClick={remove} type="button">删除</button>
       </div>
       <div className="resume-library__sample">
         <button onClick={onRestoreSample} type="button">恢复示例内容</button>
         <p>恢复后的内容会按自动保存规则写入当前草稿。</p>
       </div>
       {loading ? <p>正在加载简历…</p> : <ul className="resume-library__list">{items.map((item) => <li key={item.id}><button aria-pressed={item.id === selectedId} onClick={() => select(item)} type="button">{item.title}</button></li>)}</ul>}
+      {autosave.status === 'dirty' && <p className="resume-library__status" aria-live="polite">待保存</p>}
       {autosave.status === 'saving' && <p className="resume-library__status" aria-live="polite">正在保存…</p>}
       {autosave.status === 'saved' && <p className="resume-library__status" aria-live="polite">已保存</p>}
       {(error || autosave.error) && <p className="resume-library__error" role="alert">{error ?? autosave.error}</p>}
