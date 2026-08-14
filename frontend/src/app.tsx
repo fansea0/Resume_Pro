@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getCurrentUser, logout, type AuthUser } from './api/auth';
 import { onUnauthorized } from './api/client';
 import { AuthScreen } from './components/AuthScreen';
@@ -22,23 +22,40 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [disabledTemplateIds, setDisabledTemplateIds] = useState<typeof resume.templateId[]>([]);
   const previewRef = useRef<HTMLDivElement>(null);
+  const isMounted = useRef(false);
+  const templateStatusRequestVersion = useRef(0);
+
+  const loadTemplateStatus = useCallback(async () => {
+    const requestVersion = ++templateStatusRequestVersion.current;
+    try {
+      const status = await getTemplateStatus();
+      if (isMounted.current && requestVersion === templateStatusRequestVersion.current) {
+        setDisabledTemplateIds(status.disabledTemplateIds);
+      }
+    } catch {
+      if (isMounted.current && requestVersion === templateStatusRequestVersion.current) {
+        setDisabledTemplateIds([]);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
+    isMounted.current = true;
     getCurrentUser()
       .then((currentUser) => {
         if (!active) return;
         setUser(currentUser);
         setAuthState('authenticated');
-        void getTemplateStatus().then((status) => {
-          if (active) setDisabledTemplateIds(status.disabledTemplateIds);
-        }).catch(() => undefined);
+        void loadTemplateStatus();
       })
       .catch(() => {
         if (active) setAuthState('unauthenticated');
       });
     const removeUnauthorizedListener = onUnauthorized(() => {
       if (!active) return;
+      templateStatusRequestVersion.current += 1;
+      setDisabledTemplateIds([]);
       setUser(null);
       setAuthState('unauthenticated');
       setView('gallery');
@@ -46,9 +63,11 @@ export default function App() {
     });
     return () => {
       active = false;
+      isMounted.current = false;
+      templateStatusRequestVersion.current += 1;
       removeUnauthorizedListener();
     };
-  }, []);
+  }, [loadTemplateStatus]);
 
   const selectTemplate = (templateId: typeof resume.templateId) => {
     setResume((current) => ({ ...current, templateId }));
@@ -73,12 +92,15 @@ export default function App() {
     setUser(nextUser);
     setAuthState('authenticated');
     setView('gallery');
+    void loadTemplateStatus();
   };
 
   const handleLogout = async () => {
     try {
       await logout();
     } finally {
+      templateStatusRequestVersion.current += 1;
+      setDisabledTemplateIds([]);
       setUser(null);
       setAuthState('unauthenticated');
       setView('gallery');
