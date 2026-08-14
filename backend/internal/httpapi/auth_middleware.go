@@ -31,10 +31,16 @@ func requireAuthentication(service *auth.Service) gin.HandlerFunc {
 	}
 }
 
-func requireAdministrator() gin.HandlerFunc {
+func requireAdministrator(repository *auth.Repository) gin.HandlerFunc {
 	return func(context *gin.Context) {
 		principal, ok := principalFromContext(context)
-		if !ok || !principal.IsAdmin {
+		if !ok {
+			writeError(context, http.StatusForbidden, "administrator access required")
+			context.Abort()
+			return
+		}
+		user, err := repository.GetUserByID(context.Request.Context(), principal.UserID)
+		if err != nil || !user.IsAdmin {
 			writeError(context, http.StatusForbidden, "administrator access required")
 			context.Abort()
 			return

@@ -18,7 +18,7 @@ func NewRepository(db *sqlx.DB) *Repository { return &Repository{db: db} }
 
 // ListDisabled returns template IDs that administrators have disabled.
 func (r *Repository) ListDisabled(ctx context.Context) ([]string, error) {
-	var templateIDs []string
+	templateIDs := make([]string, 0)
 	if err := r.db.SelectContext(ctx, &templateIDs, `SELECT template_id FROM disabled_templates ORDER BY template_id`); err != nil {
 		return nil, err
 	}

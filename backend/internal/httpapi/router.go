@@ -49,8 +49,9 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 	protected.DELETE("/:id", resumeHandler.delete)
 
 	templateHandler := newTemplateHandler(templateRepository)
+	router.GET("/api/templates", templateHandler.listDisabled)
 	admin := router.Group("/api/admin/templates")
-	admin.Use(requireAuthentication(service), requireAdministrator())
+	admin.Use(requireAuthentication(service), requireAdministrator(authRepository))
 	admin.GET("", templateHandler.listDisabled)
 	admin.DELETE("/:templateID", templateHandler.disable)
 

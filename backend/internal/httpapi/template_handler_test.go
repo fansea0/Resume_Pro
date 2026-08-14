@@ -16,7 +16,7 @@ import (
 )
 
 func TestTemplateAdminRejectsRegularUsers(t *testing.T) {
-	router, userCookie, _ := newTemplateAdminTestRouter(t, false)
+	router, userCookie, _, _ := newTemplateAdminTestRouter(t, false)
 	for _, method := range []string{http.MethodGet, http.MethodDelete} {
 		path := "/api/admin/templates"
 		if method == http.MethodDelete {
@@ -30,7 +30,7 @@ func TestTemplateAdminRejectsRegularUsers(t *testing.T) {
 }
 
 func TestTemplateAdminListsAndDisablesTemplates(t *testing.T) {
-	router, adminCookie, _ := newTemplateAdminTestRouter(t, true)
+	router, adminCookie, _, _ := newTemplateAdminTestRouter(t, true)
 
 	initial := authJSONRequest(t, router, http.MethodGet, "/api/admin/templates", "", adminCookie)
 	if initial.Code != http.StatusOK {
@@ -59,8 +59,48 @@ func TestTemplateAdminListsAndDisablesTemplates(t *testing.T) {
 	}
 }
 
+func TestTemplateAdminRejectsSessionAfterAdministratorRoleIsRevoked(t *testing.T) {
+	router, adminCookie, _, authRepository := newTemplateAdminTestRouter(t, true)
+	if _, err := authRepository.SetAdministrators(context.Background(), nil); err != nil {
+		t.Fatalf("revoke administrator role: %v", err)
+	}
+
+	for _, method := range []string{http.MethodGet, http.MethodDelete} {
+		path := "/api/admin/templates"
+		if method == http.MethodDelete {
+			path += "/minimal"
+		}
+		response := authJSONRequest(t, router, method, path, "", adminCookie)
+		if response.Code != http.StatusForbidden {
+			t.Errorf("revoked administrator %s status = %d, want %d: %s", method, response.Code, http.StatusForbidden, response.Body.String())
+		}
+	}
+}
+
+func TestPublicTemplatesListsDisabledTemplateIDs(t *testing.T) {
+	router, adminCookie, _, _ := newTemplateAdminTestRouter(t, true)
+	disabled := authJSONRequest(t, router, http.MethodDelete, "/api/admin/templates/minimal", "", adminCookie)
+	if disabled.Code != http.StatusNoContent {
+		t.Fatalf("disable status = %d: %s", disabled.Code, disabled.Body.String())
+	}
+
+	response := authJSONRequest(t, router, http.MethodGet, "/api/templates", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("public list status = %d: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		DisabledTemplateIDs []string `json:"disabledTemplateIds"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.DisabledTemplateIDs) != 1 || body.DisabledTemplateIDs[0] != "minimal" {
+		t.Fatalf("disabled template IDs = %#v, want [minimal]", body.DisabledTemplateIDs)
+	}
+}
+
 func TestAuthenticatedResponsesExposeAdministratorRole(t *testing.T) {
-	router, adminCookie, _ := newTemplateAdminTestRouter(t, true)
+	router, adminCookie, _, _ := newTemplateAdminTestRouter(t, true)
 	response := authJSONRequest(t, router, http.MethodGet, "/api/auth/me", "", adminCookie)
 	if response.Code != http.StatusOK {
 		t.Fatalf("me status = %d: %s", response.Code, response.Body.String())
@@ -76,7 +116,7 @@ func TestAuthenticatedResponsesExposeAdministratorRole(t *testing.T) {
 	}
 }
 
-func newTemplateAdminTestRouter(t *testing.T, administrator bool) (http.Handler, *http.Cookie, *templates.Repository) {
+func newTemplateAdminTestRouter(t *testing.T, administrator bool) (http.Handler, *http.Cookie, *templates.Repository, *auth.Repository) {
 	t.Helper()
 	db, err := sqlx.Open("sqlite", ":memory:")
 	if err != nil {
@@ -102,5 +142,5 @@ func newTemplateAdminTestRouter(t *testing.T, administrator bool) (http.Handler,
 	if login.Code != http.StatusOK {
 		t.Fatalf("login status = %d: %s", login.Code, login.Body.String())
 	}
-	return router, responseCookie(t, login, sessionCookieName), templates.NewRepository(db)
+	return router, responseCookie(t, login, sessionCookieName), templates.NewRepository(db), authRepository
 }
