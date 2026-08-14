@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL COLLATE NOCASE UNIQUE,
   password_hash TEXT NOT NULL,
   tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+  is_admin INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL
 );
@@ -69,6 +70,9 @@ func Migrate(ctx context.Context, db *sqlx.DB) error {
 	// A stable bootstrap tenant makes this migration safe for databases created
 	// before authentication and for older repository callers during rollout.
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO tenants (id, display_name, created_at, updated_at) VALUES (1, 'Legacy workspace', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, tx, "users", "is_admin", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	if err := addColumnIfMissing(ctx, tx, "resumes", "tenant_id", "INTEGER NOT NULL DEFAULT 1"); err != nil {

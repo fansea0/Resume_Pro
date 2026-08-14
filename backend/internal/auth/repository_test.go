@@ -81,6 +81,83 @@ func TestRepositoryCreateUser(t *testing.T) {
 	}
 }
 
+func TestRepositoryNewUsersAreNotAdministrators(t *testing.T) {
+	t.Parallel()
+
+	db, err := sqlx.Open("sqlite", "file:auth-new-admin-test?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	if err := store.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	user, err := auth.NewRepository(db).CreateUser(ctx, auth.CreateUserInput{
+		Email: "member@example.com", Password: "correct horse battery staple",
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if user.IsAdmin {
+		t.Fatal("new user unexpectedly has administrator role")
+	}
+}
+
+func TestRepositorySetAdministrators(t *testing.T) {
+	t.Parallel()
+
+	db, err := sqlx.Open("sqlite", "file:auth-set-admin-test?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	if err := store.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	repository := auth.NewRepository(db)
+	admin, err := repository.CreateUser(ctx, auth.CreateUserInput{Email: "admin@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("create administrator candidate: %v", err)
+	}
+	member, err := repository.CreateUser(ctx, auth.CreateUserInput{Email: "member@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+
+	if err := repository.SetAdministrators(ctx, []string{"  ADMIN@EXAMPLE.COM  "}); err != nil {
+		t.Fatalf("set administrators: %v", err)
+	}
+	admin, err = repository.GetUserByID(ctx, admin.ID)
+	if err != nil {
+		t.Fatalf("reload administrator: %v", err)
+	}
+	member, err = repository.GetUserByID(ctx, member.ID)
+	if err != nil {
+		t.Fatalf("reload member: %v", err)
+	}
+	if !admin.IsAdmin {
+		t.Fatal("configured administrator was not promoted")
+	}
+	if member.IsAdmin {
+		t.Fatal("unconfigured user was promoted")
+	}
+
+	if err := repository.SetAdministrators(ctx, nil); err != nil {
+		t.Fatalf("clear administrators: %v", err)
+	}
+	admin, err = repository.GetUserByID(ctx, admin.ID)
+	if err != nil {
+		t.Fatalf("reload cleared administrator: %v", err)
+	}
+	if admin.IsAdmin {
+		t.Fatal("empty administrator configuration left a user promoted")
+	}
+}
+
 func TestMigrationBackfillsLegacyResumeTenants(t *testing.T) {
 	t.Parallel()
 

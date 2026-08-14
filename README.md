@@ -18,6 +18,7 @@ The API reads the following environment variables when it starts.
 | `APP_ENV` | `development` | Enables the local-only development login endpoint only when set exactly to `development`. Use `production` in production. |
 | `COOKIE_SECURE` | `false` | Enables the cookie `Secure` attribute only when set exactly to `true`. Keep it `false` for local HTTP development; set it to `true` behind HTTPS. |
 | `RESUME_DB_PATH` | `./resume.db` | Optional SQLite database path. |
+| `ADMIN_EMAILS` | `admin@example.com` | Comma-separated administrator email allow-list. On each API startup, existing matching users are made administrators and all other administrator roles are removed. |
 
 Generate a local secret without committing it to source control:
 
@@ -29,6 +30,8 @@ export RESUME_DB_PATH="./resume.db"
 ```
 
 `JWT_SECRET` is held only by the server. The browser receives a signed JWT in the `resume_session` HttpOnly cookie; it is not stored in local storage. The cookie uses `SameSite=Lax` and a seven-day lifetime.
+
+To create the first administrator, register the account first, then set `ADMIN_EMAILS` to that email and start (or restart) the API. The synchronization runs only during startup, so newly registered administrator accounts need one restart before receiving the role.
 
 ## Start locally
 

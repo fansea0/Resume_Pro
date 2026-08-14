@@ -84,12 +84,51 @@ func (r *Repository) CreateUser(ctx context.Context, input CreateUserInput) (Use
 	if err := tx.Commit(); err != nil {
 		return User{}, err
 	}
-	return User{ID: userID, Email: email, PasswordHash: hash, TenantID: tenantID, CreatedAt: now, UpdatedAt: now}, nil
+	return User{ID: userID, Email: email, PasswordHash: hash, TenantID: tenantID, IsAdmin: false, CreatedAt: now, UpdatedAt: now}, nil
+}
+
+// SetAdministrators replaces the administrator role assignments with users
+// whose normalized email appears in emails. Only existing users can be promoted.
+func (r *Repository) SetAdministrators(ctx context.Context, emails []string) error {
+	normalized := make([]string, 0, len(emails))
+	seen := make(map[string]struct{}, len(emails))
+	for _, email := range emails {
+		email = NormalizeEmail(email)
+		if email == "" {
+			continue
+		}
+		if _, exists := seen[email]; exists {
+			continue
+		}
+		seen[email] = struct{}{}
+		normalized = append(normalized, email)
+	}
+
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET is_admin = 0 WHERE is_admin <> 0`); err != nil {
+		return err
+	}
+	if len(normalized) > 0 {
+		placeholders := make([]string, len(normalized))
+		arguments := make([]any, len(normalized))
+		for index, email := range normalized {
+			placeholders[index] = "?"
+			arguments[index] = email
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET is_admin = 1 WHERE email IN (`+strings.Join(placeholders, ", ")+`)`, arguments...); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, error) {
 	var user User
-	err := r.db.GetContext(ctx, &user, `SELECT id, email, password_hash, tenant_id, created_at, updated_at FROM users WHERE email = ?`, NormalizeEmail(email))
+	err := r.db.GetContext(ctx, &user, `SELECT id, email, password_hash, tenant_id, is_admin, created_at, updated_at FROM users WHERE email = ?`, NormalizeEmail(email))
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}
@@ -98,7 +137,7 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, er
 
 func (r *Repository) GetUserByID(ctx context.Context, id int64) (User, error) {
 	var user User
-	err := r.db.GetContext(ctx, &user, `SELECT id, email, password_hash, tenant_id, created_at, updated_at FROM users WHERE id = ?`, id)
+	err := r.db.GetContext(ctx, &user, `SELECT id, email, password_hash, tenant_id, is_admin, created_at, updated_at FROM users WHERE id = ?`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}
