@@ -89,7 +89,7 @@ func (r *Repository) CreateUser(ctx context.Context, input CreateUserInput) (Use
 
 // SetAdministrators replaces the administrator role assignments with users
 // whose normalized email appears in emails. Only existing users can be promoted.
-func (r *Repository) SetAdministrators(ctx context.Context, emails []string) error {
+func (r *Repository) SetAdministrators(ctx context.Context, emails []string) (int, error) {
 	normalized := make([]string, 0, len(emails))
 	seen := make(map[string]struct{}, len(emails))
 	for _, email := range emails {
@@ -106,12 +106,13 @@ func (r *Repository) SetAdministrators(ctx context.Context, emails []string) err
 
 	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `UPDATE users SET is_admin = 0 WHERE is_admin <> 0`); err != nil {
-		return err
+		return 0, err
 	}
+	promotedCount := 0
 	if len(normalized) > 0 {
 		placeholders := make([]string, len(normalized))
 		arguments := make([]any, len(normalized))
@@ -119,11 +120,20 @@ func (r *Repository) SetAdministrators(ctx context.Context, emails []string) err
 			placeholders[index] = "?"
 			arguments[index] = email
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE users SET is_admin = 1 WHERE email IN (`+strings.Join(placeholders, ", ")+`)`, arguments...); err != nil {
-			return err
+		result, err := tx.ExecContext(ctx, `UPDATE users SET is_admin = 1 WHERE email IN (`+strings.Join(placeholders, ", ")+`)`, arguments...)
+		if err != nil {
+			return 0, err
 		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		promotedCount = int(rowsAffected)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return promotedCount, nil
 }
 
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, error) {

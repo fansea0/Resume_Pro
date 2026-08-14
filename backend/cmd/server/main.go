@@ -45,10 +45,11 @@ func main() {
 	}
 	authRepository := auth.NewRepository(db)
 	administratorEmails := strings.Split(os.Getenv("ADMIN_EMAILS"), ",")
-	if err := authRepository.SetAdministrators(context.Background(), administratorEmails); err != nil {
+	administratorCount, err := authRepository.SetAdministrators(context.Background(), administratorEmails)
+	if err != nil {
 		logger.WithError(err).Fatal("synchronize administrators")
 	}
-	logger.WithField("administrator_count", configuredAdministratorCount(administratorEmails)).Info("synchronized administrators")
+	logger.WithField("administrator_count", administratorCount).Info("synchronized administrators")
 	logger.WithFields(logrus.Fields{
 		"address":       ":8080",
 		"cookie_secure": cookieSecure,
@@ -58,15 +59,4 @@ func main() {
 	if err := httpapi.NewRouter(authRepository, resume.NewRepository(db), httpapi.RouterConfig{JWTSecret: jwtSecret, CookieSecure: cookieSecure, EnableDevLogin: os.Getenv("APP_ENV") == "development"}).Run(":8080"); err != nil {
 		logger.WithError(err).Fatal("resume API server stopped")
 	}
-}
-
-func configuredAdministratorCount(emails []string) int {
-	seen := make(map[string]struct{}, len(emails))
-	for _, email := range emails {
-		email = auth.NormalizeEmail(email)
-		if email != "" {
-			seen[email] = struct{}{}
-		}
-	}
-	return len(seen)
 }

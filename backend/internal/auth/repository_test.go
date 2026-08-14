@@ -128,7 +128,7 @@ func TestRepositorySetAdministrators(t *testing.T) {
 		t.Fatalf("create member: %v", err)
 	}
 
-	if err := repository.SetAdministrators(ctx, []string{"  ADMIN@EXAMPLE.COM  "}); err != nil {
+	if _, err := repository.SetAdministrators(ctx, []string{"  ADMIN@EXAMPLE.COM  "}); err != nil {
 		t.Fatalf("set administrators: %v", err)
 	}
 	admin, err = repository.GetUserByID(ctx, admin.ID)
@@ -146,7 +146,7 @@ func TestRepositorySetAdministrators(t *testing.T) {
 		t.Fatal("unconfigured user was promoted")
 	}
 
-	if err := repository.SetAdministrators(ctx, nil); err != nil {
+	if _, err := repository.SetAdministrators(ctx, nil); err != nil {
 		t.Fatalf("clear administrators: %v", err)
 	}
 	admin, err = repository.GetUserByID(ctx, admin.ID)
@@ -155,6 +155,40 @@ func TestRepositorySetAdministrators(t *testing.T) {
 	}
 	if admin.IsAdmin {
 		t.Fatal("empty administrator configuration left a user promoted")
+	}
+}
+
+func TestRepositorySetAdministratorsReturnsPromotedUserCount(t *testing.T) {
+	t.Parallel()
+
+	db, err := sqlx.Open("sqlite", "file:auth-admin-count-test?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	if err := store.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	repository := auth.NewRepository(db)
+	count, err := repository.SetAdministrators(ctx, []string{"missing@example.com"})
+	if err != nil {
+		t.Fatalf("set missing administrator: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("missing administrator count = %d, want 0", count)
+	}
+	if _, err := repository.CreateUser(ctx, auth.CreateUserInput{Email: "admin@example.com", Password: "correct horse battery staple"}); err != nil {
+		t.Fatalf("create administrator candidate: %v", err)
+	}
+
+	count, err = repository.SetAdministrators(ctx, []string{"ADMIN@example.com", "missing@example.com"})
+	if err != nil {
+		t.Fatalf("set existing administrator: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("promoted administrator count = %d, want 1", count)
 	}
 }
 
