@@ -88,11 +88,11 @@ export function ResumeDrafts({ onCreate, onSelect }: ResumeDraftsProps) {
                 <dl className="resume-drafts__metadata">
                   <div>
                     <dt>模板</dt>
-                    <dd>{templateName(draft.templateId)}</dd>
+                    <dd className="resume-drafts__template-name">{templateName(draft.templateId)}</dd>
                   </div>
                   <div>
                     <dt>最后更新</dt>
-                    <dd><time dateTime={draft.updatedAt}>{dateFormatter.format(new Date(draft.updatedAt))}</time></dd>
+                    <dd><time className="resume-drafts__updated-at" dateTime={draft.updatedAt}>{dateFormatter.format(new Date(draft.updatedAt))}</time></dd>
                   </div>
                 </dl>
               </article>
