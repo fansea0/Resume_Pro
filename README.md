@@ -35,6 +35,8 @@ Start the API in one terminal:
 ```bash
 cd backend
 JWT_SECRET="$JWT_SECRET" COOKIE_SECURE="$COOKIE_SECURE" RESUME_DB_PATH="$RESUME_DB_PATH" go run ./cmd/server
+
+For local development, `./scripts/restart.sh`, `./scripts/restart.sh backend`, and `./scripts/restart.sh frontend` set a non-production development secret when `JWT_SECRET` is unset. Do not use that fallback in production.
 ```
 
 Start the web application in a second terminal:

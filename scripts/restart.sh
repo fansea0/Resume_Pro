@@ -3,6 +3,14 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Local-only defaults. Production must inject its own high-entropy secret and
+# enable secure cookies behind HTTPS.
+if [[ -z "${JWT_SECRET:-}" ]]; then
+  export JWT_SECRET="resume-pro-local-development-secret-change-this-value"
+  echo "Using the local development JWT secret. Set JWT_SECRET explicitly before production use."
+fi
+export COOKIE_SECURE="${COOKIE_SECURE:-false}"
+
 stop_port() {
   local port="$1"
   local pids
