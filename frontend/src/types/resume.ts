@@ -1,4 +1,4 @@
-export type TemplateId = 'minimal' | 'business' | 'creative' | 'tech' | 'editorial' | 'redline' | 'violet';
+export type TemplateId = 'minimal' | 'business' | 'creative' | 'tech' | 'editorial' | 'redline' | 'violet' | 'azure-chronicle';
 
 export interface ResumeProfile {
   fullName: string;

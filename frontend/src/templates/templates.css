@@ -143,6 +143,29 @@
 .template-violet__skills span { background: #faf6fc; border-left: 2px solid #b67bda; font-size: .8rem; padding: .65mm 2mm; }
 .template-violet__skills small { color: #9450bb; margin-left: 1.2mm; }
 
+.template-azure-chronicle { --azure-accent: #3f7ff5; --azure-rule: #dbe8ff; --azure-ink: #181818; background: #fff; color: var(--azure-ink); font-family: Georgia, "Songti SC", "SimSun", serif; font-size: .89rem; line-height: 1.58; padding: 0 14mm 16mm; position: relative; }
+.template-azure-chronicle::before { background: repeating-radial-gradient(ellipse at 16% 2%, transparent 0 13mm, #edf2fb 13.1mm 13.5mm, transparent 13.6mm 24mm), linear-gradient(160deg, transparent 0 17%, #edf2fb 17.1% 17.25%, transparent 17.35%); content: ''; height: 38mm; left: 0; opacity: .9; pointer-events: none; position: absolute; right: 54%; top: 0; }
+.template-azure-chronicle__header { align-items: flex-start; display: flex; justify-content: space-between; min-height: 42mm; padding: 8mm 0 5mm; position: relative; }
+.template-azure-chronicle__identity { position: relative; z-index: 1; }
+.template-azure-chronicle__identity h1 { font-size: 1.8rem; letter-spacing: -.035em; margin: 0 0 .45rem; }
+.template-azure-chronicle__identity p { font-size: .82rem; margin: .15rem 0; }
+.template-azure-chronicle__avatar { align-items: center; background: linear-gradient(145deg, #edf4ff, #fff); border: 1px solid #b9d0fb; border-radius: 2px; color: var(--azure-accent); display: flex; font-size: 1.8rem; font-weight: 700; height: 19mm; justify-content: center; width: 16mm; }
+.template-azure-chronicle__section-heading { align-items: center; border-bottom: 1px solid var(--azure-rule); color: var(--azure-accent); display: flex; font-family: Georgia, "Songti SC", "SimSun", serif; font-size: 1.08rem; font-weight: 700; gap: 2.5mm; letter-spacing: -.03em; margin: 4.5mm 0 2.8mm; padding-bottom: 1.2mm; text-transform: none; }
+.template-azure-chronicle__icon { align-items: center; background: var(--azure-accent); border-radius: 50%; display: inline-flex; height: 5.3mm; justify-content: center; width: 5.3mm; }
+.template-azure-chronicle__icon svg { fill: none; height: 4mm; stroke: #fff; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.4; width: 4mm; }
+.template-azure-chronicle__summary { margin-bottom: 0; }
+.template-azure-chronicle__entry { break-inside: avoid; margin: 2.8mm 0 4mm; }
+.template-azure-chronicle__entry-heading { align-items: baseline; display: flex; gap: 1rem; justify-content: space-between; }
+.template-azure-chronicle__entry h3 { font-size: .96rem; margin-bottom: .15rem; }
+.template-azure-chronicle__entry-meta { align-items: flex-end; display: flex; flex: 0 0 auto; flex-direction: column; font-size: .77rem; line-height: 1.42; text-align: right; white-space: nowrap; }
+.template-azure-chronicle__role { font-size: .84rem; margin-bottom: .8mm; }
+.template-azure-chronicle__entry p { margin-bottom: .8mm; }
+.template-azure-chronicle__entry ul { margin: 1mm 0 0; padding-left: 1.15rem; }
+.template-azure-chronicle__entry li { margin: .5mm 0; padding-left: .12rem; }
+.template-azure-chronicle__skills { display: flex; flex-wrap: wrap; gap: 1.5mm; }
+.template-azure-chronicle__skills span { background: #f6f9ff; border-left: 2px solid var(--azure-accent); font-size: .8rem; padding: .65mm 2mm; }
+.template-azure-chronicle__skills small { color: #2767d9; margin-left: 1.2mm; }
+
 @media (max-width: 640px) {
   .resume-template { min-height: auto; padding: 1.5rem; }
   .template-business__header { align-items: start; flex-direction: column; gap: .75rem; }
@@ -161,4 +184,7 @@
   .template-violet__header { min-height: 10rem; padding-top: 3.5rem; }
   .template-violet__avatar { right: .3rem; top: .75rem; }
   .template-violet__entry-top { align-items: flex-start; flex-direction: column; gap: 0; }
+  .template-azure-chronicle { padding: 0 1.5rem 1.5rem; }
+  .template-azure-chronicle__entry-heading { align-items: flex-start; flex-direction: column; gap: 0; }
+  .template-azure-chronicle__entry-meta { align-items: flex-start; flex-direction: row; gap: .35rem; text-align: left; }
 }
