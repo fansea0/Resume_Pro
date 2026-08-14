@@ -73,6 +73,14 @@ func (s *Service) FindUserByEmail(ctx context.Context, email string) (User, erro
 	return s.repository.GetUserByEmail(ctx, email)
 }
 
+// GetUser returns the current persisted account state for an authenticated user.
+func (s *Service) GetUser(ctx context.Context, userID int64) (User, error) {
+	if userID < 1 {
+		return User{}, ErrInvalidToken
+	}
+	return s.repository.GetUserByID(ctx, userID)
+}
+
 // ValidEmail reports whether an input can identify a user account.
 func ValidEmail(email string) bool {
 	return validEmail(NormalizeEmail(email))

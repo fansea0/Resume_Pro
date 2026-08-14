@@ -106,7 +106,12 @@ func (h *authHandler) me(context *gin.Context) {
 		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	writeJSON(context, http.StatusOK, map[string]publicUser{"user": {ID: principal.UserID, Email: principal.Email, TenantID: principal.TenantID, IsAdmin: principal.IsAdmin}})
+	user, err := h.service.GetUser(context.Request.Context(), principal.UserID)
+	if err != nil {
+		writeError(context, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	writeJSON(context, http.StatusOK, map[string]publicUser{"user": {ID: user.ID, Email: user.Email, TenantID: user.TenantID, IsAdmin: user.IsAdmin}})
 }
 
 func (h *authHandler) writeAuthenticated(context *gin.Context, status int, user auth.User) {

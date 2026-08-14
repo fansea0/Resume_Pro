@@ -75,6 +75,48 @@ func TestAuthLoginHidesInvalidCredentials(t *testing.T) {
 	}
 }
 
+func TestAuthMeReflectsCurrentAdministratorRole(t *testing.T) {
+	db, err := sqlx.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	if err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	authRepository := auth.NewRepository(db)
+	router := NewRouter(authRepository, resume.NewRepository(db), templates.NewRepository(db), RouterConfig{JWTSecret: "test-secret-that-is-long-enough"})
+	cookie := registerAuthUser(t, router, "role-state@example.com")
+
+	assertCurrentAdminRole := func(want bool) {
+		t.Helper()
+		response := authJSONRequest(t, router, http.MethodGet, "/api/auth/me", "", cookie)
+		if response.Code != http.StatusOK {
+			t.Fatalf("me status = %d: %s", response.Code, response.Body.String())
+		}
+		var current struct {
+			User publicUser `json:"user"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&current); err != nil {
+			t.Fatal(err)
+		}
+		if current.User.IsAdmin != want {
+			t.Fatalf("isAdmin = %t, want %t", current.User.IsAdmin, want)
+		}
+	}
+
+	if _, err := authRepository.SetAdministrators(ctx, []string{"role-state@example.com"}); err != nil {
+		t.Fatalf("promote administrator: %v", err)
+	}
+	assertCurrentAdminRole(true)
+
+	if _, err := authRepository.SetAdministrators(ctx, nil); err != nil {
+		t.Fatalf("revoke administrator: %v", err)
+	}
+	assertCurrentAdminRole(false)
+}
+
 func TestDevelopmentLoginIssuesNormalSessionForLoopbackRequest(t *testing.T) {
 	router := newDevelopmentAuthTestRouter(t)
 	registeredCookie := registerAuthUser(t, router, "dev-login@example.com")
