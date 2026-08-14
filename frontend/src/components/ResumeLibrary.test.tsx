@@ -49,7 +49,7 @@ describe('ResumeLibrary', () => {
       updatedAt: '2026-08-13T00:00:00Z',
     });
 
-    render(<ResumeLibrary document={document} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+    render(<ResumeLibrary document={document} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: '新建并保存' }));
 
     await waitFor(() => expect(createResume).toHaveBeenCalledWith(document));
@@ -67,7 +67,7 @@ describe('ResumeLibrary', () => {
       updatedAt: '2026-08-13T00:00:00Z',
     });
 
-    render(<ResumeLibrary document={document} initialSelectedId={7} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+    render(<ResumeLibrary document={document} selectedId={7} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
 
     expect(screen.getByRole('button', { name: '删除' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
@@ -79,9 +79,19 @@ describe('ResumeLibrary', () => {
     await waitFor(() => expect(deleteResume).toHaveBeenCalledWith(7));
   });
 
+  it('keeps the manual new-and-save action available for a selected draft', async () => {
+    const document = createEmptyResumeDocument();
+    createResume.mockResolvedValueOnce({ id: 8, title: document.title, templateId: document.templateId, content: JSON.stringify(document), createdAt: '', updatedAt: '' });
+    render(<ResumeLibrary document={document} selectedId={7} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '新建并保存' }));
+    await waitFor(() => expect(createResume).toHaveBeenCalledWith(document));
+    expect(updateResume).not.toHaveBeenCalled();
+  });
+
   it('exports with the browser print dialog', () => {
     const print = vi.spyOn(window, 'print').mockImplementation(() => undefined);
-    render(<ResumeLibrary document={createEmptyResumeDocument()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+    render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: '导出 PDF' }));
     expect(print).toHaveBeenCalledOnce();
@@ -93,7 +103,7 @@ describe('ResumeLibrary', () => {
     Object.defineProperty(previewRef, 'current', { value: preview });
     exportResumePng.mockResolvedValueOnce(undefined);
 
-    render(<ResumeLibrary document={createEmptyResumeDocument()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} previewRef={previewRef} />);
+    render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} previewRef={previewRef} />);
     fireEvent.click(screen.getByRole('button', { name: '导出 PNG' }));
 
     await waitFor(() => expect(exportResumePng).toHaveBeenCalledWith(preview, '我的简历'));
@@ -105,7 +115,7 @@ describe('ResumeLibrary', () => {
     Object.defineProperty(previewRef, 'current', { value: preview });
     exportResumePng.mockRejectedValueOnce(new Error('render failed'));
 
-    render(<ResumeLibrary document={createEmptyResumeDocument()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} previewRef={previewRef} />);
+    render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} previewRef={previewRef} />);
     fireEvent.click(screen.getByRole('button', { name: '导出 PNG' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('导出 PNG 失败，请稍后重试。');
@@ -113,7 +123,7 @@ describe('ResumeLibrary', () => {
 
   it('shows sample content by default and restores it without saving', async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: '使用此模板：赤线单栏' }));
+    fireEvent.click(await screen.findByRole('button', { name: '选择模板：赤线单栏' }));
 
     expect(await screen.findByText('林知夏')).toBeInTheDocument();
     const title = screen.getByLabelText('简历名称');

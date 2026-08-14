@@ -100,6 +100,7 @@ body { margin: 0; }
 .resume-library__list button { text-align: left; width: 100%; }
 .resume-library__list button[aria-pressed="true"] { background: #dbe7ff; }
 .resume-library__error { color: #b42318; margin: 0; }
+.resume-library__status { color: #55708f; font-size: .82rem; margin: 0; }
 .resume-drafts { display: grid; gap: 1.5rem; max-width: 960px; }
 .resume-drafts > div, .resume-drafts li { background: #fff; border: 1px solid #e5eaf2; border-radius: 12px; box-shadow: 0 4px 16px rgba(32, 51, 85, .05); padding: 1.25rem; }
 .resume-drafts h2, .resume-drafts h3, .resume-drafts p { margin: 0; }

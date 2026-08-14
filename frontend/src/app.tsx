@@ -150,7 +150,7 @@ export default function App() {
               </div>
               <span>当前模板：{currentTemplate?.name ?? resume.templateId}</span>
             </div>
-            <ResumeLibrary document={resume} initialSelectedId={selectedResumeId} onChange={setResume} onRestoreSample={() => setResume(createSampleResumeDocument())} onSelect={setResume} previewRef={previewRef} />
+            <ResumeLibrary document={resume} selectedId={selectedResumeId} onSelectedIdChange={setSelectedResumeId} onChange={setResume} onRestoreSample={() => setResume(createSampleResumeDocument())} onSelect={setResume} previewRef={previewRef} />
             <ResumeEditor document={resume} onChange={setResume} />
           </aside>
           <ResumePreview document={resume} ref={previewRef} />
