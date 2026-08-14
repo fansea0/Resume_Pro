@@ -17,32 +17,22 @@ export function TemplateGallery({ disabledTemplateIds = [], onSelect }: Template
       </div>
       <div className="template-gallery__grid">
         {templateRegistry.filter((template) => !disabled.has(template.id)).map((template) => (
-          <article
+          <button
             aria-label={`选择模板：${template.name}`}
             className="template-card"
             key={template.id}
             onClick={() => onSelect(template.id)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                onSelect(template.id);
-              }
-            }}
-            role="button"
-            tabIndex={0}
+            type="button"
           >
             <img alt={`${template.name} 模板预览`} className="template-card__image" src={template.previewImage} />
-            <div className="template-card__body">
-              <h3>{template.name}</h3>
-              <ul aria-label={`${template.name} 适用岗位`} className="template-card__tags">
-                {template.tags.map((tag) => <li key={tag}>{tag}</li>)}
-              </ul>
-              <p>{template.styleDescription}</p>
-              <button aria-label={`使用此模板：${template.name}`} onClick={(event) => { event.stopPropagation(); onSelect(template.id); }} type="button">
-                使用此模板
-              </button>
-            </div>
-          </article>
+            <span className="template-card__body">
+              <strong className="template-card__title">{template.name}</strong>
+              <span aria-label={`${template.name} 适用岗位`} className="template-card__tags" role="list">
+                {template.tags.map((tag) => <span key={tag} role="listitem">{tag}</span>)}
+              </span>
+              <span className="template-card__description">{template.styleDescription}</span>
+            </span>
+          </button>
         ))}
       </div>
     </section>

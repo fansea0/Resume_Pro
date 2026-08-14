@@ -11,17 +11,21 @@ vi.mock('../api/auth', () => ({
 afterEach(cleanup);
 
 describe('template gallery workflow', () => {
-  it('lets the whole card select a template by click or keyboard without double-triggering its action button', async () => {
+  it('uses one native button per card and selects exactly once for click or keyboard activation', async () => {
     const { TemplateGallery } = await import('./TemplateGallery');
     const onSelect = vi.fn();
     render(<TemplateGallery onSelect={onSelect} />);
 
     const card = screen.getByRole('button', { name: '选择模板：现代商务' });
-    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(card.tagName).toBe('BUTTON');
+    expect(screen.queryByRole('button', { name: '使用此模板：现代商务' })).not.toBeInTheDocument();
+
+    fireEvent.click(card);
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenLastCalledWith('business');
 
-    fireEvent.click(screen.getByRole('button', { name: '使用此模板：现代商务' }));
+    fireEvent.keyDown(card, { key: 'Enter' });
+    fireEvent.click(card);
     expect(onSelect).toHaveBeenCalledTimes(2);
   });
 
@@ -40,7 +44,7 @@ describe('template gallery workflow', () => {
     expect(screen.queryByTestId('resume-preview')).not.toBeInTheDocument();
     for (const template of templateRegistry) {
       expect(screen.getByRole('img', { name: `${template.name} 模板预览` })).toHaveAttribute('src', template.previewImage);
-      expect(screen.getByRole('button', { name: `使用此模板：${template.name}` })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: `选择模板：${template.name}` }).tagName).toBe('BUTTON');
       expect(screen.getByText(template.styleDescription)).toBeInTheDocument();
       for (const tag of template.tags) {
         expect(screen.getAllByText(tag).length).toBeGreaterThan(0);
