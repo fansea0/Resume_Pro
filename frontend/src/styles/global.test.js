@@ -17,4 +17,15 @@ describe('drafts workbench styles', () => {
     expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
     expect(stylesheet).toMatch(/@media \(max-width: 640px\)/);
   });
+
+  it('uses the approved workbench tokens and type roles', () => {
+    expect(stylesheet).toMatch(/--draft-paper:\s*#F8FAFC/);
+    expect(stylesheet).toMatch(/--draft-ink:\s*#162235/);
+    expect(stylesheet).toMatch(/--draft-accent:\s*#155EEF/);
+    expect(stylesheet).toMatch(/--draft-wash:\s*#EAF1FF/);
+    expect(stylesheet).toMatch(/--draft-muted:\s*#6B778C/);
+    expect(stylesheet).toMatch(/font-family:\s*"SF Pro Display",\s*"PingFang SC"/);
+    expect(stylesheet).toMatch(/\.resume-drafts__metadata dd\s*\{[\s\S]*?font-family:\s*"SF Mono"/);
+    expect(stylesheet).toMatch(/\.resume-drafts button:focus-visible\s*\{[\s\S]*?outline:\s*3px solid #155EEF/);
+  });
 });
