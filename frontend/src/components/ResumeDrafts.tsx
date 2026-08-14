@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { listResumes, type StoredResume } from '../api/resumes';
 import { templateRegistry } from '../templates/registry';
 
@@ -20,25 +20,43 @@ export function ResumeDrafts({ onCreate, onSelect }: ResumeDraftsProps) {
   const [drafts, setDrafts] = useState<StoredResume[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const isMounted = useRef(false);
+  const isLoading = useRef(false);
+  const requestVersion = useRef(0);
 
   const load = useCallback(async () => {
+    if (isLoading.current) return;
+    const version = ++requestVersion.current;
+    isLoading.current = true;
     setLoading(true);
-    setError(false);
     try {
-      setDrafts(await listResumes());
+      const items = await listResumes();
+      if (isMounted.current && version === requestVersion.current) {
+        setDrafts(items);
+        setError(false);
+      }
     } catch {
-      setError(true);
+      if (isMounted.current && version === requestVersion.current) setError(true);
     } finally {
-      setLoading(false);
+      if (isMounted.current && version === requestVersion.current) {
+        isLoading.current = false;
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
+    isMounted.current = true;
     void load();
+    return () => {
+      isMounted.current = false;
+      isLoading.current = false;
+      requestVersion.current += 1;
+    };
   }, [load]);
 
-  if (loading) return <p>正在加载草稿…</p>;
-  if (error) return <div><p role="alert">无法加载草稿，请稍后重试。</p><button onClick={load} type="button">重试</button></div>;
+  if (loading && !error) return <p>正在加载草稿…</p>;
+  if (error) return <div><p role="alert">无法加载草稿，请稍后重试。</p>{loading && <p>正在重试…</p>}<button disabled={loading} onClick={load} type="button">重试</button></div>;
 
   return (
     <section aria-labelledby="resume-drafts-title" className="resume-drafts">

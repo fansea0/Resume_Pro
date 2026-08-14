@@ -71,4 +71,32 @@ describe('ResumeDrafts', () => {
     expect(await screen.findByText('重试后的简历')).toBeInTheDocument();
     expect(listResumes).toHaveBeenCalledTimes(2);
   });
+
+  it('disables retry while another draft request is loading', async () => {
+    let resolveRetry: (value: Array<{
+      id: number;
+      title: string;
+      templateId: 'minimal';
+      content: string;
+      createdAt: string;
+      updatedAt: string;
+    }>) => void;
+    const retryRequest = new Promise<Array<{
+      id: number;
+      title: string;
+      templateId: 'minimal';
+      content: string;
+      createdAt: string;
+      updatedAt: string;
+    }>>((resolve) => { resolveRetry = resolve; });
+    listResumes.mockRejectedValueOnce(new Error('network failed')).mockReturnValueOnce(retryRequest);
+
+    render(<ResumeDrafts onCreate={vi.fn()} onSelect={vi.fn()} />);
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    expect(screen.getByRole('button', { name: '重试' })).toBeDisabled();
+
+    resolveRetry!([]);
+  });
 });
