@@ -14,7 +14,7 @@ afterEach(cleanup);
 describe('ResumeEditor', () => {
   it('updates the preview when the profile name changes', async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: '使用此模板：赤线单栏' }));
+    fireEvent.click(await screen.findByRole('button', { name: '选择模板：赤线单栏' }));
 
     fireEvent.change(screen.getByLabelText('姓名'), { target: { value: '林然' } });
 
@@ -24,15 +24,17 @@ describe('ResumeEditor', () => {
   it('selects the business template', async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: '使用此模板：现代商务' }));
+    fireEvent.click(await screen.findByRole('button', { name: '选择模板：现代商务' }));
 
   });
 
   it('adds and removes a work experience', async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: '使用此模板：赤线单栏' }));
+    fireEvent.click(await screen.findByRole('button', { name: '选择模板：赤线单栏' }));
 
-    fireEvent.click(screen.getByRole('button', { name: '添加工作经历' }));
+    const addExperience = screen.getByRole('button', { name: '添加工作经历' });
+    fireEvent.click(addExperience.closest('details')?.querySelector('summary')!);
+    fireEvent.click(addExperience);
     expect(screen.getByLabelText('公司 3')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '删除工作经历 3' }));
@@ -55,5 +57,52 @@ describe('ResumeEditor', () => {
       experiences: expect.arrayContaining([expect.objectContaining({ id: 'new-uuid' })]),
     }));
     vi.unstubAllGlobals();
+  });
+
+  it('keeps basic profile open and repeatable sections collapsed by default', () => {
+    render(<ResumeEditor document={createEmptyResumeDocument()} onChange={vi.fn()} />);
+
+    const profile = screen.getByText('基本信息').closest('details');
+    expect(profile).toHaveAttribute('open');
+    expect(profile?.querySelector('summary')).toHaveTextContent('基本信息');
+
+    ['工作经历', '项目经历', '教育经历', '专业技能'].forEach((title) => {
+      const section = screen.getByText(title).closest('details');
+      expect(section).toBeInTheDocument();
+      expect(section).not.toHaveAttribute('open');
+      expect(section?.querySelector('summary')).toHaveTextContent(title);
+    });
+  });
+
+  it('toggles each native section independently from its summary', () => {
+    render(<ResumeEditor document={createEmptyResumeDocument()} onChange={vi.fn()} />);
+
+    const work = screen.getByText('工作经历').closest('details');
+    const projects = screen.getByText('项目经历').closest('details');
+    fireEvent.click(screen.getByText('工作经历'));
+    fireEvent.click(screen.getByText('项目经历'));
+
+    expect(work).toHaveAttribute('open');
+    expect(projects).toHaveAttribute('open');
+
+    fireEvent.click(screen.getByText('工作经历'));
+    expect(work).not.toHaveAttribute('open');
+    expect(projects).toHaveAttribute('open');
+  });
+
+  it('updates document inputs after opening a collapsed section', () => {
+    const document = createEmptyResumeDocument();
+    document.experiences = [{
+      id: 'experience-1', company: '', role: '', startDate: '', endDate: '', highlights: [],
+    }];
+    const onChange = vi.fn();
+    render(<ResumeEditor document={document} onChange={onChange} />);
+
+    fireEvent.click(screen.getByText('工作经历'));
+    fireEvent.change(screen.getByLabelText('公司 1'), { target: { value: 'Apple' } });
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      experiences: [expect.objectContaining({ company: 'Apple' })],
+    }));
   });
 });

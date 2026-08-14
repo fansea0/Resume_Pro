@@ -35,17 +35,21 @@ function Field({ label, value, onChange, multiline = false }: {
   );
 }
 
-function Section({ title, addLabel, onAdd, children }: {
+function Section({ title, addLabel, defaultOpen = false, onAdd, children }: {
   title: string;
-  addLabel: string;
-  onAdd: () => void;
+  addLabel?: string;
+  defaultOpen?: boolean;
+  onAdd?: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <section className="editor-section">
-      <div className="editor-section__heading"><h2>{title}</h2><button onClick={onAdd} type="button">{addLabel}</button></div>
-      {children}
-    </section>
+    <details className="editor-section" open={defaultOpen}>
+      <summary><h2>{title}</h2></summary>
+      <div className="editor-section__content">
+        {addLabel && onAdd ? <div className="editor-section__actions"><button onClick={onAdd} type="button">{addLabel}</button></div> : null}
+        {children}
+      </div>
+    </details>
   );
 }
 
@@ -73,8 +77,7 @@ export function ResumeEditor({ document, onChange }: ResumeEditorProps) {
 
   return (
     <form className="resume-editor" onSubmit={(event) => event.preventDefault()}>
-      <section className="editor-section">
-        <h2>基本信息</h2>
+      <Section defaultOpen title="基本信息">
         <div className="editor-fields editor-fields--two">
           <Field label="姓名" onChange={(value) => updateProfile('fullName', value)} value={document.profile.fullName} />
           <Field label="求职方向" onChange={(value) => updateProfile('headline', value)} value={document.profile.headline} />
@@ -84,7 +87,7 @@ export function ResumeEditor({ document, onChange }: ResumeEditorProps) {
           <Field label="个人网站" onChange={(value) => updateProfile('website', value)} value={document.profile.website} />
         </div>
         <Field label="个人简介" multiline onChange={(value) => updateProfile('summary', value)} value={document.profile.summary} />
-      </section>
+      </Section>
 
       <Section addLabel="添加工作经历" onAdd={addExperience} title="工作经历">
         {document.experiences.map((item, index) => <div className="editor-card" key={item.id}>
