@@ -44,7 +44,7 @@ function Section({ title, addLabel, defaultOpen = false, onAdd, children }: {
 }) {
   return (
     <details className="editor-section" open={defaultOpen}>
-      <summary><h2>{title}</h2></summary>
+      <summary><span className="editor-section__title">{title}</span></summary>
       <div className="editor-section__content">
         {addLabel && onAdd ? <div className="editor-section__actions"><button onClick={onAdd} type="button">{addLabel}</button></div> : null}
         {children}

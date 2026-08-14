@@ -65,12 +65,14 @@ describe('ResumeEditor', () => {
     const profile = screen.getByText('基本信息').closest('details');
     expect(profile).toHaveAttribute('open');
     expect(profile?.querySelector('summary')).toHaveTextContent('基本信息');
+    expect(profile?.querySelector('summary')?.querySelector('h1, h2, h3, h4, h5, h6')).not.toBeInTheDocument();
 
     ['工作经历', '项目经历', '教育经历', '专业技能'].forEach((title) => {
       const section = screen.getByText(title).closest('details');
       expect(section).toBeInTheDocument();
       expect(section).not.toHaveAttribute('open');
       expect(section?.querySelector('summary')).toHaveTextContent(title);
+      expect(section?.querySelector('summary')?.querySelector('h1, h2, h3, h4, h5, h6')).not.toBeInTheDocument();
     });
   });
 

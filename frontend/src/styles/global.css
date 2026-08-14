@@ -73,8 +73,9 @@ body { margin: 0; }
 .editor-section summary::after { border-bottom: 1.5px solid currentColor; border-right: 1.5px solid currentColor; content: ''; height: .42rem; margin-left: auto; transform: rotate(45deg) translateY(-.12rem); transition: transform .16s ease; width: .42rem; }
 .editor-section[open] > summary::after { transform: rotate(225deg) translate(-.12rem, -.12rem); }
 .editor-section summary:focus-visible { border-radius: 6px; outline: 3px solid #0071e3; outline-offset: 3px; }
-.editor-section summary h2 { margin: 0; font-size: 1rem; }
-.editor-section__content { display: grid; gap: .8rem; padding-top: .2rem; }
+.editor-section__title { font-size: 1rem; font-weight: 700; }
+.editor-section:not([open]) > .editor-section__content { display: none; }
+.editor-section[open] > .editor-section__content { display: grid; gap: .8rem; padding-top: .2rem; }
 .editor-section__actions { display: flex; justify-content: flex-end; }
 .editor-card__heading { align-items: center; display: flex; justify-content: space-between; gap: .75rem; }
 .editor-section__actions button, .editor-card button { background: #edf3ff; border: 0; border-radius: 6px; color: #0071e3; cursor: pointer; padding: .45rem .65rem; }
