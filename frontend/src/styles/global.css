@@ -142,6 +142,8 @@ body { margin: 0; }
 .resume-drafts__updated-at { font-family: var(--draft-mono-font); }
 .resume-drafts button { align-self: center; background: var(--draft-accent); border: 1px solid var(--draft-accent); border-radius: 999px; color: #fff; cursor: pointer; font-family: var(--draft-body-font); font-size: .88rem; font-weight: 650; padding: .58rem .85rem; transition: background-color .16s ease, border-color .16s ease, transform .16s ease; }
 .resume-drafts button:hover { background: #1e48ad; border-color: #1e48ad; transform: translateY(-1px); }
+.resume-drafts__empty button { background: #fff; border-color: #b8c7df; color: var(--draft-accent); font-size: .82rem; justify-self: start; padding: .46rem .72rem; width: auto; }
+.resume-drafts__empty button:hover { background: #f7faff; border-color: var(--draft-accent); }
 .resume-drafts button:focus-visible { outline: 3px solid #155EEF; outline-offset: 3px; }
 .resume-drafts button:disabled { cursor: not-allowed; opacity: .6; transform: none; }
 .template-admin { display: grid; gap: 1.5rem; margin: 0 auto; max-width: 980px; }

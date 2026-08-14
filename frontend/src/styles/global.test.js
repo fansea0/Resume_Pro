@@ -18,6 +18,11 @@ describe('drafts workbench styles', () => {
     expect(stylesheet).toMatch(/@media \(max-width: 640px\)/);
   });
 
+  it('keeps the empty-state action compact instead of spanning the panel', () => {
+    expect(stylesheet).toMatch(/\.resume-drafts__empty button\s*\{[\s\S]*?justify-self:\s*start/);
+    expect(stylesheet).toMatch(/\.resume-drafts__empty button\s*\{[\s\S]*?width:\s*auto/);
+  });
+
   it('uses the approved workbench tokens and type roles', () => {
     expect(stylesheet).toMatch(/--draft-paper:\s*#F8FAFC/);
     expect(stylesheet).toMatch(/--draft-ink:\s*#162235/);
