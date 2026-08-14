@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TemplateAdmin } from './TemplateAdmin';
+import { templateRegistry } from '../templates/registry';
 
 const listAdminTemplates = vi.fn();
 const disableTemplate = vi.fn();
@@ -28,5 +29,18 @@ describe('TemplateAdmin', () => {
 
     await waitFor(() => expect(disableTemplate).toHaveBeenCalledWith('minimal'));
     expect(screen.getByText('已禁用')).toBeInTheDocument();
+  });
+
+  it('shows each template\'s job tags and style description', async () => {
+    listAdminTemplates.mockResolvedValue({ disabledTemplateIds: [] });
+    render(<TemplateAdmin />);
+
+    await screen.findByRole('heading', { name: '模板管理' });
+    for (const template of templateRegistry) {
+      expect(screen.getByText(template.styleDescription)).toBeInTheDocument();
+      for (const tag of template.tags) {
+        expect(screen.getAllByText(tag).length).toBeGreaterThan(0);
+      }
+    }
   });
 });

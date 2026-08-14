@@ -49,6 +49,13 @@ describe('templateRegistry', () => {
     expect(template.previewImage).toBe(`/template-previews/${template.id}.png`);
   });
 
+  it.each(templateRegistry)('defines Chinese job tags and a style description for $id', (template) => {
+    expect(template.tags.length).toBeGreaterThanOrEqual(2);
+    expect(template.tags.length).toBeLessThanOrEqual(3);
+    expect(template.tags.every((tag) => /[\u4e00-\u9fff]/.test(tag))).toBe(true);
+    expect(template.styleDescription).toMatch(/[\u4e00-\u9fff]/);
+  });
+
   it.each([
     ['tech', 'CAREER SIGNAL'],
     ['editorial', 'PROFILE'],

@@ -27,6 +27,10 @@ describe('template gallery workflow', () => {
     for (const template of templateRegistry) {
       expect(screen.getByRole('img', { name: `${template.name} 模板预览` })).toHaveAttribute('src', template.previewImage);
       expect(screen.getByRole('button', { name: `使用此模板：${template.name}` })).toBeInTheDocument();
+      expect(screen.getByText(template.styleDescription)).toBeInTheDocument();
+      for (const tag of template.tags) {
+        expect(screen.getAllByText(tag).length).toBeGreaterThan(0);
+      }
     }
 
     fireEvent.click(screen.getByRole('button', { name: '使用此模板：现代商务' }));

@@ -64,7 +64,10 @@ export function TemplateAdmin({ onDisabledTemplateIdsChange }: TemplateAdminProp
                 <img alt={`${template.name} 模板预览`} src={template.previewImage} />
                 <div>
                   <h3>{template.name}</h3>
-                  <p>{template.description}</p>
+                  <ul aria-label={`${template.name} 适用岗位`} className="template-admin__tags">
+                    {template.tags.map((tag) => <li key={tag}>{tag}</li>)}
+                  </ul>
+                  <p>{template.styleDescription}</p>
                   {isDisabled ? <span className="template-admin__status">已禁用</span> : (
                     <button aria-label={`删除模板：${template.name}`} onClick={() => void handleDisable(template.id, template.name)} type="button">删除模板</button>
                   )}

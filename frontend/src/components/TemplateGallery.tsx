@@ -21,7 +21,10 @@ export function TemplateGallery({ disabledTemplateIds = [], onSelect }: Template
             <img alt={`${template.name} 模板预览`} className="template-card__image" src={template.previewImage} />
             <div className="template-card__body">
               <h3>{template.name}</h3>
-              <p>{template.description}</p>
+              <ul aria-label={`${template.name} 适用岗位`} className="template-card__tags">
+                {template.tags.map((tag) => <li key={tag}>{tag}</li>)}
+              </ul>
+              <p>{template.styleDescription}</p>
               <button aria-label={`使用此模板：${template.name}`} onClick={() => onSelect(template.id)} type="button">
                 使用此模板
               </button>
