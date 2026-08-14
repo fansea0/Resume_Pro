@@ -16,12 +16,17 @@ import (
 )
 
 const minimumJWTSecretLength = 32
+const localDevelopmentJWTSecret = "resume-pro-local-development-secret-change-this-value"
 
 func main() {
 	logger := logrus.New()
 	jwtSecret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
 	if len(jwtSecret) < minimumJWTSecretLength {
-		logger.Fatalf("JWT_SECRET must be at least %d characters", minimumJWTSecretLength)
+		if os.Getenv("APP_ENV") == "production" {
+			logger.Fatalf("JWT_SECRET must be at least %d characters in production", minimumJWTSecretLength)
+		}
+		jwtSecret = localDevelopmentJWTSecret
+		logger.Warn("JWT_SECRET is unset or too short; using the local development secret")
 	}
 	cookieSecure := os.Getenv("COOKIE_SECURE") == "true"
 	if !cookieSecure {

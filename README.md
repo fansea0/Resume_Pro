@@ -14,7 +14,7 @@ The API reads the following environment variables when it starts.
 
 | Variable | Local value | Behaviour |
 | --- | --- | --- |
-| `JWT_SECRET` | a unique random value of at least 32 characters | Required. Used to sign the session JWT; the server refuses to start when it is shorter than 32 characters. Changing it invalidates existing sessions. |
+| `JWT_SECRET` | a unique random value of at least 32 characters | Required in production. In local development an unset or short value falls back to a non-production secret. Changing the secret invalidates existing sessions. |
 | `COOKIE_SECURE` | `false` | Enables the cookie `Secure` attribute only when set exactly to `true`. Keep it `false` for local HTTP development; set it to `true` behind HTTPS. |
 | `RESUME_DB_PATH` | `./resume.db` | Optional SQLite database path. |
 
@@ -36,7 +36,7 @@ Start the API in one terminal:
 cd backend
 JWT_SECRET="$JWT_SECRET" COOKIE_SECURE="$COOKIE_SECURE" RESUME_DB_PATH="$RESUME_DB_PATH" go run ./cmd/server
 
-For local development, `./scripts/restart.sh`, `./scripts/restart.sh backend`, and `./scripts/restart.sh frontend` set a non-production development secret when `JWT_SECRET` is unset. Do not use that fallback in production.
+For local development, `./scripts/restart.sh`, `./scripts/restart.sh backend`, `./scripts/restart.sh frontend`, and direct `go run ./cmd/server` use a non-production development secret when `JWT_SECRET` is unset. Set `APP_ENV=production` in production; startup then refuses a missing or short secret.
 ```
 
 Start the web application in a second terminal:
