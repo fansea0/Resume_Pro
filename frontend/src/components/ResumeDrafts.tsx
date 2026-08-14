@@ -60,12 +60,12 @@ export function ResumeDrafts({ onCreate, onSelect }: ResumeDraftsProps) {
 
   return (
     <section aria-labelledby="resume-drafts-title" className="resume-drafts">
-      <div>
+      <div className="resume-drafts__header">
         <h2 id="resume-drafts-title">我的草稿</h2>
         <p>查看并继续编辑你已保存的简历。</p>
       </div>
       {drafts.length === 0 ? (
-        <div>
+        <div className="resume-drafts__empty">
           <p>还没有保存的简历草稿。</p>
           <button onClick={onCreate} type="button">去选择模板</button>
         </div>

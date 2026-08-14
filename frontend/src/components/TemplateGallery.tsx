@@ -12,8 +12,7 @@ export function TemplateGallery({ disabledTemplateIds = [], onSelect }: Template
     <section className="template-gallery" aria-labelledby="template-gallery-title">
       <div className="template-gallery__heading">
         <p className="template-gallery__eyebrow">RESUME TEMPLATES</p>
-        <h2 id="template-gallery-title">从一个好模板开始</h2>
-        <p>选择适合你的版式，下一步就能专注呈现你的经历。</p>
+        <h2 id="template-gallery-title">选择简历模板</h2>
       </div>
       <div className="template-gallery__grid">
         {templateRegistry.filter((template) => !disabled.has(template.id)).map((template) => (

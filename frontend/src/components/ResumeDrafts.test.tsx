@@ -40,6 +40,8 @@ describe('ResumeDrafts', () => {
     render(<ResumeDrafts onCreate={onCreate} onSelect={vi.fn()} />);
 
     expect(await screen.findByText('还没有保存的简历草稿。')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '我的草稿' })).toHaveClass('resume-drafts');
+    expect(screen.getByText('还没有保存的简历草稿。').parentElement).toHaveClass('resume-drafts__empty');
     fireEvent.click(screen.getByRole('button', { name: '去选择模板' }));
     expect(onCreate).toHaveBeenCalledOnce();
   });

@@ -11,6 +11,15 @@ vi.mock('../api/auth', () => ({
 afterEach(cleanup);
 
 describe('template gallery workflow', () => {
+  it('uses a compact gallery heading without the removed hero copy', async () => {
+    const { TemplateGallery } = await import('./TemplateGallery');
+    render(<TemplateGallery onSelect={vi.fn()} />);
+
+    expect(screen.getByRole('heading', { name: '选择简历模板' })).toBeInTheDocument();
+    expect(screen.queryByText('从一个好模板开始')).not.toBeInTheDocument();
+    expect(screen.queryByText('选择适合你的版式，下一步就能专注呈现你的经历。')).not.toBeInTheDocument();
+  });
+
   it('uses one native button per card and selects exactly once for click or keyboard activation', async () => {
     const { TemplateGallery } = await import('./TemplateGallery');
     const onSelect = vi.fn();
@@ -39,7 +48,7 @@ describe('template gallery workflow', () => {
   it('shows static cards first, enters the selected editor without resetting content, and returns to the gallery', async () => {
     render(<App />);
 
-    await screen.findByRole('heading', { name: '从一个好模板开始' });
+    await screen.findByRole('heading', { name: '选择简历模板' });
 
     expect(screen.queryByTestId('resume-preview')).not.toBeInTheDocument();
     for (const template of templateRegistry) {
@@ -59,13 +68,13 @@ describe('template gallery workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: '返回模板主页' }));
 
     expect(screen.queryByTestId('resume-preview')).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '从一个好模板开始' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '选择简历模板' })).toBeInTheDocument();
   });
 
   it('gives every static cover a descriptive alternative text', async () => {
     render(<App />);
 
-    await screen.findByRole('heading', { name: '从一个好模板开始' });
+    await screen.findByRole('heading', { name: '选择简历模板' });
 
     for (const template of templateRegistry) {
       expect(screen.getByRole('img', { name: `${template.name} 模板预览` })).toHaveAttribute(
