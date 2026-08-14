@@ -7,17 +7,20 @@ import { ResumeDrafts } from './components/ResumeDrafts';
 import { ResumeLibrary } from './components/ResumeLibrary';
 import { ResumePreview } from './components/ResumePreview';
 import { TemplateGallery } from './components/TemplateGallery';
+import { TemplateAdmin } from './components/TemplateAdmin';
 import { documentFromStored, type StoredResume } from './api/resumes';
+import { getTemplateStatus } from './api/templates';
 import { templateRegistry } from './templates/registry';
 import { createSampleResumeDocument } from './types/resume';
 
 export default function App() {
   const [resume, setResume] = useState(createSampleResumeDocument);
-  const [view, setView] = useState<'gallery' | 'drafts' | 'editor'>('gallery');
+  const [view, setView] = useState<'gallery' | 'drafts' | 'editor' | 'admin'>('gallery');
   const [selectedResumeId, setSelectedResumeId] = useState<number | null>(null);
   const [draftReadError, setDraftReadError] = useState(false);
   const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [disabledTemplateIds, setDisabledTemplateIds] = useState<typeof resume.templateId[]>([]);
   const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -27,6 +30,9 @@ export default function App() {
         if (!active) return;
         setUser(currentUser);
         setAuthState('authenticated');
+        void getTemplateStatus().then((status) => {
+          if (active) setDisabledTemplateIds(status.disabledTemplateIds);
+        }).catch(() => undefined);
       })
       .catch(() => {
         if (active) setAuthState('unauthenticated');
@@ -96,17 +102,20 @@ export default function App() {
           <nav aria-label="主要导航" className="app-navigation">
             <button aria-current={view === 'gallery' ? 'page' : undefined} onClick={() => { setDraftReadError(false); setView('gallery'); }} type="button">模板主页</button>
             <button aria-current={view === 'drafts' ? 'page' : undefined} onClick={() => setView('drafts')} type="button">我的草稿</button>
+            {user?.isAdmin && <button aria-current={view === 'admin' ? 'page' : undefined} onClick={() => setView('admin')} type="button">后台管理</button>}
           </nav>
           <div className="account-menu"><span className="account-menu__email">{user?.email}</span><button onClick={handleLogout} type="button">退出登录</button></div>
         </div>
       </header>
       {view === 'gallery' ? (
-        <TemplateGallery onSelect={selectTemplate} />
+        <TemplateGallery disabledTemplateIds={disabledTemplateIds} onSelect={selectTemplate} />
       ) : view === 'drafts' ? (
         <>
           {draftReadError && <p className="resume-library__error" role="alert">无法读取该简历内容。</p>}
           <ResumeDrafts onCreate={() => { setResume(createSampleResumeDocument()); setSelectedResumeId(null); setDraftReadError(false); setView('gallery'); }} onSelect={selectDraft} />
         </>
+      ) : view === 'admin' && user?.isAdmin ? (
+        <TemplateAdmin onDisabledTemplateIdsChange={setDisabledTemplateIds} />
       ) : (
         <div className="resume-workspace">
           <aside className="resume-workspace__editor">

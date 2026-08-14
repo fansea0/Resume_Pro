@@ -11,6 +11,13 @@ vi.mock('../api/auth', () => ({
 afterEach(cleanup);
 
 describe('template gallery workflow', () => {
+  it('does not show disabled templates', async () => {
+    const { TemplateGallery } = await import('./TemplateGallery');
+    render(<TemplateGallery disabledTemplateIds={['minimal']} onSelect={vi.fn()} />);
+
+    expect(screen.queryByRole('img', { name: '极简专业 模板预览' })).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '现代商务 模板预览' })).toBeInTheDocument();
+  });
   it('shows static cards first, enters the selected editor without resetting content, and returns to the gallery', async () => {
     render(<App />);
 

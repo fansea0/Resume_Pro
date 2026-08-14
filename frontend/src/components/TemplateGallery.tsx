@@ -3,9 +3,11 @@ import type { TemplateId } from '../types/resume';
 
 interface TemplateGalleryProps {
   onSelect: (templateId: TemplateId) => void;
+  disabledTemplateIds?: TemplateId[];
 }
 
-export function TemplateGallery({ onSelect }: TemplateGalleryProps) {
+export function TemplateGallery({ disabledTemplateIds = [], onSelect }: TemplateGalleryProps) {
+  const disabled = new Set(disabledTemplateIds);
   return (
     <section className="template-gallery" aria-labelledby="template-gallery-title">
       <div className="template-gallery__heading">
@@ -14,7 +16,7 @@ export function TemplateGallery({ onSelect }: TemplateGalleryProps) {
         <p>先选一个版式，再使用你的内容完成简历。</p>
       </div>
       <div className="template-gallery__grid">
-        {templateRegistry.map((template) => (
+        {templateRegistry.filter((template) => !disabled.has(template.id)).map((template) => (
           <article className="template-card" key={template.id}>
             <img alt={`${template.name} 模板预览`} className="template-card__image" src={template.previewImage} />
             <div className="template-card__body">

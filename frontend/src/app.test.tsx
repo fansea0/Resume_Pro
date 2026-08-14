@@ -7,6 +7,9 @@ const getCurrentUser = vi.fn();
 const logout = vi.fn();
 const listResumes = vi.fn();
 const updateResume = vi.fn();
+const getTemplateStatus = vi.fn();
+const listAdminTemplates = vi.fn();
+const disableTemplate = vi.fn();
 
 vi.mock('./api/auth', () => ({
   getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
@@ -27,12 +30,19 @@ vi.mock('./api/resumes', () => ({
   }),
 }));
 
+vi.mock('./api/templates', () => ({
+  getTemplateStatus: (...args: unknown[]) => getTemplateStatus(...args),
+  listAdminTemplates: (...args: unknown[]) => listAdminTemplates(...args),
+  disableTemplate: (...args: unknown[]) => disableTemplate(...args),
+}));
+
 afterEach(cleanup);
 
 describe('application authentication gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     listResumes.mockResolvedValue([]);
+    getTemplateStatus.mockResolvedValue({ disabledTemplateIds: [] });
   });
 
   it('shows login when startup has no session', async () => {
@@ -54,6 +64,25 @@ describe('application authentication gate', () => {
 
     await waitFor(() => expect(logout).toHaveBeenCalledOnce());
     expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument();
+  });
+
+  it('does not show template administration to a regular user', async () => {
+    getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'ada@example.com', tenantId: 3, isAdmin: false });
+    render(<App />);
+
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    expect(screen.queryByRole('button', { name: '后台管理' })).not.toBeInTheDocument();
+  });
+
+  it('allows an administrator to open template management', async () => {
+    getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'admin@example.com', tenantId: 3, isAdmin: true });
+    listAdminTemplates.mockResolvedValueOnce({ disabledTemplateIds: [] });
+    render(<App />);
+
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    fireEvent.click(screen.getByRole('button', { name: '后台管理' }));
+
+    expect(await screen.findByRole('heading', { name: '模板管理' })).toBeInTheDocument();
   });
 
   it('navigates from personal drafts into the selected draft editor', async () => {

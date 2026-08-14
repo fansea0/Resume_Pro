@@ -4,6 +4,7 @@ export interface AuthUser {
   id: number;
   email: string;
   tenantId: number;
+  isAdmin: boolean;
 }
 
 export interface Credentials {

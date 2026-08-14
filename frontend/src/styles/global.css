@@ -96,6 +96,19 @@ body { margin: 0; }
 .resume-drafts ul { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); list-style: none; margin: 0; padding: 0; }
 .resume-drafts li { display: grid; gap: .3rem; }
 .resume-drafts button { align-self: start; background: #255abe; border: 1px solid #255abe; border-radius: 7px; color: #fff; cursor: pointer; font: inherit; margin-top: .6rem; padding: .55rem .7rem; }
+.template-admin { display: grid; gap: 1.5rem; max-width: 1120px; }
+.template-admin__heading h2, .template-admin__heading p { margin: 0; }
+.template-admin__heading h2 { font-size: 1.65rem; margin: .2rem 0 .45rem; }
+.template-admin__heading > p:last-child { color: #60708a; }
+.template-admin > [role="alert"] { color: #b42318; margin: 0; }
+.template-admin__grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+.template-admin__card { background: #fff; border: 1px solid #e0e6ef; border-radius: 12px; overflow: hidden; }
+.template-admin__card img { aspect-ratio: 4 / 3; background: #e8edf6; display: block; object-fit: cover; object-position: center top; width: 100%; }
+.template-admin__card > div { display: grid; gap: .55rem; padding: 1rem; }
+.template-admin__card h3, .template-admin__card p { margin: 0; }
+.template-admin__card p { color: #60708a; font-size: .86rem; min-height: 2.6em; }
+.template-admin__card button { background: #b42318; border: 1px solid #b42318; border-radius: 7px; color: #fff; cursor: pointer; font: inherit; justify-self: start; padding: .5rem .7rem; }
+.template-admin__status { color: #667085; font-size: .9rem; font-weight: 700; }
 
 @media (max-width: 900px) { .resume-workspace { grid-template-columns: 1fr; } .resume-preview { position: static; } }
 @media (min-width: 600px) { .template-gallery__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
