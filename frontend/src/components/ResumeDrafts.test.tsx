@@ -41,9 +41,34 @@ describe('ResumeDrafts', () => {
 
     expect(await screen.findByText('还没有保存的简历草稿。')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: '我的草稿' })).toHaveClass('resume-drafts');
-    expect(screen.getByText('还没有保存的简历草稿。').parentElement).toHaveClass('resume-drafts__empty');
+    expect(screen.getByText('还没有保存的简历草稿。').closest('aside')).toHaveClass('resume-drafts__empty');
+    expect(screen.getByRole('heading', { name: '开始你的第一份简历' })).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: '创建简历的步骤' })).toHaveTextContent('选择适合你的简历模板');
+    expect(screen.getByRole('list', { name: '创建简历的步骤' })).toHaveTextContent('填写并完善你的经历');
+    expect(screen.getByRole('list', { name: '创建简历的步骤' })).toHaveTextContent('随时返回继续编辑');
     fireEvent.click(screen.getByRole('button', { name: '去选择模板' }));
     expect(onCreate).toHaveBeenCalledOnce();
+  });
+
+  it('presents each saved draft as a workbench item with readable metadata', async () => {
+    listResumes.mockResolvedValueOnce([{
+      id: 7,
+      title: '产品经理简历',
+      templateId: 'business',
+      content: '{}',
+      createdAt: '2026-08-14T00:00:00Z',
+      updatedAt: '2026-08-14T01:00:00Z',
+    }]);
+
+    render(<ResumeDrafts onCreate={vi.fn()} onSelect={vi.fn()} />);
+
+    const draft = await screen.findByRole('listitem');
+    expect(draft).toHaveClass('resume-drafts__item');
+    expect(draft.querySelector('.resume-drafts__index')).toHaveAttribute('aria-hidden', 'true');
+    expect(draft.querySelector('.resume-drafts__metadata')).toHaveTextContent('模板');
+    expect(draft.querySelector('.resume-drafts__metadata')).toHaveTextContent('现代商务');
+    expect(draft.querySelector('.resume-drafts__metadata')).toHaveTextContent('最后更新');
+    expect(draft.querySelector('time')).toHaveAttribute('dateTime', '2026-08-14T01:00:00Z');
   });
 
   it('shows a recoverable error when drafts cannot be loaded', async () => {
