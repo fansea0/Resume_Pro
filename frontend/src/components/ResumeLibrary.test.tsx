@@ -73,6 +73,10 @@ describe('ResumeLibrary', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
     await waitFor(() => expect(updateResume).toHaveBeenCalledWith(7, document));
     expect(createResume).not.toHaveBeenCalled();
+
+    deleteResume.mockResolvedValueOnce(undefined);
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await waitFor(() => expect(deleteResume).toHaveBeenCalledWith(7));
   });
 
   it('exports with the browser print dialog', () => {
