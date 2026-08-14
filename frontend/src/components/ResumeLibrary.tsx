@@ -41,7 +41,7 @@ export function ResumeLibrary({ document, selectedId, onSelectedIdChange, onChan
   const select = (item: StoredResume) => {
     try {
       const next = documentFromStored(item);
-      autosave.cancel();
+      autosave.cancel({ skipNextDocument: true });
       onSelectedIdChange(item.id);
       onSelect(next);
       setError(null);

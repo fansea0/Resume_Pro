@@ -39,6 +39,22 @@ afterEach(() => {
 });
 
 describe('ResumeLibrary', () => {
+  it('does not create a draft when a new template editor first opens', async () => {
+    vi.useFakeTimers();
+    render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(801); });
+    expect(createResume).not.toHaveBeenCalled();
+  });
+
+  it('does not update a draft when its editor first opens', async () => {
+    vi.useFakeTimers();
+    render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={7} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(801); });
+    expect(updateResume).not.toHaveBeenCalled();
+  });
+
   it('saves the current document and renders the returned resume title', async () => {
     const document = { ...createEmptyResumeDocument(), title: '前端工程师简历' };
     createResume.mockResolvedValueOnce({
@@ -96,8 +112,8 @@ describe('ResumeLibrary', () => {
     let resolveUpdate!: (value: { id: number; title: string; templateId: string; content: string; createdAt: string; updatedAt: string }) => void;
     updateResume.mockImplementationOnce(() => new Promise((resolve) => { resolveUpdate = resolve; }));
     deleteResume.mockResolvedValueOnce(undefined);
-    render(<ResumeLibrary document={document} selectedId={7} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
-
+    const { rerender } = render(<ResumeLibrary document={document} selectedId={7} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+    rerender(<ResumeLibrary document={{ ...document, title: '已编辑' }} selectedId={7} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(800); });
     fireEvent.click(screen.getByRole('button', { name: '删除' }));
     await act(async () => { resolveUpdate({ id: 7, title: document.title, templateId: document.templateId, content: JSON.stringify(document), createdAt: '', updatedAt: '' }); await vi.advanceTimersByTimeAsync(800); });

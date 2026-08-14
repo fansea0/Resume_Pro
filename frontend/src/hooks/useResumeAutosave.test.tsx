@@ -19,9 +19,11 @@ describe('useResumeAutosave', () => {
     vi.mocked(createResume).mockResolvedValueOnce(stored(11, first.title));
     vi.mocked(updateResume).mockResolvedValueOnce(stored(11, '第二版'));
     const { rerender, result } = renderHook(({ document, selectedId }) => useResumeAutosave({ document, selectedId, onSaved }), { initialProps: { document: first, selectedId: null as number | null } });
+    const firstEdited = { ...first, title: '第一版' };
+    rerender({ document: firstEdited, selectedId: null });
 
     await act(async () => { await vi.advanceTimersByTimeAsync(800); });
-    expect(createResume).toHaveBeenCalledWith(first);
+    expect(createResume).toHaveBeenCalledWith(firstEdited);
     expect(onSaved).toHaveBeenCalledWith(11, expect.objectContaining({ id: 11 }));
 
     const second = { ...first, title: '第二版' };
@@ -43,9 +45,28 @@ describe('useResumeAutosave', () => {
     expect(result.current.error).toBe('保存失败，请稍后重试。');
   });
 
-  it('reports dirty while waiting for the debounce', () => {
+  it('does not save merely by opening a new template editor', async () => {
     vi.useFakeTimers();
-    const { result } = renderHook(() => useResumeAutosave({ document: createEmptyResumeDocument(), selectedId: null, onSaved: vi.fn() }));
+    const document = createEmptyResumeDocument();
+    const { result } = renderHook(() => useResumeAutosave({ document, selectedId: null, onSaved: vi.fn() }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(801); });
+    expect(createResume).not.toHaveBeenCalled();
+    expect(result.current.status).toBe('idle');
+  });
+
+  it('does not update merely by opening an existing draft', async () => {
+    vi.useFakeTimers();
+    const document = createEmptyResumeDocument();
+    renderHook(() => useResumeAutosave({ document, selectedId: 17, onSaved: vi.fn() }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(801); });
+    expect(updateResume).not.toHaveBeenCalled();
+  });
+
+  it('reports dirty while waiting for the debounce after an edit', () => {
+    vi.useFakeTimers();
+    const first = createEmptyResumeDocument();
+    const { rerender, result } = renderHook(({ document }) => useResumeAutosave({ document, selectedId: null, onSaved: vi.fn() }), { initialProps: { document: first } });
+    rerender({ document: { ...first, title: '编辑后' } });
     expect(result.current.status).toBe('dirty');
   });
 
@@ -55,7 +76,7 @@ describe('useResumeAutosave', () => {
     let resolveFirst!: (value: StoredResume) => void;
     vi.mocked(createResume).mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
     const { rerender, result, unmount } = renderHook(({ document }) => useResumeAutosave({ document, selectedId: null, onSaved: vi.fn() }), { initialProps: { document: first } });
-
+    rerender({ document: { ...first, title: '首次编辑' } });
     await act(async () => { await vi.advanceTimersByTimeAsync(800); });
     rerender({ document: { ...first, title: '更新中' } });
     await act(async () => { resolveFirst(stored(12, first.title)); });
@@ -73,7 +94,7 @@ describe('useResumeAutosave', () => {
     vi.mocked(createResume).mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
     vi.mocked(updateResume).mockResolvedValueOnce(stored(21, 'B'));
     const { rerender } = renderHook(({ document, selectedId }) => useResumeAutosave({ document, selectedId, onSaved: vi.fn() }), { initialProps: { document: first, selectedId: null as number | null } });
-
+    rerender({ document: { ...first, title: 'A' }, selectedId: null });
     await act(async () => { await vi.advanceTimersByTimeAsync(800); });
     const second = { ...first, title: 'B' };
     rerender({ document: second, selectedId: null });
@@ -89,7 +110,8 @@ describe('useResumeAutosave', () => {
     let resolveUpdate!: (value: StoredResume) => void;
     vi.mocked(updateResume).mockImplementationOnce(() => new Promise((resolve) => { resolveUpdate = resolve; }));
     const onSaved = vi.fn();
-    const { result } = renderHook(() => useResumeAutosave({ document, selectedId: 31, onSaved }));
+    const { result, rerender } = renderHook(({ document }) => useResumeAutosave({ document, selectedId: 31, onSaved }), { initialProps: { document } });
+    rerender({ document: { ...document, title: '已编辑' } });
 
     await act(async () => { await vi.advanceTimersByTimeAsync(800); });
     act(() => result.current.cancel());
@@ -107,7 +129,7 @@ describe('useResumeAutosave', () => {
     vi.mocked(updateResume).mockResolvedValueOnce(stored(42, '新草稿'));
     const onSaved = vi.fn();
     const { rerender, result } = renderHook(({ document, selectedId }) => useResumeAutosave({ document, selectedId, onSaved }), { initialProps: { document: first, selectedId: null as number | null } });
-
+    rerender({ document: { ...first, title: '创建中' }, selectedId: null });
     await act(async () => { await vi.advanceTimersByTimeAsync(800); });
     act(() => result.current.cancel());
     const next = { ...first, title: '新草稿' };
@@ -122,9 +144,10 @@ describe('useResumeAutosave', () => {
     vi.useFakeTimers();
     const document = createEmptyResumeDocument();
     vi.mocked(createResume).mockResolvedValueOnce(stored(61, document.title));
-    renderHook(() => useResumeAutosave({ document, selectedId: null, onSaved: vi.fn() }), { wrapper: StrictMode });
+    const { rerender } = renderHook(({ current }) => useResumeAutosave({ document: current, selectedId: null, onSaved: vi.fn() }), { initialProps: { current: document }, wrapper: StrictMode });
+    rerender({ current: { ...document, title: 'StrictMode 编辑' } });
 
     await act(async () => { await vi.advanceTimersByTimeAsync(800); });
-    expect(createResume).toHaveBeenCalledWith(document);
+    expect(createResume).toHaveBeenCalledWith(expect.objectContaining({ title: 'StrictMode 编辑' }));
   });
 });

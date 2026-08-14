@@ -16,6 +16,7 @@ export function useResumeAutosave({ document, selectedId, onSaved, enabled = tru
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
   const documentRef = useRef(document);
+  const lastObservedDocument = useRef<ResumeDocument | null>(null);
   const idRef = useRef<number | null>(selectedId);
   const version = useRef(0);
   const selectionEpoch = useRef(0);
@@ -23,6 +24,7 @@ export function useResumeAutosave({ document, selectedId, onSaved, enabled = tru
   const inFlight = useRef(false);
   const queuedAfterFlight = useRef(false);
   const queuedImmediately = useRef(false);
+  const skipNextDocumentChange = useRef(false);
   const onSavedRef = useRef(onSaved);
 
   documentRef.current = document;
@@ -69,6 +71,17 @@ export function useResumeAutosave({ document, selectedId, onSaved, enabled = tru
   }, [enabled]);
 
   useEffect(() => {
+    if (lastObservedDocument.current === null) {
+      lastObservedDocument.current = document;
+      return;
+    }
+    if (lastObservedDocument.current === document) return;
+    if (skipNextDocumentChange.current) {
+      skipNextDocumentChange.current = false;
+      lastObservedDocument.current = document;
+      return;
+    }
+    lastObservedDocument.current = document;
     version.current += 1;
     if (timer.current) clearTimeout(timer.current);
     if (!enabled) return;
@@ -95,9 +108,10 @@ export function useResumeAutosave({ document, selectedId, onSaved, enabled = tru
     await save(true, newDraft);
   }, [save]);
 
-  const cancel = useCallback(() => {
+  const cancel = useCallback(({ skipNextDocument = false }: { skipNextDocument?: boolean } = {}) => {
     version.current += 1;
     selectionEpoch.current += 1;
+    skipNextDocumentChange.current = skipNextDocument;
     queuedAfterFlight.current = false;
     queuedImmediately.current = false;
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
