@@ -61,7 +61,11 @@ func TestTemplateAdminListsAndDisablesTemplates(t *testing.T) {
 
 func TestTemplateAdminRejectsSessionAfterAdministratorRoleIsRevoked(t *testing.T) {
 	router, adminCookie, _, authRepository := newTemplateAdminTestRouter(t, true)
-	if _, err := authRepository.SetAdministrators(context.Background(), nil); err != nil {
+	user, err := authRepository.GetUserByEmail(context.Background(), "admin@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := authRepository.SetAdministrator(context.Background(), user.ID, false); err != nil {
 		t.Fatalf("revoke administrator role: %v", err)
 	}
 
@@ -133,7 +137,7 @@ func newTemplateAdminTestRouter(t *testing.T, administrator bool) (http.Handler,
 		t.Fatal(err)
 	}
 	if administrator {
-		if _, err := authRepository.SetAdministrators(ctx, []string{user.Email}); err != nil {
+		if err := authRepository.SetAdministrator(ctx, user.ID, true); err != nil {
 			t.Fatal(err)
 		}
 	}

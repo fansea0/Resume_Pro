@@ -87,53 +87,20 @@ func (r *Repository) CreateUser(ctx context.Context, input CreateUserInput) (Use
 	return User{ID: userID, Email: email, PasswordHash: hash, TenantID: tenantID, IsAdmin: false, CreatedAt: now, UpdatedAt: now}, nil
 }
 
-// SetAdministrators replaces the administrator role assignments with users
-// whose normalized email appears in emails. Only existing users can be promoted.
-func (r *Repository) SetAdministrators(ctx context.Context, emails []string) (int, error) {
-	normalized := make([]string, 0, len(emails))
-	seen := make(map[string]struct{}, len(emails))
-	for _, email := range emails {
-		email = NormalizeEmail(email)
-		if email == "" {
-			continue
-		}
-		if _, exists := seen[email]; exists {
-			continue
-		}
-		seen[email] = struct{}{}
-		normalized = append(normalized, email)
-	}
-
-	tx, err := r.db.BeginTxx(ctx, nil)
+// SetAdministrator changes one persisted user's administrator role.
+func (r *Repository) SetAdministrator(ctx context.Context, userID int64, isAdmin bool) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE users SET is_admin = ? WHERE id = ?`, isAdmin, userID)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET is_admin = 0 WHERE is_admin <> 0`); err != nil {
-		return 0, err
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
 	}
-	promotedCount := 0
-	if len(normalized) > 0 {
-		placeholders := make([]string, len(normalized))
-		arguments := make([]any, len(normalized))
-		for index, email := range normalized {
-			placeholders[index] = "?"
-			arguments[index] = email
-		}
-		result, err := tx.ExecContext(ctx, `UPDATE users SET is_admin = 1 WHERE email IN (`+strings.Join(placeholders, ", ")+`)`, arguments...)
-		if err != nil {
-			return 0, err
-		}
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			return 0, err
-		}
-		promotedCount = int(rowsAffected)
+	if rowsAffected == 0 {
+		return ErrUserNotFound
 	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return promotedCount, nil
+	return nil
 }
 
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, error) {

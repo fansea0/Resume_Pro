@@ -4,7 +4,7 @@
 
 **Goal:** 管理员账号可在后台查看并禁用简历模板；普通用户无入口且无法调用管理 API。
 
-**Architecture:** SQLite 保存用户管理员角色与禁用模板状态。启动时从 `ADMIN_EMAILS` 同步管理员；JWT 与 `/api/auth/me` 暴露只读角色。模板注册表保留在前端，前端依据受保护 API 返回的禁用模板 ID 过滤主页，并用管理 API 变更状态。
+**Architecture:** SQLite 保存用户管理员角色与禁用模板状态；管理员角色仅由 `users.is_admin` 管理。JWT 与 `/api/auth/me` 暴露只读角色。模板注册表保留在前端，前端依据受保护 API 返回的禁用模板 ID 过滤主页，并用管理 API 变更状态。
 
 **Tech Stack:** Go、sqlx、SQLite、JWT、React、TypeScript、Vitest、React Testing Library。
 
@@ -22,7 +22,7 @@
 
 **Step 1: Write failing tests**
 
-增加仓储测试：迁移后新用户默认 `IsAdmin == false`；`SetAdministrators(ctx, []string{"admin@example.com"})` 将既有用户设为管理员；空列表不会授予任何新角色；邮箱大小写和空格仍能匹配。
+增加仓储测试：迁移后新用户默认 `IsAdmin == false`；`SetAdministrator` 可通过用户 ID 设置及撤销数据库角色。
 
 **Step 2: Run test — confirm it fails**
 
@@ -32,7 +32,7 @@ Expected: FAIL — missing `IsAdmin`/administrator synchronization API.
 
 **Step 3: Implement minimally**
 
-在 `users` 表使用幂等列迁移添加 `is_admin INTEGER NOT NULL DEFAULT 0`；`User` 映射该字段，所有用户查询读出字段。仓储增加事务化 `SetAdministrators`：标准化输入，清空现有管理员标记，再把配置邮箱对应的既有用户标为管理员。`main` 读取 `ADMIN_EMAILS` 并在迁移后同步，日志只记录管理员数量。README 记录环境变量与首位管理员的创建顺序。
+在 `users` 表使用幂等列迁移添加 `is_admin INTEGER NOT NULL DEFAULT 0`；`User` 映射该字段，所有用户查询读出字段。仓储提供按用户 ID 设置数据库角色的方法；启动过程不读取管理员配置。README 记录数据库字段为唯一管理员权限来源。
 
 **Step 4: Run tests — confirm pass**
 

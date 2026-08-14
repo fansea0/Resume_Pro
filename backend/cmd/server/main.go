@@ -45,12 +45,6 @@ func main() {
 		logger.WithError(err).Fatal("migrate resume database")
 	}
 	authRepository := auth.NewRepository(db)
-	administratorEmails := strings.Split(os.Getenv("ADMIN_EMAILS"), ",")
-	administratorCount, err := authRepository.SetAdministrators(context.Background(), administratorEmails)
-	if err != nil {
-		logger.WithError(err).Fatal("synchronize administrators")
-	}
-	logger.WithField("administrator_count", administratorCount).Info("synchronized administrators")
 	logger.WithFields(logrus.Fields{
 		"address":       ":8080",
 		"cookie_secure": cookieSecure,

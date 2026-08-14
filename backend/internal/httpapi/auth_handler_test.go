@@ -88,6 +88,10 @@ func TestAuthMeReflectsCurrentAdministratorRole(t *testing.T) {
 	authRepository := auth.NewRepository(db)
 	router := NewRouter(authRepository, resume.NewRepository(db), templates.NewRepository(db), RouterConfig{JWTSecret: "test-secret-that-is-long-enough"})
 	cookie := registerAuthUser(t, router, "role-state@example.com")
+	user, err := authRepository.GetUserByEmail(ctx, "role-state@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	assertCurrentAdminRole := func(want bool) {
 		t.Helper()
@@ -106,12 +110,12 @@ func TestAuthMeReflectsCurrentAdministratorRole(t *testing.T) {
 		}
 	}
 
-	if _, err := authRepository.SetAdministrators(ctx, []string{"role-state@example.com"}); err != nil {
+	if err := authRepository.SetAdministrator(ctx, user.ID, true); err != nil {
 		t.Fatalf("promote administrator: %v", err)
 	}
 	assertCurrentAdminRole(true)
 
-	if _, err := authRepository.SetAdministrators(ctx, nil); err != nil {
+	if err := authRepository.SetAdministrator(ctx, user.ID, false); err != nil {
 		t.Fatalf("revoke administrator: %v", err)
 	}
 	assertCurrentAdminRole(false)
