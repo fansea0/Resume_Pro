@@ -121,7 +121,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div><h1>简历生成器</h1><p>为互联网求职打造专业、美观的简历。</p></div>
+        <div className="app-header__brand"><h1>简历生成器</h1><p>专业表达，从清晰开始。</p></div>
         <div className="app-header__actions">
           <nav aria-label="主要导航" className="app-navigation">
             <button aria-current={view === 'gallery' ? 'page' : undefined} onClick={() => { setDraftReadError(false); setView('gallery'); }} type="button">模板主页</button>

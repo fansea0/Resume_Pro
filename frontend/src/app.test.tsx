@@ -57,7 +57,7 @@ describe('application authentication gate', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: '选择简历模板' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '从一个好模板开始' })).not.toBeInTheDocument();
   });
 
   it('shows the gallery for a session and returns to auth after logout', async () => {
@@ -65,12 +65,21 @@ describe('application authentication gate', () => {
     logout.mockResolvedValueOnce(undefined);
     render(<App />);
 
-    expect(await screen.findByRole('heading', { name: '选择简历模板' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '从一个好模板开始' })).toBeInTheDocument();
     expect(screen.getByText('ada@example.com')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }));
 
     await waitFor(() => expect(logout).toHaveBeenCalledOnce());
     expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument();
+  });
+
+  it('uses the template home as the primary authenticated starting point', async () => {
+    getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'ada@example.com', tenantId: 3 });
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: '从一个好模板开始' })).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: '主要导航' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '模板主页' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('waits for template status before showing the gallery during session restoration', async () => {
@@ -82,10 +91,10 @@ describe('application authentication gate', () => {
 
     resolveUser({ id: 1, email: 'ada@example.com', tenantId: 3, isAdmin: false });
     await waitFor(() => expect(getTemplateStatus).toHaveBeenCalledOnce());
-    expect(screen.queryByRole('heading', { name: '选择简历模板' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '从一个好模板开始' })).not.toBeInTheDocument();
 
     resolveStatus({ disabledTemplateIds: ['minimal'] });
-    await screen.findByRole('heading', { name: '选择简历模板' });
+    await screen.findByRole('heading', { name: '从一个好模板开始' });
     expect(screen.queryByRole('img', { name: '极简专业 模板预览' })).not.toBeInTheDocument();
   });
 
@@ -93,7 +102,7 @@ describe('application authentication gate', () => {
     getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'ada@example.com', tenantId: 3, isAdmin: false });
     render(<App />);
 
-    await screen.findByRole('heading', { name: '选择简历模板' });
+    await screen.findByRole('heading', { name: '从一个好模板开始' });
     expect(screen.queryByRole('button', { name: '后台管理' })).not.toBeInTheDocument();
   });
 
@@ -102,7 +111,7 @@ describe('application authentication gate', () => {
     listAdminTemplates.mockResolvedValueOnce({ disabledTemplateIds: [] });
     render(<App />);
 
-    await screen.findByRole('heading', { name: '选择简历模板' });
+    await screen.findByRole('heading', { name: '从一个好模板开始' });
     fireEvent.click(screen.getByRole('button', { name: '后台管理' }));
 
     expect(await screen.findByRole('heading', { name: '模板管理' })).toBeInTheDocument();
@@ -121,10 +130,10 @@ describe('application authentication gate', () => {
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
 
     await waitFor(() => expect(getTemplateStatus).toHaveBeenCalledOnce());
-    expect(screen.queryByRole('heading', { name: '选择简历模板' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '从一个好模板开始' })).not.toBeInTheDocument();
 
     resolveStatus({ disabledTemplateIds: ['minimal'] });
-    await screen.findByRole('heading', { name: '选择简历模板' });
+    await screen.findByRole('heading', { name: '从一个好模板开始' });
     await waitFor(() => expect(screen.queryByRole('img', { name: '极简专业 模板预览' })).not.toBeInTheDocument());
   });
 
@@ -133,7 +142,7 @@ describe('application authentication gate', () => {
     getTemplateStatus.mockRejectedValueOnce(new Error('status unavailable'));
     render(<App />);
 
-    await screen.findByRole('heading', { name: '选择简历模板' });
+    await screen.findByRole('heading', { name: '从一个好模板开始' });
     expect(screen.getByRole('img', { name: '极简专业 模板预览' })).toBeInTheDocument();
   });
 
@@ -150,7 +159,7 @@ describe('application authentication gate', () => {
     }]);
     render(<App />);
 
-    await screen.findByRole('heading', { name: '选择简历模板' });
+    await screen.findByRole('heading', { name: '从一个好模板开始' });
     expect(screen.getByRole('button', { name: '模板主页' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '我的草稿' }));
 
@@ -185,7 +194,7 @@ describe('application authentication gate', () => {
     }]);
     render(<App />);
 
-    await screen.findByRole('heading', { name: '选择简历模板' });
+    await screen.findByRole('heading', { name: '从一个好模板开始' });
     fireEvent.click(screen.getByRole('button', { name: '我的草稿' }));
     fireEvent.click(await screen.findByRole('button', { name: '继续编辑：损坏的简历' }));
 
@@ -198,10 +207,10 @@ describe('application authentication gate', () => {
     listResumes.mockResolvedValueOnce([]);
     render(<App />);
 
-    await screen.findByRole('heading', { name: '选择简历模板' });
+    await screen.findByRole('heading', { name: '从一个好模板开始' });
     fireEvent.click(screen.getByRole('button', { name: '我的草稿' }));
     fireEvent.click(await screen.findByRole('button', { name: '去选择模板' }));
 
-    expect(await screen.findByRole('heading', { name: '选择简历模板' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '从一个好模板开始' })).toBeInTheDocument();
   });
 });

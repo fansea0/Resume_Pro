@@ -43,4 +43,12 @@ describe('TemplateAdmin', () => {
       }
     }
   });
+
+  it('presents template administration as a labelled settings list', async () => {
+    listAdminTemplates.mockResolvedValue({ disabledTemplateIds: [] });
+    render(<TemplateAdmin />);
+
+    expect(await screen.findByRole('heading', { name: '模板管理' })).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: '模板设置' }).children).toHaveLength(templateRegistry.length);
+  });
 });

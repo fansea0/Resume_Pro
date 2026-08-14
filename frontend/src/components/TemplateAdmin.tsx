@@ -56,11 +56,11 @@ export function TemplateAdmin({ onDisabledTemplateIdsChange }: TemplateAdminProp
       </div>
       {error && <p role="alert">{error}</p>}
       {loading ? <p>正在加载模板状态…</p> : (
-        <div className="template-admin__grid">
+        <ul aria-label="模板设置" className="template-admin__grid">
           {templateRegistry.map((template) => {
             const isDisabled = disabledTemplateIds.includes(template.id);
             return (
-              <article className="template-admin__card" key={template.id}>
+              <li className="template-admin__card" key={template.id}>
                 <img alt={`${template.name} 模板预览`} src={template.previewImage} />
                 <div>
                   <h3>{template.name}</h3>
@@ -72,10 +72,10 @@ export function TemplateAdmin({ onDisabledTemplateIdsChange }: TemplateAdminProp
                     <button aria-label={`删除模板：${template.name}`} onClick={() => void handleDisable(template.id, template.name)} type="button">删除模板</button>
                   )}
                 </div>
-              </article>
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
     </section>
   );

@@ -11,6 +11,20 @@ vi.mock('../api/auth', () => ({
 afterEach(cleanup);
 
 describe('template gallery workflow', () => {
+  it('lets the whole card select a template by click or keyboard without double-triggering its action button', async () => {
+    const { TemplateGallery } = await import('./TemplateGallery');
+    const onSelect = vi.fn();
+    render(<TemplateGallery onSelect={onSelect} />);
+
+    const card = screen.getByRole('button', { name: '选择模板：现代商务' });
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenLastCalledWith('business');
+
+    fireEvent.click(screen.getByRole('button', { name: '使用此模板：现代商务' }));
+    expect(onSelect).toHaveBeenCalledTimes(2);
+  });
+
   it('does not show disabled templates', async () => {
     const { TemplateGallery } = await import('./TemplateGallery');
     render(<TemplateGallery disabledTemplateIds={['minimal']} onSelect={vi.fn()} />);
@@ -21,7 +35,7 @@ describe('template gallery workflow', () => {
   it('shows static cards first, enters the selected editor without resetting content, and returns to the gallery', async () => {
     render(<App />);
 
-    await screen.findByRole('heading', { name: '选择简历模板' });
+    await screen.findByRole('heading', { name: '从一个好模板开始' });
 
     expect(screen.queryByTestId('resume-preview')).not.toBeInTheDocument();
     for (const template of templateRegistry) {
@@ -33,7 +47,7 @@ describe('template gallery workflow', () => {
       }
     }
 
-    fireEvent.click(screen.getByRole('button', { name: '使用此模板：现代商务' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
 
     expect(screen.getByTestId('resume-preview')).toHaveTextContent('林知夏');
     expect(screen.getByText('当前模板：现代商务')).toBeInTheDocument();
@@ -41,13 +55,13 @@ describe('template gallery workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: '返回模板主页' }));
 
     expect(screen.queryByTestId('resume-preview')).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '选择简历模板' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '从一个好模板开始' })).toBeInTheDocument();
   });
 
   it('gives every static cover a descriptive alternative text', async () => {
     render(<App />);
 
-    await screen.findByRole('heading', { name: '选择简历模板' });
+    await screen.findByRole('heading', { name: '从一个好模板开始' });
 
     for (const template of templateRegistry) {
       expect(screen.getByRole('img', { name: `${template.name} 模板预览` })).toHaveAttribute(
