@@ -21,6 +21,11 @@ vi.mock('../api/resumes', () => ({
   listResumes: (...args: unknown[]) => listResumes(...args),
   updateResume: (...args: unknown[]) => updateResume(...args),
   deleteResume: (...args: unknown[]) => deleteResume(...args),
+  documentFromStored: (resume: { content: string; title: string; templateId: string }) => ({
+    ...JSON.parse(resume.content),
+    title: resume.title,
+    templateId: resume.templateId,
+  }),
 }));
 
 vi.mock('../utils/exportResumePng', () => ({
@@ -49,6 +54,25 @@ describe('ResumeLibrary', () => {
 
     await waitFor(() => expect(createResume).toHaveBeenCalledWith(document));
     expect(await screen.findByText('已保存的前端工程师简历')).toBeInTheDocument();
+  });
+
+  it('updates and enables deletion for an initially selected saved resume', async () => {
+    const document = { ...createEmptyResumeDocument(), title: '已保存简历' };
+    updateResume.mockResolvedValueOnce({
+      id: 7,
+      title: document.title,
+      templateId: document.templateId,
+      content: JSON.stringify(document),
+      createdAt: '2026-08-13T00:00:00Z',
+      updatedAt: '2026-08-13T00:00:00Z',
+    });
+
+    render(<ResumeLibrary document={document} initialSelectedId={7} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: '删除' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
+    await waitFor(() => expect(updateResume).toHaveBeenCalledWith(7, document));
+    expect(createResume).not.toHaveBeenCalled();
   });
 
   it('exports with the browser print dialog', () => {

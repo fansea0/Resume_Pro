@@ -14,6 +14,8 @@ import { createSampleResumeDocument } from './types/resume';
 export default function App() {
   const [resume, setResume] = useState(createSampleResumeDocument);
   const [view, setView] = useState<'gallery' | 'drafts' | 'editor'>('gallery');
+  const [selectedResumeId, setSelectedResumeId] = useState<number | null>(null);
+  const [draftReadError, setDraftReadError] = useState(false);
   const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
   const [user, setUser] = useState<AuthUser | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -34,6 +36,7 @@ export default function App() {
       setUser(null);
       setAuthState('unauthenticated');
       setView('gallery');
+      setSelectedResumeId(null);
     });
     return () => {
       active = false;
@@ -43,14 +46,18 @@ export default function App() {
 
   const selectTemplate = (templateId: typeof resume.templateId) => {
     setResume((current) => ({ ...current, templateId }));
+    setSelectedResumeId(null);
     setView('editor');
   };
 
   const selectDraft = (draft: StoredResume) => {
     try {
       setResume(documentFromStored(draft));
+      setSelectedResumeId(draft.id);
+      setDraftReadError(false);
       setView('editor');
     } catch {
+      setDraftReadError(true);
       setView('drafts');
     }
   };
@@ -69,6 +76,7 @@ export default function App() {
       setUser(null);
       setAuthState('unauthenticated');
       setView('gallery');
+      setSelectedResumeId(null);
     }
   };
 
@@ -86,7 +94,7 @@ export default function App() {
         <div><h1>简历生成器</h1><p>为互联网求职打造专业、美观的简历。</p></div>
         <div className="app-header__actions">
           <nav aria-label="主要导航" className="app-navigation">
-            <button aria-current={view === 'gallery' ? 'page' : undefined} onClick={() => setView('gallery')} type="button">模板主页</button>
+            <button aria-current={view === 'gallery' ? 'page' : undefined} onClick={() => { setDraftReadError(false); setView('gallery'); }} type="button">模板主页</button>
             <button aria-current={view === 'drafts' ? 'page' : undefined} onClick={() => setView('drafts')} type="button">我的草稿</button>
           </nav>
           <div className="account-menu"><span className="account-menu__email">{user?.email}</span><button onClick={handleLogout} type="button">退出登录</button></div>
@@ -95,18 +103,21 @@ export default function App() {
       {view === 'gallery' ? (
         <TemplateGallery onSelect={selectTemplate} />
       ) : view === 'drafts' ? (
-        <ResumeDrafts onCreate={() => { setResume(createSampleResumeDocument()); setView('gallery'); }} onSelect={selectDraft} />
+        <>
+          {draftReadError && <p className="resume-library__error" role="alert">无法读取该简历内容。</p>}
+          <ResumeDrafts onCreate={() => { setResume(createSampleResumeDocument()); setSelectedResumeId(null); setDraftReadError(false); setView('gallery'); }} onSelect={selectDraft} />
+        </>
       ) : (
         <div className="resume-workspace">
           <aside className="resume-workspace__editor">
             <div className="editor-navigation">
               <div>
-                <button onClick={() => setView('gallery')} type="button">返回模板主页</button>
+                <button onClick={() => { setDraftReadError(false); setView('gallery'); }} type="button">返回模板主页</button>
                 <button className="editor-navigation__secondary" onClick={() => setView('drafts')} type="button">我的草稿</button>
               </div>
               <span>当前模板：{currentTemplate?.name ?? resume.templateId}</span>
             </div>
-            <ResumeLibrary document={resume} onChange={setResume} onRestoreSample={() => setResume(createSampleResumeDocument())} onSelect={setResume} previewRef={previewRef} />
+            <ResumeLibrary document={resume} initialSelectedId={selectedResumeId} onChange={setResume} onRestoreSample={() => setResume(createSampleResumeDocument())} onSelect={setResume} previewRef={previewRef} />
             <ResumeEditor document={resume} onChange={setResume} />
           </aside>
           <ResumePreview document={resume} ref={previewRef} />

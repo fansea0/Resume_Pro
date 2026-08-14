@@ -5,15 +5,16 @@ import { exportResumePng } from '../utils/exportResumePng';
 
 interface ResumeLibraryProps {
   document: ResumeDocument;
+  initialSelectedId?: number | null;
   onChange: (document: ResumeDocument) => void;
   onRestoreSample: () => void;
   onSelect: (document: ResumeDocument) => void;
   previewRef?: RefObject<HTMLElement>;
 }
 
-export function ResumeLibrary({ document, onChange, onRestoreSample, onSelect, previewRef }: ResumeLibraryProps) {
+export function ResumeLibrary({ document, initialSelectedId = null, onChange, onRestoreSample, onSelect, previewRef }: ResumeLibraryProps) {
   const [items, setItems] = useState<StoredResume[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -27,6 +28,10 @@ export function ResumeLibrary({ document, onChange, onRestoreSample, onSelect, p
       .finally(() => active && setLoading(false));
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    setSelectedId(initialSelectedId);
+  }, [initialSelectedId]);
 
   const saveNew = async () => {
     setSaving(true); setError(null);

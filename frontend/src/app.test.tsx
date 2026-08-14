@@ -6,6 +6,7 @@ import { createSampleResumeDocument } from './types/resume';
 const getCurrentUser = vi.fn();
 const logout = vi.fn();
 const listResumes = vi.fn();
+const updateResume = vi.fn();
 
 vi.mock('./api/auth', () => ({
   getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
@@ -17,7 +18,7 @@ vi.mock('./api/auth', () => ({
 vi.mock('./api/resumes', () => ({
   listResumes: (...args: unknown[]) => listResumes(...args),
   createResume: vi.fn(),
-  updateResume: vi.fn(),
+  updateResume: (...args: unknown[]) => updateResume(...args),
   deleteResume: vi.fn(),
   documentFromStored: (resume: { content: string; title: string; templateId: string }) => ({
     ...JSON.parse(resume.content),
@@ -77,6 +78,38 @@ describe('application authentication gate', () => {
 
     expect(await screen.findByTestId('resume-preview')).toBeInTheDocument();
     expect(screen.getByText('当前模板：现代商务')).toBeInTheDocument();
+
+    updateResume.mockResolvedValueOnce({
+      id: 7,
+      title: '产品经理简历',
+      templateId: 'business',
+      content: JSON.stringify({ ...sample, templateId: 'business', title: '产品经理简历' }),
+      createdAt: '2026-08-14T01:00:00Z',
+      updatedAt: '2026-08-14T03:00:00Z',
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
+
+    await waitFor(() => expect(updateResume).toHaveBeenCalledWith(7, expect.objectContaining({ title: '产品经理简历' })));
+  });
+
+  it('keeps malformed drafts open and explains why they cannot be read', async () => {
+    getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'ada@example.com', tenantId: 3 });
+    listResumes.mockResolvedValueOnce([{
+      id: 9,
+      title: '损坏的简历',
+      templateId: 'business',
+      content: '{bad json',
+      createdAt: '2026-08-14T01:00:00Z',
+      updatedAt: '2026-08-14T02:00:00Z',
+    }]);
+    render(<App />);
+
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    fireEvent.click(screen.getByRole('button', { name: '我的草稿' }));
+    fireEvent.click(await screen.findByRole('button', { name: '继续编辑：损坏的简历' }));
+
+    expect(screen.getByRole('heading', { name: '我的草稿' })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('无法读取该简历内容。');
   });
 
   it('returns an empty drafts state to the template home', async () => {
