@@ -14,6 +14,7 @@ import (
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/store"
+	"resumepro/backend/internal/templates"
 )
 
 func TestAuthRegisterLoginMeAndLogout(t *testing.T) {
@@ -41,7 +42,7 @@ func TestAuthRegisterLoginMeAndLogout(t *testing.T) {
 	if err := json.NewDecoder(me.Body).Decode(&current); err != nil {
 		t.Fatal(err)
 	}
-	if current.User.Email != "ada@example.com" || current.User.ID == 0 || current.User.TenantID == 0 {
+	if current.User.Email != "ada@example.com" || current.User.ID == 0 || current.User.TenantID == 0 || current.User.IsAdmin {
 		t.Fatalf("unexpected me user: %#v", current.User)
 	}
 
@@ -170,7 +171,7 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 	if err := store.Migrate(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	return NewRouter(auth.NewRepository(db), resume.NewRepository(db), RouterConfig{JWTSecret: "test-secret-that-is-long-enough"})
+	return NewRouter(auth.NewRepository(db), resume.NewRepository(db), templates.NewRepository(db), RouterConfig{JWTSecret: "test-secret-that-is-long-enough"})
 }
 
 func newDevelopmentAuthTestRouter(t *testing.T) http.Handler {
@@ -183,7 +184,7 @@ func newDevelopmentAuthTestRouter(t *testing.T) http.Handler {
 	if err := store.Migrate(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	return NewRouter(auth.NewRepository(db), resume.NewRepository(db), RouterConfig{JWTSecret: "test-secret-that-is-long-enough", EnableDevLogin: true})
+	return NewRouter(auth.NewRepository(db), resume.NewRepository(db), templates.NewRepository(db), RouterConfig{JWTSecret: "test-secret-that-is-long-enough", EnableDevLogin: true})
 }
 
 func developmentLoginRequest(t *testing.T, router http.Handler, body, remoteAddr string) *httptest.ResponseRecorder {

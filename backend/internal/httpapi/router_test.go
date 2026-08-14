@@ -12,7 +12,7 @@ func TestHealth(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 
-	NewRouter(nil, nil, RouterConfig{}).ServeHTTP(recorder, request)
+	NewRouter(nil, nil, nil, RouterConfig{}).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -24,7 +24,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestNewRouterUsesGinEngine(t *testing.T) {
-	var router *gin.Engine = NewRouter(nil, nil, RouterConfig{})
+	var router *gin.Engine = NewRouter(nil, nil, nil, RouterConfig{})
 	if router == nil {
 		t.Fatal("router is nil")
 	}

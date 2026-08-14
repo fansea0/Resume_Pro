@@ -12,6 +12,7 @@ import (
 	"resumepro/backend/internal/httpapi"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/store"
+	"resumepro/backend/internal/templates"
 )
 
 const minimumJWTSecretLength = 32
@@ -56,7 +57,7 @@ func main() {
 		"database_path": databasePath,
 	}).Info("starting resume API server")
 
-	if err := httpapi.NewRouter(authRepository, resume.NewRepository(db), httpapi.RouterConfig{JWTSecret: jwtSecret, CookieSecure: cookieSecure, EnableDevLogin: os.Getenv("APP_ENV") == "development"}).Run(":8080"); err != nil {
+	if err := httpapi.NewRouter(authRepository, resume.NewRepository(db), templates.NewRepository(db), httpapi.RouterConfig{JWTSecret: jwtSecret, CookieSecure: cookieSecure, EnableDevLogin: os.Getenv("APP_ENV") == "development"}).Run(":8080"); err != nil {
 		logger.WithError(err).Fatal("resume API server stopped")
 	}
 }

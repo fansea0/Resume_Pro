@@ -14,6 +14,7 @@ import (
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/store"
+	"resumepro/backend/internal/templates"
 )
 
 func TestResumeCRUD(t *testing.T) {
@@ -154,7 +155,7 @@ func testRouter(t *testing.T) (http.Handler, *http.Cookie) {
 	if err := store.Migrate(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	router := NewRouter(auth.NewRepository(db), resume.NewRepository(db), RouterConfig{JWTSecret: "resume-handler-test-secret"})
+	router := NewRouter(auth.NewRepository(db), resume.NewRepository(db), templates.NewRepository(db), RouterConfig{JWTSecret: "resume-handler-test-secret"})
 	return router, registerAuthUser(t, router, "resume-handler@example.com")
 }
 

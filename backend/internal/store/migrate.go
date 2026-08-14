@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS resume_versions (
 CREATE INDEX IF NOT EXISTS idx_resume_versions_resume_id ON resume_versions(resume_id);
 CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON users(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id);
+CREATE TABLE IF NOT EXISTS disabled_templates (
+  template_id TEXT PRIMARY KEY,
+  disabled_at DATETIME NOT NULL
+);
 `
 
 // Migrate applies the application's idempotent SQLite schema migrations.

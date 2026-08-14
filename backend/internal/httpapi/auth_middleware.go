@@ -31,6 +31,17 @@ func requireAuthentication(service *auth.Service) gin.HandlerFunc {
 	}
 }
 
+func requireAdministrator() gin.HandlerFunc {
+	return func(context *gin.Context) {
+		principal, ok := principalFromContext(context)
+		if !ok || !principal.IsAdmin {
+			writeError(context, http.StatusForbidden, "administrator access required")
+			context.Abort()
+			return
+		}
+	}
+}
+
 func principalFromContext(context *gin.Context) (auth.Principal, bool) {
 	principal, ok := context.Get(principalContextKey)
 	if !ok {

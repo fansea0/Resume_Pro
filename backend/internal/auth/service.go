@@ -22,12 +22,14 @@ type Principal struct {
 	UserID   int64
 	TenantID int64
 	Email    string
+	IsAdmin  bool
 }
 
 type Claims struct {
 	UserID   int64  `json:"user_id"`
 	TenantID int64  `json:"tenant_id"`
 	Email    string `json:"email"`
+	IsAdmin  bool   `json:"is_admin"`
 	jwt.RegisteredClaims
 }
 
@@ -79,7 +81,7 @@ func ValidEmail(email string) bool {
 func (s *Service) IssueToken(user User) (string, error) {
 	now := s.now().UTC()
 	claims := Claims{
-		UserID: user.ID, TenantID: user.TenantID, Email: user.Email,
+		UserID: user.ID, TenantID: user.TenantID, Email: user.Email, IsAdmin: user.IsAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: tokenIssuer, Subject: int64String(user.ID), IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(7 * 24 * time.Hour)),
 		},
@@ -98,7 +100,7 @@ func (s *Service) VerifyToken(tokenString string) (Principal, error) {
 	if err != nil || !token.Valid || claims.UserID < 1 || claims.TenantID < 1 || claims.Subject != int64String(claims.UserID) || !validEmail(claims.Email) {
 		return Principal{}, ErrInvalidToken
 	}
-	return Principal{UserID: claims.UserID, TenantID: claims.TenantID, Email: claims.Email}, nil
+	return Principal{UserID: claims.UserID, TenantID: claims.TenantID, Email: claims.Email, IsAdmin: claims.IsAdmin}, nil
 }
 
 func validEmail(value string) bool {

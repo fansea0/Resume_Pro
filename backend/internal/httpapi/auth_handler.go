@@ -32,6 +32,7 @@ type publicUser struct {
 	ID       int64  `json:"id"`
 	Email    string `json:"email"`
 	TenantID int64  `json:"tenantId"`
+	IsAdmin  bool   `json:"isAdmin"`
 }
 
 func newAuthHandler(service *auth.Service, cookieSecure bool) *authHandler {
@@ -105,7 +106,7 @@ func (h *authHandler) me(context *gin.Context) {
 		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	writeJSON(context, http.StatusOK, map[string]publicUser{"user": {ID: principal.UserID, Email: principal.Email, TenantID: principal.TenantID}})
+	writeJSON(context, http.StatusOK, map[string]publicUser{"user": {ID: principal.UserID, Email: principal.Email, TenantID: principal.TenantID, IsAdmin: principal.IsAdmin}})
 }
 
 func (h *authHandler) writeAuthenticated(context *gin.Context, status int, user auth.User) {
@@ -115,7 +116,7 @@ func (h *authHandler) writeAuthenticated(context *gin.Context, status int, user 
 		return
 	}
 	h.setCookie(context, token, int((7 * 24 * time.Hour).Seconds()), time.Now().Add(7*24*time.Hour))
-	writeJSON(context, status, map[string]publicUser{"user": {ID: user.ID, Email: user.Email, TenantID: user.TenantID}})
+	writeJSON(context, status, map[string]publicUser{"user": {ID: user.ID, Email: user.Email, TenantID: user.TenantID, IsAdmin: user.IsAdmin}})
 }
 
 func (h *authHandler) setCookie(context *gin.Context, value string, maxAge int, expires time.Time) {
