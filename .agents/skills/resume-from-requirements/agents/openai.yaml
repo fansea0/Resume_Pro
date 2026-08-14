@@ -1,0 +1,4 @@
+interface:
+  display_name: "需求生成简历"
+  short_description: "根据求职信息选择平台模板、生成并保存可编辑的简历草稿"
+  default_prompt: "Use $resume-from-requirements to create and save my resume from my job-search details."
