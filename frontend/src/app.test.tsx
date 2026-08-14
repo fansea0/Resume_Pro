@@ -73,6 +73,22 @@ describe('application authentication gate', () => {
     expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument();
   });
 
+  it('waits for template status before showing the gallery during session restoration', async () => {
+    let resolveUser!: (user: { id: number; email: string; tenantId: number; isAdmin: boolean }) => void;
+    let resolveStatus!: (status: { disabledTemplateIds: string[] }) => void;
+    getCurrentUser.mockImplementationOnce(() => new Promise((resolve) => { resolveUser = resolve; }));
+    getTemplateStatus.mockImplementationOnce(() => new Promise((resolve) => { resolveStatus = resolve; }));
+    render(<App />);
+
+    resolveUser({ id: 1, email: 'ada@example.com', tenantId: 3, isAdmin: false });
+    await waitFor(() => expect(getTemplateStatus).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('heading', { name: '选择简历模板' })).not.toBeInTheDocument();
+
+    resolveStatus({ disabledTemplateIds: ['minimal'] });
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    expect(screen.queryByRole('img', { name: '极简专业 模板预览' })).not.toBeInTheDocument();
+  });
+
   it('does not show template administration to a regular user', async () => {
     getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'ada@example.com', tenantId: 3, isAdmin: false });
     render(<App />);

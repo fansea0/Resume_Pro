@@ -32,10 +32,12 @@ export default function App() {
       if (isMounted.current && requestVersion === templateStatusRequestVersion.current) {
         setDisabledTemplateIds(status.disabledTemplateIds);
       }
+      return isMounted.current && requestVersion === templateStatusRequestVersion.current;
     } catch {
       if (isMounted.current && requestVersion === templateStatusRequestVersion.current) {
         setDisabledTemplateIds([]);
       }
+      return isMounted.current && requestVersion === templateStatusRequestVersion.current;
     }
   }, []);
 
@@ -43,11 +45,11 @@ export default function App() {
     let active = true;
     isMounted.current = true;
     getCurrentUser()
-      .then((currentUser) => {
+      .then(async (currentUser) => {
         if (!active) return;
+        if (!(await loadTemplateStatus()) || !active) return;
         setUser(currentUser);
         setAuthState('authenticated');
-        void loadTemplateStatus();
       })
       .catch(() => {
         if (active) setAuthState('unauthenticated');
@@ -89,8 +91,7 @@ export default function App() {
   const currentTemplate = templateRegistry.find((template) => template.id === resume.templateId);
 
   const handleAuthenticated = async (nextUser: AuthUser) => {
-    await loadTemplateStatus();
-    if (!isMounted.current) return;
+    if (!(await loadTemplateStatus()) || !isMounted.current) return;
     setUser(nextUser);
     setAuthState('authenticated');
     setView('gallery');
