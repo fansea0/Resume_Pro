@@ -51,4 +51,24 @@ describe('ResumeDrafts', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('无法加载草稿，请稍后重试。');
   });
+
+  it('retries loading drafts after an error', async () => {
+    listResumes
+      .mockRejectedValueOnce(new Error('network failed'))
+      .mockResolvedValueOnce([{
+        id: 8,
+        title: '重试后的简历',
+        templateId: 'minimal',
+        content: '{}',
+        createdAt: '2026-08-14T00:00:00Z',
+        updatedAt: '2026-08-14T01:00:00Z',
+      }]);
+
+    render(<ResumeDrafts onCreate={vi.fn()} onSelect={vi.fn()} />);
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    expect(await screen.findByText('重试后的简历')).toBeInTheDocument();
+    expect(listResumes).toHaveBeenCalledTimes(2);
+  });
 });

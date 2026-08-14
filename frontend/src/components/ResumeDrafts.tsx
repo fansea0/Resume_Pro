@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { listResumes, type StoredResume } from '../api/resumes';
 import { templateRegistry } from '../templates/registry';
 
@@ -21,17 +21,24 @@ export function ResumeDrafts({ onCreate, onSelect }: ResumeDraftsProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    listResumes()
-      .then((items) => active && setDrafts(items))
-      .catch(() => active && setError(true))
-      .finally(() => active && setLoading(false));
-    return () => { active = false; };
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      setDrafts(await listResumes());
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
+  useEffect(() => {
+    void load();
+  }, [load]);
+
   if (loading) return <p>正在加载草稿…</p>;
-  if (error) return <p role="alert">无法加载草稿，请稍后重试。</p>;
+  if (error) return <div><p role="alert">无法加载草稿，请稍后重试。</p><button onClick={load} type="button">重试</button></div>;
 
   return (
     <section aria-labelledby="resume-drafts-title" className="resume-drafts">
