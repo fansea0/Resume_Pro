@@ -56,6 +56,13 @@ describe('templateRegistry', () => {
     expect(template.styleDescription).toMatch(/[\u4e00-\u9fff]/);
   });
 
+  it('uses role or job-context tags for the azure chronicle template', () => {
+    const azureChronicle = templateRegistry.find(({ id }) => id === 'azure-chronicle');
+
+    expect(azureChronicle?.tags).toContain('运营');
+    expect(azureChronicle?.tags).not.toContain('中文');
+  });
+
   it.each([
     ['tech', 'CAREER SIGNAL'],
     ['editorial', 'PROFILE'],

@@ -28,7 +28,7 @@ export const templateRegistry: ResumeTemplate[] = [
   { id: 'editorial', name: '高级杂志风', description: '留白与大字排版，适合产品、设计与运营岗位。', tags: ['产品', '运营', '设计'], styleDescription: '大字留白，呈现编辑感节奏。', previewImage: '/template-previews/editorial.png', Renderer: EditorialTemplate },
   { id: 'redline', name: '赤线单栏', description: '红色章节线与紧凑单栏，适合中文互联网求职。', tags: ['互联网', '产品', '运营'], styleDescription: '红色章节线，紧凑利落。', previewImage: '/template-previews/redline.png', Renderer: RedlineTemplate },
   { id: 'violet', name: '紫韵单栏', description: '淡紫章节与居中信息区，适合校园与技术求职。', tags: ['校招', '技术', '学生'], styleDescription: '淡紫章节，气质轻盈专业。', previewImage: '/template-previews/violet.png', Renderer: VioletTemplate },
-  { id: 'azure-chronicle', name: '澄蓝履历', description: '蓝色图标章节与双端信息排版，清晰呈现中文履历。', tags: ['产品', '项目', '中文'], styleDescription: '澄蓝图标章节，信息阅读流畅。', previewImage: '/template-previews/azure-chronicle.png', Renderer: AzureChronicleTemplate },
+  { id: 'azure-chronicle', name: '澄蓝履历', description: '蓝色图标章节与双端信息排版，清晰呈现中文履历。', tags: ['产品', '项目', '运营'], styleDescription: '澄蓝图标章节，信息阅读流畅。', previewImage: '/template-previews/azure-chronicle.png', Renderer: AzureChronicleTemplate },
 ];
 
 export function getTemplate(templateId: TemplateId): ResumeTemplate {
