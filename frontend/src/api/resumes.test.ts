@@ -26,6 +26,29 @@ describe('documentFromStored', () => {
     })).toThrow();
   });
 
+  it('accepts the blank experience and project entries created by the editor', () => {
+    const document = createSampleResumeDocument();
+    const content = {
+      ...document,
+      experiences: [...document.experiences, {
+        id: 'new-experience', company: '', role: '', startDate: '', endDate: '', highlights: [],
+      }],
+      projects: [...document.projects, {
+        id: 'new-project', name: '', role: '', link: '', startDate: '', endDate: '', description: '', highlights: [],
+      }],
+    };
+    const stored = {
+      id: 12,
+      title: document.title,
+      templateId: document.templateId,
+      content: JSON.stringify(content),
+      createdAt: '2026-08-14T01:00:00Z',
+      updatedAt: '2026-08-14T02:00:00Z',
+    };
+
+    expect(documentFromStored(stored)).toEqual(expect.objectContaining(content));
+  });
+
   it('rejects unknown template identifiers from persisted data', () => {
     const document = createSampleResumeDocument();
     expect(() => documentFromStored({

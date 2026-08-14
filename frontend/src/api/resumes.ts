@@ -23,10 +23,6 @@ function hasStringFields(value: Record<string, unknown>, fields: readonly string
   return fields.every((field) => typeof value[field] === 'string');
 }
 
-function hasNonEmptyStringFields(value: Record<string, unknown>, fields: readonly string[]) {
-  return fields.every((field) => typeof value[field] === 'string' && value[field].trim().length > 0);
-}
-
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
@@ -37,13 +33,13 @@ function isTemplateId(value: unknown): value is TemplateId {
 
 function isExperience(value: unknown) {
   return isRecord(value)
-    && hasNonEmptyStringFields(value, ['id', 'company', 'role', 'startDate', 'endDate'])
+    && hasStringFields(value, ['id', 'company', 'role', 'startDate', 'endDate'])
     && isStringArray(value.highlights);
 }
 
 function isProject(value: unknown) {
   return isRecord(value)
-    && hasNonEmptyStringFields(value, ['id', 'name', 'role', 'startDate', 'endDate'])
+    && hasStringFields(value, ['id', 'name', 'role', 'startDate', 'endDate'])
     && hasStringFields(value, ['link', 'description'])
     && isStringArray(value.highlights);
 }
