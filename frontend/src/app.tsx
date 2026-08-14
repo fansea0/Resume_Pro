@@ -88,11 +88,12 @@ export default function App() {
   };
   const currentTemplate = templateRegistry.find((template) => template.id === resume.templateId);
 
-  const handleAuthenticated = (nextUser: AuthUser) => {
+  const handleAuthenticated = async (nextUser: AuthUser) => {
+    await loadTemplateStatus();
+    if (!isMounted.current) return;
     setUser(nextUser);
     setAuthState('authenticated');
     setView('gallery');
-    void loadTemplateStatus();
   };
 
   const handleLogout = async () => {

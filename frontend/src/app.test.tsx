@@ -92,10 +92,11 @@ describe('application authentication gate', () => {
     expect(await screen.findByRole('heading', { name: '模板管理' })).toBeInTheDocument();
   });
 
-  it('loads disabled templates after signing in without refreshing', async () => {
+  it('waits for template status before showing the gallery after signing in', async () => {
     getCurrentUser.mockRejectedValueOnce(new Error('authentication required'));
     login.mockResolvedValueOnce({ id: 1, email: 'ada@example.com', tenantId: 3, isAdmin: false });
-    getTemplateStatus.mockResolvedValueOnce({ disabledTemplateIds: ['minimal'] });
+    let resolveStatus!: (status: { disabledTemplateIds: string[] }) => void;
+    getTemplateStatus.mockImplementationOnce(() => new Promise((resolve) => { resolveStatus = resolve; }));
     render(<App />);
 
     await screen.findByRole('heading', { name: '欢迎回来' });
@@ -103,6 +104,10 @@ describe('application authentication gate', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password1234' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
 
+    await waitFor(() => expect(getTemplateStatus).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('heading', { name: '选择简历模板' })).not.toBeInTheDocument();
+
+    resolveStatus({ disabledTemplateIds: ['minimal'] });
     await screen.findByRole('heading', { name: '选择简历模板' });
     await waitFor(() => expect(screen.queryByRole('img', { name: '极简专业 模板预览' })).not.toBeInTheDocument());
   });
