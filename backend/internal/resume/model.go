@@ -7,7 +7,7 @@ type Resume struct {
 	ID         int64     `db:"id" json:"id"`
 	TenantID   int64     `db:"tenant_id" json:"-"`
 	Title      string    `db:"title" json:"title"`
-	TemplateID string    `db:"template_id" json:"template_id"`
+	TemplateID string    `db:"template_id" json:"templateId"`
 	Content    string    `db:"content" json:"content"`
 	CreatedAt  time.Time `db:"created_at" json:"createdAt"`
 	UpdatedAt  time.Time `db:"updated_at" json:"updatedAt"`

@@ -99,6 +99,25 @@ func TestResumeCRUD(t *testing.T) {
 	}
 }
 
+func TestResumeResponsesUseFrontendFieldNames(t *testing.T) {
+	router, session := testRouter(t)
+	response := requestJSON(t, router, http.MethodPost, "/api/resumes", `{"title":"Frontend Engineer","templateId":"minimal","content":{"profile":{"name":"Ada"}}}`, session)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusCreated, response.Body.String())
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["templateId"]; !ok {
+		t.Fatalf("response keys = %#v, want templateId", payload)
+	}
+	if _, ok := payload["template_id"]; ok {
+		t.Fatalf("response must not expose storage field template_id")
+	}
+}
+
 func TestResumeInvalidCreateReturnsBadRequest(t *testing.T) {
 	router, session := testRouter(t)
 	for _, body := range []string{
