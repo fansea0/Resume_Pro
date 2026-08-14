@@ -9,8 +9,9 @@ import (
 )
 
 type RouterConfig struct {
-	JWTSecret    string
-	CookieSecure bool
+	JWTSecret      string
+	CookieSecure   bool
+	EnableDevLogin bool
 }
 
 // NewRouter creates the HTTP API router.
@@ -31,6 +32,9 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 	mux.HandleFunc("POST /api/auth/register", authHandler.register)
 	mux.HandleFunc("POST /api/auth/login", authHandler.login)
 	mux.HandleFunc("POST /api/auth/logout", authHandler.logout)
+	if config.EnableDevLogin {
+		mux.HandleFunc("POST /api/dev/login", authHandler.developmentLogin)
+	}
 	mux.Handle("GET /api/auth/me", requireAuthentication(service, http.HandlerFunc(authHandler.me)))
 	resumeHandler := newResumeHandler(resumeRepository)
 	protected := requireAuthentication(service, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

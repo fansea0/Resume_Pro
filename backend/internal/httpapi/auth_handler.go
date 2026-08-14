@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"resumepro/backend/internal/auth"
@@ -18,6 +20,10 @@ type authHandler struct {
 type credentialsInput struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+}
+
+type developmentLoginInput struct {
+	Email string `json:"email"`
 }
 type publicUser struct {
 	ID       int64  `json:"id"`
@@ -65,6 +71,24 @@ func (h *authHandler) login(writer http.ResponseWriter, request *http.Request) {
 	h.writeAuthenticated(writer, http.StatusOK, user)
 }
 
+func (h *authHandler) developmentLogin(writer http.ResponseWriter, request *http.Request) {
+	noStore(writer)
+	if !isLoopbackRequest(request) {
+		writeError(writer, http.StatusForbidden, "development login requires a loopback request")
+		return
+	}
+	input, ok := decodeDevelopmentLogin(writer, request)
+	if !ok {
+		return
+	}
+	user, err := h.service.FindUserByEmail(request.Context(), input.Email)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid email or password")
+		return
+	}
+	h.writeAuthenticated(writer, http.StatusOK, user)
+}
+
 func (h *authHandler) logout(writer http.ResponseWriter, _ *http.Request) {
 	noStore(writer)
 	h.setCookie(writer, "", -1, time.Unix(1, 0))
@@ -104,6 +128,26 @@ func decodeCredentials(writer http.ResponseWriter, request *http.Request) (crede
 		return credentialsInput{}, false
 	}
 	return input, true
+}
+
+func decodeDevelopmentLogin(writer http.ResponseWriter, request *http.Request) (developmentLoginInput, bool) {
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	var input developmentLoginInput
+	if err := decoder.Decode(&input); err != nil || decoder.Decode(&struct{}{}) != io.EOF || !auth.ValidEmail(input.Email) {
+		writeError(writer, http.StatusBadRequest, "a valid email is required")
+		return developmentLoginInput{}, false
+	}
+	return input, true
+}
+
+func isLoopbackRequest(request *http.Request) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(request.RemoteAddr))
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func noStore(writer http.ResponseWriter) { writer.Header().Set("Cache-Control", "no-store") }

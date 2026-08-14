@@ -1,0 +1,29 @@
+name: Backend API tests
+
+on:
+  push:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-api-tests.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-api-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Go API test suite
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          check-latest: true
+      - run: go test ./...

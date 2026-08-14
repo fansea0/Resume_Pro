@@ -15,6 +15,7 @@ The API reads the following environment variables when it starts.
 | Variable | Local value | Behaviour |
 | --- | --- | --- |
 | `JWT_SECRET` | a unique random value of at least 32 characters | Required in production. In local development an unset or short value falls back to a non-production secret. Changing the secret invalidates existing sessions. |
+| `APP_ENV` | `development` | Enables the local-only development login endpoint only when set exactly to `development`. Use `production` in production. |
 | `COOKIE_SECURE` | `false` | Enables the cookie `Secure` attribute only when set exactly to `true`. Keep it `false` for local HTTP development; set it to `true` behind HTTPS. |
 | `RESUME_DB_PATH` | `./resume.db` | Optional SQLite database path. |
 
@@ -22,6 +23,7 @@ Generate a local secret without committing it to source control:
 
 ```bash
 export JWT_SECRET="$(openssl rand -base64 48)"
+export APP_ENV=development
 export COOKIE_SECURE=false
 export RESUME_DB_PATH="./resume.db"
 ```
@@ -34,10 +36,10 @@ Start the API in one terminal:
 
 ```bash
 cd backend
-JWT_SECRET="$JWT_SECRET" COOKIE_SECURE="$COOKIE_SECURE" RESUME_DB_PATH="$RESUME_DB_PATH" go run ./cmd/server
+APP_ENV="$APP_ENV" JWT_SECRET="$JWT_SECRET" COOKIE_SECURE="$COOKIE_SECURE" RESUME_DB_PATH="$RESUME_DB_PATH" go run ./cmd/server
+```
 
 For local development, `./scripts/restart.sh`, `./scripts/restart.sh backend`, `./scripts/restart.sh frontend`, and direct `go run ./cmd/server` use a non-production development secret when `JWT_SECRET` is unset. Set `APP_ENV=production` in production; startup then refuses a missing or short secret.
-```
 
 Start the web application in a second terminal:
 
@@ -48,6 +50,26 @@ npm run dev
 ```
 
 Open the Vite address shown in the terminal (normally `http://localhost:5173`). Its development proxy sends `/api` requests to the API at `http://localhost:8080`.
+
+## Development API login
+
+When the API starts with `APP_ENV=development`, `POST /api/dev/login` provides a passwordless local testing login. It is registered only in that exact environment and accepts only TCP loopback requests (`127.0.0.1` or `::1`); it is not available in test, staging, or production.
+
+The request body contains an already registered email. A successful response uses the exact same `resume_session` JWT cookie and `{ "user": ... }` response as ordinary login, so subsequent curl requests exercise the normal authentication middleware.
+
+```bash
+cookie_jar="$(mktemp)"
+curl --fail --silent --show-error --cookie-jar "$cookie_jar" \
+  --header 'Content-Type: application/json' \
+  --data '{"email":"existing-user@example.com"}' \
+  http://127.0.0.1:8080/api/dev/login
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  http://127.0.0.1:8080/api/auth/me
+rm -f "$cookie_jar"
+```
+
+The endpoint never creates users or tenants. Create a local test user through the normal registration API when needed; do not expose the development server beyond the local machine.
 
 ## Authentication and tenant isolation
 

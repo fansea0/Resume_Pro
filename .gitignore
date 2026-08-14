@@ -1,4 +1,21 @@
+# Operating-system and editor metadata
+.DS_Store
+.idea/
+.vscode/
+
+# Local configuration and generated logs
+.env
+.env.*
+!.env.example
+*.log
+
+# Frontend dependencies and build output
 frontend/node_modules/
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
-backend/resume.db
+
+# Local SQLite databases and their journal files
+backend/*.db
+backend/*.db-*
+backend/*.sqlite
+backend/*.sqlite-*

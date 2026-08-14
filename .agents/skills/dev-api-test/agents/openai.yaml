@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dev API Test"
+  short_description: "Analyze and test local development API endpoints"
+  default_prompt: "Use $dev-api-test to analyze the selected API endpoint, test it locally, and report results."

@@ -62,6 +62,20 @@ func (s *Service) Login(ctx context.Context, email, password string) (User, erro
 	return user, nil
 }
 
+// FindUserByEmail returns a registered user for development-only session setup.
+// Callers must enforce their own environment and request-origin restrictions.
+func (s *Service) FindUserByEmail(ctx context.Context, email string) (User, error) {
+	if !validEmail(NormalizeEmail(email)) {
+		return User{}, ErrInvalidCredentials
+	}
+	return s.repository.GetUserByEmail(ctx, email)
+}
+
+// ValidEmail reports whether an input can identify a user account.
+func ValidEmail(email string) bool {
+	return validEmail(NormalizeEmail(email))
+}
+
 func (s *Service) IssueToken(user User) (string, error) {
 	now := s.now().UTC()
 	claims := Claims{

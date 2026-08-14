@@ -74,6 +74,66 @@ func TestAuthLoginHidesInvalidCredentials(t *testing.T) {
 	}
 }
 
+func TestDevelopmentLoginIssuesNormalSessionForLoopbackRequest(t *testing.T) {
+	router := newDevelopmentAuthTestRouter(t)
+	registeredCookie := registerAuthUser(t, router, "dev-login@example.com")
+
+	response := developmentLoginRequest(t, router, `{"email":"DEV-LOGIN@example.com"}`, "127.0.0.1:45678")
+	if response.Code != http.StatusOK {
+		t.Fatalf("development login status = %d: %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("development login cache control = %q", response.Header().Get("Cache-Control"))
+	}
+	developmentCookie := responseCookie(t, response, sessionCookieName)
+	if developmentCookie.Value == "" || developmentCookie.HttpOnly != registeredCookie.HttpOnly || developmentCookie.Path != registeredCookie.Path || developmentCookie.SameSite != registeredCookie.SameSite || developmentCookie.Secure != registeredCookie.Secure || developmentCookie.MaxAge <= 0 {
+		t.Fatalf("unexpected development session cookie: %#v", developmentCookie)
+	}
+
+	me := authJSONRequest(t, router, http.MethodGet, "/api/auth/me", "", developmentCookie)
+	if me.Code != http.StatusOK {
+		t.Fatalf("development session /me status = %d: %s", me.Code, me.Body.String())
+	}
+	var current struct {
+		User publicUser `json:"user"`
+	}
+	if err := json.NewDecoder(me.Body).Decode(&current); err != nil {
+		t.Fatal(err)
+	}
+	if current.User.Email != "dev-login@example.com" || current.User.ID == 0 || current.User.TenantID == 0 {
+		t.Fatalf("unexpected development login principal: %#v", current.User)
+	}
+}
+
+func TestDevelopmentLoginRejectsInvalidRequests(t *testing.T) {
+	enabled := newDevelopmentAuthTestRouter(t)
+	for _, tc := range []struct {
+		name       string
+		body       string
+		remoteAddr string
+		wantStatus int
+	}{
+		{name: "non-loopback", body: `{"email":"any@example.com"}`, remoteAddr: "192.0.2.1:1234", wantStatus: http.StatusForbidden},
+		{name: "missing email", body: `{}`, remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusBadRequest},
+		{name: "invalid email", body: `{"email":"not-an-email"}`, remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusBadRequest},
+		{name: "unknown field", body: `{"email":"any@example.com","role":"admin"}`, remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusBadRequest},
+		{name: "unknown user", body: `{"email":"missing@example.com"}`, remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := developmentLoginRequest(t, enabled, tc.body, tc.remoteAddr)
+			if response.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", response.Code, tc.wantStatus, response.Body.String())
+			}
+		})
+	}
+
+	disabled := newAuthTestRouter(t)
+	response := developmentLoginRequest(t, disabled, `{"email":"any@example.com"}`, "127.0.0.1:1234")
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("disabled development login status = %d, want %d", response.Code, http.StatusNotFound)
+	}
+}
+
 func TestProtectedResumeRequiresSessionAndHidesCrossTenantResume(t *testing.T) {
 	router := newAuthTestRouter(t)
 	unauthenticated := authJSONRequest(t, router, http.MethodGet, "/api/resumes", "", nil)
@@ -111,6 +171,29 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 		t.Fatal(err)
 	}
 	return NewRouter(auth.NewRepository(db), resume.NewRepository(db), RouterConfig{JWTSecret: "test-secret-that-is-long-enough"})
+}
+
+func newDevelopmentAuthTestRouter(t *testing.T) http.Handler {
+	t.Helper()
+	db, err := sqlx.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := store.Migrate(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	return NewRouter(auth.NewRepository(db), resume.NewRepository(db), RouterConfig{JWTSecret: "test-secret-that-is-long-enough", EnableDevLogin: true})
+}
+
+func developmentLoginRequest(t *testing.T, router http.Handler, body, remoteAddr string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/api/dev/login", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = remoteAddr
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
 }
 
 func authJSONRequest(t *testing.T, router http.Handler, method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
