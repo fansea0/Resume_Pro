@@ -16,36 +16,40 @@ describe('createEmptyResumeDocument', () => {
     });
   });
 
-  it('initializes every repeatable section as an empty array', () => {
+  it('creates a version 2 document with no content sections', () => {
     const document = createEmptyResumeDocument();
 
-    expect(document.experiences).toEqual([]);
-    expect(document.projects).toEqual([]);
-    expect(document.education).toEqual([]);
-    expect(document.skills).toEqual([]);
+    expect(document.schemaVersion).toBe(2);
+    expect(document.sections).toEqual([]);
   });
 });
 
 describe('createSampleResumeDocument', () => {
-  it('creates a complete, realistic redline resume with populated unique IDs', () => {
+  it('creates a complete v2 document with every visible section type and stable unique IDs', () => {
     const document = createSampleResumeDocument();
-    const identifiers = [
-      ...document.experiences.map((experience) => experience.id),
-      ...document.projects.map((project) => project.id),
-      ...document.education.map((education) => education.id),
-      ...document.skills.map((skill) => skill.id),
-    ];
+    const sectionTypes = document.sections.map((section) => section.type);
+    const identifiers = document.sections.flatMap((section) => [
+      section.id,
+      ...('items' in section.content ? section.content.items.map((item) => item.id) : []),
+    ]);
 
     expect(document.templateId).toBe('redline');
     expect(document.profile.fullName).not.toBe('姓名');
-    expect(document.profile.summary).not.toBe('');
     expect(document.profile.email).not.toBe('');
     expect(document.profile.phone).not.toBe('');
     expect(document.profile.location).not.toBe('');
-    expect(document.experiences.length).toBeGreaterThan(0);
-    expect(document.projects.length).toBeGreaterThan(0);
-    expect(document.education.length).toBeGreaterThan(0);
-    expect(document.skills.length).toBeGreaterThan(0);
+    expect(document.schemaVersion).toBe(2);
+    expect(sectionTypes).toEqual([
+      'summary',
+      'work',
+      'internship',
+      'project',
+      'education',
+      'skills',
+      'campus',
+      'honours',
+    ]);
+    expect(document.sections.every((section) => section.visible)).toBe(true);
     expect(identifiers.every(Boolean)).toBe(true);
     expect(new Set(identifiers).size).toBe(identifiers.length);
   });
