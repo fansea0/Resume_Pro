@@ -160,7 +160,7 @@ func validResumeContent(raw json.RawMessage, title, templateID string) bool {
 		return false
 	}
 	profile, ok := document["profile"].(map[string]any)
-	if !ok || !hasStringFields(profile, "fullName", "headline", "email", "phone", "location", "website", "avatarUrl") {
+	if !ok || !hasStringFields(profile, "fullName", "headline", "email", "phone", "location", "website", "avatarUrl", "avatarStorageKey") {
 		return false
 	}
 	sections, ok := document["sections"].([]any)

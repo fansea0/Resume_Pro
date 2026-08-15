@@ -147,6 +147,7 @@ func TestResumeCreateAndUpdateRequireCompleteV2Content(t *testing.T) {
 		`{}`,
 		`{"title":"Valid","templateId":"minimal","profile":{"fullName":"","headline":"","email":"","phone":"","location":"","website":""},"sections":[]}`,
 		`{"schemaVersion":2,"title":"Valid","templateId":"minimal","profile":{"fullName":"","headline":"","email":"","phone":"","location":"","website":""},"sections":[]}`,
+		`{"schemaVersion":2,"title":"Valid","templateId":"minimal","profile":{"fullName":"","headline":"","email":"","phone":"","location":"","website":"","avatarUrl":""},"sections":[]}`,
 		`{"schemaVersion":2,"title":"Valid","templateId":"minimal","profile":{"fullName":"","headline":"","email":"","phone":"","location":""},"sections":[]}`,
 		`{"schemaVersion":2,"title":"Valid","templateId":"minimal","profile":{"fullName":"","headline":"","email":"","phone":"","location":"","website":""},"sections":[{"id":"bad","type":"unknown","title":"Bad","visible":true,"content":{}}]}`,
 		`{"schemaVersion":2,"title":"Valid","templateId":"minimal","profile":{"fullName":"","headline":"","email":"","phone":"","location":"","website":""},"sections":[{"id":"work","type":"work","title":"工作经历","visible":true,"content":{"items":[{"id":"work-1","company":"公司","role":"开发","startDate":"2024.01","endDate":"至今","location":"","achievements":"","highlightsMarkdown":""}]}}]}`,
@@ -189,7 +190,10 @@ func TestResumeCreateAndUpdateRequireMatchingMetadataAndBoundedContent(t *testin
 		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithSections("Valid", "minimal", tooManySections) + `}`,
 		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithSections("Valid", "minimal", `[{"id":"skills","type":"skills","title":"专业技能","visible":true,"content":{"items":`+tooManyItems+`}}]`) + `}`,
 		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithSections("Valid", "minimal", `[{"id":"summary","type":"summary","title":"个人总结","visible":true,"content":{"markdown":"`+strings.Repeat("x", 20_001)+`"}}]`) + `}`,
-		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithProfile("Valid", "minimal", `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"`+strings.Repeat("x", 20_001)+`"}`) + `}`,
+		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithProfile("Valid", "minimal", `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"`+strings.Repeat("x", 20_001)+`","avatarStorageKey":""}`) + `}`,
+		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithProfile("Valid", "minimal", `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":false,"avatarStorageKey":""}`) + `}`,
+		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithProfile("Valid", "minimal", `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"","avatarStorageKey":false}`) + `}`,
+		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithProfile("Valid", "minimal", `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"","avatarStorageKey":"`+strings.Repeat("x", 20_001)+`"}`) + `}`,
 		largeRequest,
 	}
 	for _, body := range invalidBodies {
@@ -229,7 +233,7 @@ func validV2ResumeContent(title, templateID string) string {
 }
 
 func validV2ContentWithSections(title, templateID, sections string) string {
-	return validV2ContentWithProfile(title, templateID, `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":""}`, sections)
+	return validV2ContentWithProfile(title, templateID, `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"","avatarStorageKey":""}`, sections)
 }
 
 func validV2ContentWithProfile(title, templateID, profile string, sections ...string) string {

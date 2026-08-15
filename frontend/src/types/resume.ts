@@ -16,6 +16,7 @@ export interface ResumeProfile {
   location: string;
   website: string;
   avatarUrl: string;
+  avatarStorageKey: string;
 }
 
 export type ResumeSectionType =
@@ -189,6 +190,7 @@ export function createEmptyResumeDocument(): ResumeDocument {
       location: '',
       website: '',
       avatarUrl: '',
+      avatarStorageKey: '',
     },
     sections: [],
   };
@@ -300,6 +302,7 @@ export function createSampleResumeDocument(): ResumeDocument {
       location: '上海',
       website: 'zhixia-lin.dev',
       avatarUrl: '',
+      avatarStorageKey: '',
     },
     sections: [summary, work, internship, project, education, skills, campus, honours],
   };

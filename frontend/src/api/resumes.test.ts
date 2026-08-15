@@ -64,7 +64,7 @@ describe('documentFromStored', () => {
       templateId: 'business',
       profile: {
         fullName: '达钦海', headline: 'Go 后端开发', email: 'a@example.com', phone: '13800000000',
-        location: '武汉', website: 'https://example.com', avatarUrl: '',
+        location: '武汉', website: 'https://example.com', avatarUrl: '', avatarStorageKey: '',
       },
     });
     expect(restored.sections.map((section) => section.type)).toEqual([
@@ -101,12 +101,30 @@ describe('documentFromStored', () => {
     expect(() => documentFromStored({ ...stored({}), content: '{' })).toThrow('invalid stored resume content');
   });
 
-  it('upgrades earlier v2 content without avatarUrl while legacy documents migrate it as empty', () => {
+  it('upgrades earlier v2 content without avatar fields while legacy documents migrate them as empty', () => {
     const document = createSampleResumeDocument();
-    const withoutAvatarUrl = { ...document, profile: { ...document.profile } };
-    delete (withoutAvatarUrl.profile as Partial<typeof document.profile>).avatarUrl;
+    const withoutAvatarFields = { ...document, profile: { ...document.profile } };
+    delete (withoutAvatarFields.profile as Partial<typeof document.profile>).avatarUrl;
+    delete (withoutAvatarFields.profile as Partial<typeof document.profile>).avatarStorageKey;
 
-    expect(documentFromStored(stored(withoutAvatarUrl)).profile.avatarUrl).toBe('');
+    const restored = documentFromStored(stored(withoutAvatarFields));
+    expect(restored.profile.avatarUrl).toBe('');
+    expect(restored.profile.avatarStorageKey).toBe('');
+  });
+
+  it('rejects malformed avatar field types in v2 content', () => {
+    const document = createSampleResumeDocument();
+    const corruptAvatarUrl = {
+      ...document,
+      profile: { ...document.profile, avatarUrl: 42 },
+    };
+    const corruptAvatarStorageKey = {
+      ...document,
+      profile: { ...document.profile, avatarStorageKey: 42 },
+    };
+
+    expect(() => documentFromStored(stored(corruptAvatarUrl))).toThrow('invalid stored resume content');
+    expect(() => documentFromStored(stored(corruptAvatarStorageKey))).toThrow('invalid stored resume content');
   });
 
   it('rejects unknown outer template identifiers', () => {

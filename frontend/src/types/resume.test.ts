@@ -29,6 +29,7 @@ describe('createEmptyResumeDocument', () => {
     expect(document.schemaVersion).toBe(2);
     expect(document.sections).toEqual([]);
     expect(document.profile.avatarUrl).toBe('');
+    expect(document.profile.avatarStorageKey).toBe('');
   });
 });
 
@@ -47,6 +48,7 @@ describe('createSampleResumeDocument', () => {
     expect(document.profile.phone).not.toBe('');
     expect(document.profile.location).not.toBe('');
     expect(document.profile.avatarUrl).toBe('');
+    expect(document.profile.avatarStorageKey).toBe('');
     expect(document.schemaVersion).toBe(2);
     expect(sectionTypes).toEqual([
       'summary',

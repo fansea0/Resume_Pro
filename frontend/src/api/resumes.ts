@@ -22,7 +22,7 @@ export interface StoredResume {
 type ResumePayload = Pick<StoredResume, 'title' | 'templateId'> & { content: ResumeDocument };
 
 const templateIds = new Set<TemplateId>(['minimal', 'business', 'creative', 'tech', 'editorial', 'redline', 'violet', 'azure-chronicle']);
-const profileFields = ['fullName', 'headline', 'email', 'phone', 'location', 'website', 'avatarUrl'] as const;
+const profileFields = ['fullName', 'headline', 'email', 'phone', 'location', 'website', 'avatarUrl', 'avatarStorageKey'] as const;
 const legacyProfileFields = ['fullName', 'headline', 'email', 'phone', 'location', 'website', 'summary'] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -148,13 +148,19 @@ function isResumeContent(value: unknown): value is ResumeDocument {
     && value.sections.every(isResumeSection);
 }
 
-function upgradeV2AvatarUrl(value: unknown): unknown {
+function upgradeV2AvatarFields(value: unknown): unknown {
   if (!isRecord(value) || value.schemaVersion !== 2 || !isRecord(value.profile)) return value;
-  if (Object.prototype.hasOwnProperty.call(value.profile, 'avatarUrl')) return value;
+  const hasAvatarURL = Object.prototype.hasOwnProperty.call(value.profile, 'avatarUrl');
+  const hasAvatarStorageKey = Object.prototype.hasOwnProperty.call(value.profile, 'avatarStorageKey');
+  if (hasAvatarURL && hasAvatarStorageKey) return value;
 
   return {
     ...value,
-    profile: { ...value.profile, avatarUrl: '' },
+    profile: {
+      ...value.profile,
+      ...(hasAvatarURL ? {} : { avatarUrl: '' }),
+      ...(hasAvatarStorageKey ? {} : { avatarStorageKey: '' }),
+    },
   };
 }
 
@@ -254,6 +260,7 @@ function migrateLegacyDocument(value: unknown): ResumeDocument | null {
       location: value.profile.location as string,
       website: value.profile.website as string,
       avatarUrl: '',
+      avatarStorageKey: '',
     },
     sections: [summary, work, project, education, skills],
   };
@@ -288,7 +295,7 @@ export function documentFromStored(resume: StoredResume): ResumeDocument {
   }
 
   if (!isTemplateId(resume.templateId)) throw new Error('invalid stored resume content');
-  const upgradedContent = upgradeV2AvatarUrl(content);
+  const upgradedContent = upgradeV2AvatarFields(content);
   const document = isResumeContent(upgradedContent) ? upgradedContent : migrateLegacyDocument(content);
   if (!document) throw new Error('invalid stored resume content');
 
