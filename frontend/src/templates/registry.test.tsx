@@ -5,6 +5,7 @@ import { templateRegistry } from './registry';
 import type { ResumeDocument } from '../types/resume';
 
 const sampleResume: ResumeDocument = {
+  schemaVersion: 2,
   title: '产品经理简历',
   templateId: 'minimal',
   profile: {
@@ -14,19 +15,18 @@ const sampleResume: ResumeDocument = {
     phone: '13800000000',
     location: '上海',
     website: 'https://example.com',
-    summary: '专注互联网产品增长与用户体验。',
   },
-  experiences: [{
-    id: 'work-1',
-    company: '星云科技',
-    role: '产品经理',
-    startDate: '2022.03',
-    endDate: '至今',
-    highlights: ['负责增长产品，月活提升 30%。'],
-  }],
-  projects: [],
-  education: [],
-  skills: [],
+  // Deliberately non-standard: every template must honor this stored order.
+  sections: [
+    { id: 'honours', type: 'honours', title: '荣誉奖项', visible: true, content: { items: [{ id: 'award', name: '年度创新奖' }] } },
+    { id: 'campus', type: 'campus', title: '校园经历', visible: true, content: { items: [{ id: 'campus-item', name: '产品社', role: '负责人', highlightsMarkdown: '- 组织活动。' }] } },
+    { id: 'skills', type: 'skills', title: '专业技能', visible: true, content: { items: [{ id: 'skill', name: '用户研究', note: '熟练' }] } },
+    { id: 'education', type: 'education', title: '教育经历', visible: true, content: { items: [{ id: 'education-item', school: '复旦大学', startDate: '2018.09', endDate: '2022.06', degree: '本科', college: '管理学院', major: '信息管理' }] } },
+    { id: 'project', type: 'project', title: '项目经历', visible: true, content: { items: [{ id: 'project-item', name: '增长平台', role: '负责人', startDate: '2023.01', endDate: '2023.06', location: '上海', link: 'https://example.com', introduction: '项目介绍', achievements: '项目成绩', highlightsMarkdown: '- 项目说明', showLocation: true, showLink: true, showIntroduction: true, showAchievements: true }] } },
+    { id: 'internship', type: 'internship', title: '实习经历', visible: true, content: { items: [{ id: 'internship-item', company: '实习公司', role: '实习生', startDate: '2021.01', endDate: '2021.06', location: '上海', achievements: '实习成绩', highlightsMarkdown: '- 实习说明', showLocation: true, showAchievements: true }] } },
+    { id: 'work', type: 'work', title: '工作经历', visible: true, content: { items: [{ id: 'work-1', company: '星云科技', role: '产品经理', startDate: '2022.03', endDate: '至今', location: '上海', achievements: '月活提升 30%。', highlightsMarkdown: '- 负责增长产品，月活提升 30%。', showLocation: true, showAchievements: true }] } },
+    { id: 'summary', type: 'summary', title: '个人总结', visible: true, content: { markdown: '专注互联网产品增长与用户体验。' } },
+  ],
 };
 
 afterEach(cleanup);
@@ -81,11 +81,16 @@ describe('templateRegistry', () => {
     expect(screen.getByText(heading)).toBeInTheDocument();
   });
 
-  it.each(templateRegistry)('renders profile and experience content in $id', ({ Renderer }) => {
+  it.each(templateRegistry)('renders all visible section types in persisted order in $id', ({ Renderer }) => {
     render(<Renderer document={sampleResume} />);
 
     expect(screen.getByText('林晓')).toBeInTheDocument();
     expect(screen.getByText('星云科技')).toBeInTheDocument();
     expect(screen.getByText('负责增长产品，月活提升 30%。')).toBeInTheDocument();
+    expect(screen.getByText('年度创新奖')).toBeInTheDocument();
+    expect(screen.getByText('产品社')).toBeInTheDocument();
+    expect(screen.getByText('增长平台')).toBeInTheDocument();
+    const titles = Array.from(document.querySelectorAll('[data-resume-section-title]')).map((node) => node.textContent);
+    expect(titles).toEqual(['荣誉奖项', '校园经历', '专业技能', '教育经历', '项目经历', '实习经历', '工作经历', '个人总结']);
   });
 });
