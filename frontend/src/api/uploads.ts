@@ -6,7 +6,7 @@ export interface AvatarUploadResponse {
 
 export async function uploadResumeAvatar(file: File, key: string): Promise<AvatarUploadResponse> {
   const body = new FormData();
-  body.append('file', file);
+  body.append('avatar', file);
   body.append('key', key);
   const response = await fetch('/api/uploads/avatar', { method: 'POST', credentials: 'include', body });
   if (!response.ok) {

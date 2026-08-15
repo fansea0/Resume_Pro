@@ -16,7 +16,8 @@ describe('uploadResumeAvatar', () => {
     expect(init.headers).toBeUndefined();
     expect(init.body).toBeInstanceOf(FormData);
     expect((init.body as FormData).get('key')).toBe('123e4567-e89b-42d3-a456-426614174000');
-    expect((init.body as FormData).get('file')).toBe(file);
+    expect((init.body as FormData).get('avatar')).toBe(file);
+    expect((init.body as FormData).get('file')).toBeNull();
   });
 
   it('returns the API error message when upload fails', async () => {
