@@ -72,7 +72,7 @@ describe('documentFromStored', () => {
     ]);
     expect(restored.sections[0]).toMatchObject({ content: { markdown: '擅长 **Go** 开发。' } });
     expect(restored.sections[1]).toMatchObject({
-      content: { items: [{ location: '武汉', showLocation: true, achievements: '', highlightsMarkdown: '- 交付后台需求\n- 保障稳定性' }] },
+      content: { items: [{ location: '', showLocation: false, achievements: '', highlightsMarkdown: '- 交付后台需求\n- 保障稳定性' }] },
     });
     expect(restored.sections[2]).toMatchObject({
       content: { items: [{ introduction: '客服系统', achievements: '', highlightsMarkdown: '- 支持意图识别' }] },

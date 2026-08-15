@@ -47,7 +47,7 @@ describe('ResumeEditor', () => {
     expect(latestDocument(onChange).sections.find((section: { id: string }) => section.id === 'work-1')).toEqual(expect.objectContaining({ visible: false }));
   });
 
-  it('edits a work location, makes it visible, and groups display settings clearly', () => {
+  it('edits a work location without changing its display choice and groups display settings clearly', () => {
     const document = { ...createEmptyResumeDocument(), sections: [createWorkSection('work-1')] };
     const onChange = vi.fn();
     render(<StatefulEditor document={document} onChange={onChange} />);
@@ -61,10 +61,9 @@ describe('ResumeEditor', () => {
     fireEvent.click(screen.getByLabelText('显示地点 1'));
     expect(latestDocument(onChange).sections[0].content.items[0].showLocation).toBe(false);
     fireEvent.change(screen.getByLabelText('地点 1'), { target: { value: '武汉 · 光谷' } });
-    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ location: '武汉 · 光谷', showLocation: true });
+    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ location: '武汉 · 光谷', showLocation: false });
     expect(screen.getByLabelText('地点 1')).toHaveAttribute('placeholder', '例如：武汉 · 光谷');
     expect(screen.getByRole('group', { name: '展示设置 1' })).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText('显示地点 1'));
     fireEvent.click(screen.getByLabelText('显示业绩贡献 1'));
     expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ showLocation: false, showAchievements: false });
   });

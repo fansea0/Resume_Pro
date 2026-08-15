@@ -135,9 +135,11 @@ function Metadata({
   classNames: ResumeSectionsProps['classNames'];
   Meta: ComponentType<ContentSlotProps>;
 }) {
+  const hasDate = Boolean(startDate || endDate);
   return (
     <Meta className={classNames?.meta}>
-      {(startDate || endDate) && <time>{startDate}{startDate && endDate ? ' — ' : ''}{endDate}</time>}
+      {hasDate && <time>{startDate}{startDate && endDate ? ' — ' : ''}{endDate}</time>}
+      {hasDate && location && <span aria-hidden="true" data-resume-metadata-separator> · </span>}
       {location && <span className={classNames?.location}>{location}</span>}
     </Meta>
   );

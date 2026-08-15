@@ -198,3 +198,7 @@ body { margin: 0; }
 .editor-toggle:has(input:checked) { background: #edf5ff; border-color: #9ec4f5; color: #18508f; }
 .editor-toggle__label { font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .editor-toggle, .editor-toggle__control, .editor-toggle__control::after { transition: none; } }
+
+/* Keep the native checkbox's focus and click target aligned with its switch. */
+.editor-toggle { position: relative; }
+.editor-toggle input { cursor: pointer; left: .32rem; position: absolute; top: 50%; transform: translateY(-50%); z-index: 1; }

@@ -97,6 +97,20 @@ describe('ResumeSections', () => {
     expect(view.getByText('发布 3 个功能')).toBeInTheDocument();
   });
 
+  it('用清晰分隔符连接同时显示的时间与地点，并保持单独字段的布局', () => {
+    const internship = sections[4];
+    if (internship.type !== 'internship') throw new Error('test fixture must be an internship section');
+    const onlyDate = { ...internship, id: 'only-date-section', content: { items: [{ ...internship.content.items[0], id: 'only-date', location: '', showLocation: false }] } };
+    const onlyLocation = { ...internship, id: 'only-location-section', content: { items: [{ ...internship.content.items[0], id: 'only-location', startDate: '', endDate: '', location: '深圳', showLocation: true }] } };
+    const { container } = render(<ResumeSections sections={[internship, onlyDate, onlyLocation]} />);
+    const view = within(container);
+
+    expect(view.getByText('北京').parentElement).toHaveTextContent('2023.01 — 2023.06 · 北京');
+    expect(container.querySelectorAll('[data-resume-metadata-separator]')).toHaveLength(1);
+    expect(view.getAllByText('2023.01 — 2023.06')[1].parentElement).toHaveTextContent('2023.01 — 2023.06');
+    expect(view.getByText('深圳').parentElement).toHaveTextContent('深圳');
+  });
+
   it('允许模板用 slots 和类名控制区块的展示容器', () => {
     const { container } = render(
       <ResumeSections

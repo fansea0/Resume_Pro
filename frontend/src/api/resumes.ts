@@ -179,9 +179,6 @@ function migrateLegacyDocument(value: unknown): ResumeDocument | null {
   if (!Array.isArray(value.projects) || !value.projects.every(isLegacyProject)) return null;
   if (!Array.isArray(value.education) || !value.education.every(isLegacyEducation)) return null;
   if (!Array.isArray(value.skills) || !value.skills.every(isLegacySkill)) return null;
-  const legacyProfile = value.profile;
-  const legacyLocation = legacyProfile.location as string;
-
   const summary = createSummarySection('legacy-summary');
   summary.content.markdown = value.profile.summary as string;
 
@@ -192,10 +189,10 @@ function migrateLegacyDocument(value: unknown): ResumeDocument | null {
     role: experience.role as string,
     startDate: experience.startDate as string,
     endDate: experience.endDate as string,
-    location: legacyLocation,
+    location: '',
     achievements: '',
     highlightsMarkdown: highlightsToMarkdown(experience.highlights as string[]),
-    showLocation: Boolean(legacyLocation.trim()),
+    showLocation: false,
     showAchievements: false,
   }));
 

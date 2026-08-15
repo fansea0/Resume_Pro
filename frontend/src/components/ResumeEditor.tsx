@@ -161,7 +161,7 @@ function ExperienceItemsEditor({ section, update }: { section: Extract<ResumeSec
       <Field label={`职位 ${index + 1}`} value={item.role} onChange={(role) => change(item.id, (value) => ({ ...value, role }))} />
       <Field label={`开始时间 ${index + 1}`} value={item.startDate} onChange={(startDate) => change(item.id, (value) => ({ ...value, startDate }))} />
       <Field label={`结束时间 ${index + 1}`} value={item.endDate} onChange={(endDate) => change(item.id, (value) => ({ ...value, endDate }))} />
-      <Field label={`地点 ${index + 1}`} helperText="填写城市、区域或办公地点；填写后会自动显示在简历中。" placeholder="例如：武汉 · 光谷" value={item.location} onChange={(location) => change(item.id, (value) => ({ ...value, location, showLocation: location.trim() ? true : value.showLocation }))} />
+      <Field label={`地点 ${index + 1}`} helperText="填写城市、区域或办公地点；可在下方选择是否显示在简历中。" placeholder="例如：武汉 · 光谷" value={item.location} onChange={(location) => change(item.id, (value) => ({ ...value, location }))} />
       <Field label={`业绩贡献 ${index + 1}`} value={item.achievements} onChange={(achievements) => change(item.id, (value) => ({ ...value, achievements }))} />
     </div>
     <Field label={`列表说明 ${index + 1}`} multiline value={item.highlightsMarkdown} onChange={(highlightsMarkdown) => change(item.id, (value) => ({ ...value, highlightsMarkdown }))} />
