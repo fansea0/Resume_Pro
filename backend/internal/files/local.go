@@ -9,9 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 const avatarURLPrefix = "/uploads/avatars/"
+
+const maxAvatarsPerOwner = 20
 
 var supportedAvatarExtensions = map[string]struct{}{
 	".jpeg": {},
@@ -25,6 +28,7 @@ var supportedAvatarExtensions = map[string]struct{}{
 // callers can keep their contract when switching to an object-storage adapter.
 type LocalFileStorage struct {
 	directory string
+	mu        sync.Mutex
 }
 
 // NewLocalFileStorage creates a local adapter that writes avatar files to directory.
@@ -32,15 +36,15 @@ func NewLocalFileStorage(directory string) *LocalFileStorage {
 	return &LocalFileStorage{directory: directory}
 }
 
-// Store persists one supported avatar for owner. Each owner maps to one opaque,
-// stable path. A temporary file is atomically renamed over its previous avatar,
-// so repeated uploads do not leave unbounded orphan files behind.
-func (s *LocalFileStorage) Store(ctx context.Context, owner string, file File) (StoredFile, error) {
+// Store persists one supported avatar for owner and key. The pair maps to one
+// opaque, stable path. A temporary file is atomically renamed over its previous
+// avatar, while a per-owner count bound prevents unbounded unique keys.
+func (s *LocalFileStorage) Store(ctx context.Context, owner, key string, file File) (StoredFile, error) {
 	if err := ctx.Err(); err != nil {
 		return StoredFile{}, err
 	}
-	if !safeAvatarOwner(owner) {
-		return StoredFile{}, errors.New("avatar owner is invalid")
+	if !safeAvatarIdentifier(owner) || !safeAvatarIdentifier(key) {
+		return StoredFile{}, errors.New("avatar owner or key is invalid")
 	}
 	if _, err := safeAvatarExtension(file.Name); err != nil {
 		return StoredFile{}, err
@@ -53,6 +57,18 @@ func (s *LocalFileStorage) Store(ctx context.Context, owner string, file File) (
 	}
 	if err := os.MkdirAll(s.directory, 0o755); err != nil {
 		return StoredFile{}, fmt.Errorf("create avatar directory: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	filename := avatarFilename(owner, key)
+	path := filepath.Join(s.directory, filename)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if err := s.ensureOwnerHasAvatarCapacity(owner); err != nil {
+			return StoredFile{}, err
+		}
+	} else if err != nil {
+		return StoredFile{}, fmt.Errorf("inspect existing avatar: %w", err)
 	}
 
 	temporary, err := os.CreateTemp(s.directory, ".avatar-*")
@@ -73,8 +89,6 @@ func (s *LocalFileStorage) Store(ctx context.Context, owner string, file File) (
 		return StoredFile{}, err
 	}
 
-	filename := avatarFilename(owner)
-	path := filepath.Join(s.directory, filename)
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return StoredFile{}, fmt.Errorf("finalize avatar: %w", err)
 	}
@@ -82,16 +96,36 @@ func (s *LocalFileStorage) Store(ctx context.Context, owner string, file File) (
 	return StoredFile{Path: path, URL: avatarURLPrefix + filename}, nil
 }
 
-func avatarFilename(owner string) string {
-	sum := sha256.Sum256([]byte(owner))
-	return fmt.Sprintf("%x.avatar", sum[:])
+func avatarFilename(owner, key string) string {
+	ownerSum := sha256.Sum256([]byte(owner))
+	keySum := sha256.Sum256([]byte(key))
+	return fmt.Sprintf("%x-%x.avatar", ownerSum[:], keySum[:])
 }
 
-func safeAvatarOwner(owner string) bool {
-	if owner == "" || len(owner) > 128 {
+func (s *LocalFileStorage) ensureOwnerHasAvatarCapacity(owner string) error {
+	entries, err := os.ReadDir(s.directory)
+	if err != nil {
+		return fmt.Errorf("list existing avatars: %w", err)
+	}
+	ownerSum := sha256.Sum256([]byte(owner))
+	prefix := fmt.Sprintf("%x-", ownerSum[:])
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) && strings.HasSuffix(entry.Name(), ".avatar") {
+			count++
+		}
+	}
+	if count >= maxAvatarsPerOwner {
+		return fmt.Errorf("avatar quota exceeded for owner")
+	}
+	return nil
+}
+
+func safeAvatarIdentifier(value string) bool {
+	if value == "" || len(value) > 128 {
 		return false
 	}
-	for _, character := range owner {
+	for _, character := range value {
 		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '-' || character == '_') {
 			return false
 		}

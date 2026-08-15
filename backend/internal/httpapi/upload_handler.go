@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	_ "golang.org/x/image/webp"
 
 	"resumepro/backend/internal/files"
@@ -38,6 +39,12 @@ func (h *uploadHandler) avatar(context *gin.Context) {
 		return
 	}
 	defer file.Close()
+	parsedKey, err := uuid.Parse(context.PostForm("key"))
+	if err != nil {
+		writeError(context, http.StatusBadRequest, "avatar key must be a UUID")
+		return
+	}
+	key := parsedKey.String()
 
 	filename, err := validatedAvatarName(file)
 	if err != nil {
@@ -53,7 +60,7 @@ func (h *uploadHandler) avatar(context *gin.Context) {
 		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	stored, err := h.storage.Store(context.Request.Context(), "user-"+strconv.FormatInt(principal.UserID, 10), files.File{Name: filename, Content: file})
+	stored, err := h.storage.Store(context.Request.Context(), "user-"+strconv.FormatInt(principal.UserID, 10), key, files.File{Name: filename, Content: file})
 	if err != nil {
 		writeError(context, http.StatusInternalServerError, "could not store avatar image")
 		return

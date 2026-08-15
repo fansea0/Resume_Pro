@@ -21,8 +21,9 @@ type StoredFile struct {
 
 // FileStorage persists one owner's upload and returns its file metadata.
 // Implementations may write to the local filesystem, object storage, or another
-// backend without changing their callers. owner must be a stable, safe key so
-// implementations can overwrite an earlier avatar instead of accumulating files.
+// backend without changing their callers. owner and key must form a stable,
+// safe identity so implementations can overwrite an earlier avatar instead of
+// accumulating files.
 type FileStorage interface {
-	Store(ctx context.Context, owner string, file File) (StoredFile, error)
+	Store(ctx context.Context, owner, key string, file File) (StoredFile, error)
 }

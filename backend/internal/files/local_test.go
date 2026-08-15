@@ -3,6 +3,7 @@ package files
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,7 @@ func TestLocalFileStorageStoreWritesAvatarAndReturnsPublicURL(t *testing.T) {
 	storage := NewLocalFileStorage(directory)
 	contents := []byte("png avatar bytes")
 
-	stored, err := storage.Store(context.Background(), "user-42", File{
+	stored, err := storage.Store(context.Background(), "user-42", "550e8400-e29b-41d4-a716-446655440000", File{
 		Name:    "portrait.png",
 		Content: bytes.NewReader(contents),
 	})
@@ -50,11 +51,11 @@ func TestLocalFileStorageStoreAtomicallyOverwritesStableOwnerAvatar(t *testing.T
 	t.Parallel()
 
 	storage := NewLocalFileStorage(filepath.Join(t.TempDir(), "uploads", "avatars"))
-	first, err := storage.Store(context.Background(), "user-42", File{Name: "portrait.png", Content: strings.NewReader("first")})
+	first, err := storage.Store(context.Background(), "user-42", "550e8400-e29b-41d4-a716-446655440000", File{Name: "portrait.png", Content: strings.NewReader("first")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := storage.Store(context.Background(), "user-42", File{Name: "portrait.jpg", Content: strings.NewReader("second")})
+	second, err := storage.Store(context.Background(), "user-42", "550e8400-e29b-41d4-a716-446655440000", File{Name: "portrait.jpg", Content: strings.NewReader("second")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func TestLocalFileStorageStoreRejectsUnsafeOrUnsupportedFileNames(t *testing.T) 
 	storage := NewLocalFileStorage(filepath.Join(t.TempDir(), "uploads", "avatars"))
 	for _, name := range []string{"portrait.gif", "../portrait.png", "nested/portrait.png"} {
 		t.Run(name, func(t *testing.T) {
-			_, err := storage.Store(context.Background(), "user-42", File{
+			_, err := storage.Store(context.Background(), "user-42", "550e8400-e29b-41d4-a716-446655440000", File{
 				Name:    name,
 				Content: strings.NewReader("file content"),
 			})
@@ -100,10 +101,42 @@ func TestLocalFileStorageStoreRejectsUnsafeOwnerKeys(t *testing.T) {
 	storage := NewLocalFileStorage(filepath.Join(t.TempDir(), "uploads", "avatars"))
 	for _, owner := range []string{"", "../user", "nested/user"} {
 		t.Run(owner, func(t *testing.T) {
-			_, err := storage.Store(context.Background(), owner, File{Name: "portrait.png", Content: strings.NewReader("file content")})
+			_, err := storage.Store(context.Background(), owner, "550e8400-e29b-41d4-a716-446655440000", File{Name: "portrait.png", Content: strings.NewReader("file content")})
 			if err == nil {
 				t.Fatalf("Store(%q) error = nil, want rejection", owner)
 			}
 		})
+	}
+}
+
+func TestLocalFileStorageStoreUsesOwnerAndKeyForDistinctAvatars(t *testing.T) {
+	t.Parallel()
+
+	storage := NewLocalFileStorage(filepath.Join(t.TempDir(), "uploads", "avatars"))
+	first, err := storage.Store(context.Background(), "user-42", "550e8400-e29b-41d4-a716-446655440000", File{Name: "portrait.png", Content: strings.NewReader("first")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := storage.Store(context.Background(), "user-42", "550e8400-e29b-41d4-a716-446655440001", File{Name: "portrait.png", Content: strings.NewReader("second")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Path == second.Path || first.URL == second.URL {
+		t.Fatalf("different keys must produce distinct avatars: first=%+v second=%+v", first, second)
+	}
+}
+
+func TestLocalFileStorageStoreBoundsAvatarsPerOwner(t *testing.T) {
+	t.Parallel()
+
+	storage := NewLocalFileStorage(filepath.Join(t.TempDir(), "uploads", "avatars"))
+	for index := 0; index < maxAvatarsPerOwner; index++ {
+		key := fmt.Sprintf("avatar-%d", index)
+		if _, err := storage.Store(context.Background(), "user-42", key, File{Name: "portrait.png", Content: strings.NewReader("avatar")}); err != nil {
+			t.Fatalf("Store(%q) error = %v", key, err)
+		}
+	}
+	if _, err := storage.Store(context.Background(), "user-42", "one-too-many", File{Name: "portrait.png", Content: strings.NewReader("avatar")}); err == nil {
+		t.Fatal("Store() error = nil, want quota rejection")
 	}
 }

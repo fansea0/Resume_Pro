@@ -55,6 +55,9 @@ func TestAvatarUploadAcceptsDecodedPNGAndJPEG(t *testing.T) {
 			if storage.file.Name != fixture.filename || !bytes.Equal(storage.content, fixture.content) {
 				t.Fatal("storage did not receive the uploaded file unchanged")
 			}
+			if storage.key != "550e8400-e29b-41d4-a716-446655440000" {
+				t.Fatalf("storage key = %q, want canonical multipart key", storage.key)
+			}
 		})
 	}
 }
@@ -82,6 +85,19 @@ func TestAvatarUploadRejectsMislabeledOrUndecodableImage(t *testing.T) {
 	}
 	if storage.calls != 0 {
 		t.Fatal("storage was called for an undecodable image")
+	}
+}
+
+func TestAvatarUploadRequiresUUIDKey(t *testing.T) {
+	storage := &recordingFileStorage{}
+	router, session := newAvatarUploadTestRouter(t, storage)
+
+	response := multipartUploadRequestWithKey(t, router, "avatar.png", "image/png", encodedPNG(t), "not-a-uuid", session)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if storage.calls != 0 {
+		t.Fatal("storage was called without a valid key")
 	}
 }
 
@@ -148,11 +164,13 @@ type recordingFileStorage struct {
 	content []byte
 	calls   int
 	owner   string
+	key     string
 }
 
-func (s *recordingFileStorage) Store(_ context.Context, owner string, file files.File) (files.StoredFile, error) {
+func (s *recordingFileStorage) Store(_ context.Context, owner, key string, file files.File) (files.StoredFile, error) {
 	s.calls++
 	s.owner = owner
+	s.key = key
 	s.file = file
 	content, err := io.ReadAll(file.Content)
 	if err != nil {
@@ -184,9 +202,16 @@ func newAvatarUploadTestRouterWithConfig(t *testing.T, storage files.FileStorage
 }
 
 func multipartUploadRequest(t *testing.T, router http.Handler, filename, contentType string, content []byte, cookie *http.Cookie) *httptest.ResponseRecorder {
+	return multipartUploadRequestWithKey(t, router, filename, contentType, content, "550e8400-e29b-41d4-a716-446655440000", cookie)
+}
+
+func multipartUploadRequestWithKey(t *testing.T, router http.Handler, filename, contentType string, content []byte, key string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("key", key); err != nil {
+		t.Fatal(err)
+	}
 	part, err := writer.CreateFormFile("avatar", filename)
 	if err != nil {
 		t.Fatal(err)
