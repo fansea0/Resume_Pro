@@ -31,4 +31,20 @@ describe('ResumeMarkdown', () => {
     expect(screen.getByText(/<img src=x/)).toBeInTheDocument();
     expect(window).not.toHaveProperty('__unsafe');
   });
+
+  it('does not render unsupported rich Markdown elements', () => {
+    const { container } = render(
+      <ResumeMarkdown markdown={'# 标题\n\n![图片](https://example.com/image.png)\n\n| 名称 | 内容 |\n| --- | --- |\n| A | B |\n\n~~删除线~~\n\n`代码`\n\n- [x] 任务'} />,
+    );
+
+    expect(container.querySelector('h1, img, table, del, code, input')).not.toBeInTheDocument();
+  });
+
+  it('does not expose javascript URLs in links', () => {
+    const { container } = render(<ResumeMarkdown markdown={'[危险链接](javascript:alert(1))'} />);
+
+    const link = container.querySelector('a');
+    expect(link).toHaveTextContent('危险链接');
+    expect(link?.getAttribute('href')).not.toMatch(/^javascript:/i);
+  });
 });
