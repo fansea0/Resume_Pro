@@ -2,62 +2,107 @@ import { describe, expect, it } from 'vitest';
 import { documentFromStored } from './resumes';
 import { createSampleResumeDocument } from '../types/resume';
 
+function stored(content: unknown, title = '数据库标题', templateId = 'business') {
+  return {
+    id: 9,
+    title,
+    templateId: templateId as 'business',
+    content: JSON.stringify(content),
+    createdAt: '2026-08-14T01:00:00Z',
+    updatedAt: '2026-08-14T02:00:00Z',
+  };
+}
+
 describe('documentFromStored', () => {
-  it('rejects parseable persisted content that is not a resume document', () => {
-    expect(() => documentFromStored({
-      id: 9,
-      title: '损坏的简历',
-      templateId: 'business',
-      content: JSON.stringify({ profile: {} }),
-      createdAt: '2026-08-14T01:00:00Z',
-      updatedAt: '2026-08-14T02:00:00Z',
-    })).toThrow();
-  });
-
-  it('rejects nested entries that would crash template rendering', () => {
+  it('restores a complete v2 document and gives persisted metadata precedence', () => {
     const document = createSampleResumeDocument();
-    expect(() => documentFromStored({
-      id: 10,
-      title: document.title,
-      templateId: document.templateId,
-      content: JSON.stringify({ ...document, experiences: [{}] }),
-      createdAt: '2026-08-14T01:00:00Z',
-      updatedAt: '2026-08-14T02:00:00Z',
-    })).toThrow();
-  });
 
-  it('accepts the blank experience and project entries created by the editor', () => {
-    const document = createSampleResumeDocument();
-    const content = {
+    expect(documentFromStored(stored(document))).toEqual({
       ...document,
-      experiences: [...document.experiences, {
-        id: 'new-experience', company: '', role: '', startDate: '', endDate: '', highlights: [],
-      }],
-      projects: [...document.projects, {
-        id: 'new-project', name: '', role: '', link: '', startDate: '', endDate: '', description: '', highlights: [],
-      }],
-    };
-    const stored = {
-      id: 12,
-      title: document.title,
-      templateId: document.templateId,
-      content: JSON.stringify(content),
-      createdAt: '2026-08-14T01:00:00Z',
-      updatedAt: '2026-08-14T02:00:00Z',
-    };
-
-    expect(documentFromStored(stored)).toEqual(expect.objectContaining(content));
+      title: '数据库标题',
+      templateId: 'business',
+    });
   });
 
-  it('rejects unknown template identifiers from persisted data', () => {
+  it('restores every valid v2 section variant', () => {
     const document = createSampleResumeDocument();
-    expect(() => documentFromStored({
-      id: 11,
-      title: document.title,
-      templateId: 'unknown' as typeof document.templateId,
-      content: JSON.stringify({ ...document, templateId: 'unknown' }),
-      createdAt: '2026-08-14T01:00:00Z',
-      updatedAt: '2026-08-14T02:00:00Z',
-    })).toThrow();
+    const restored = documentFromStored(stored(document));
+
+    expect(restored.sections.map((section) => section.type)).toEqual([
+      'summary', 'work', 'internship', 'project', 'education', 'skills', 'campus', 'honours',
+    ]);
+  });
+
+  it('migrates a valid legacy document in the established section order', () => {
+    const legacy = {
+      title: '旧格式简历',
+      templateId: 'redline',
+      profile: {
+        fullName: '达钦海', headline: 'Go 后端开发', email: 'a@example.com', phone: '13800000000',
+        location: '武汉', website: 'https://example.com', summary: '擅长 **Go** 开发。',
+      },
+      experiences: [{
+        id: 'work-1', company: '微派', role: '后端开发', startDate: '2025.08', endDate: '至今',
+        highlights: ['交付后台需求', '保障稳定性'],
+      }],
+      projects: [{
+        id: 'project-1', name: 'AI 客服', role: '后端开发', link: 'https://example.com/project',
+        startDate: '2025.08', endDate: '至今', description: '客服系统', highlights: ['支持意图识别'],
+      }],
+      education: [{
+        id: 'education-1', school: '湖南科技大学', degree: '本科', field: '机器人工程',
+        startDate: '2021.09', endDate: '2025.06',
+      }],
+      skills: [{ id: 'skill-1', name: 'Go', level: '熟悉' }],
+    };
+
+    const restored = documentFromStored(stored(legacy));
+
+    expect(restored).toMatchObject({
+      schemaVersion: 2,
+      title: '数据库标题',
+      templateId: 'business',
+      profile: {
+        fullName: '达钦海', headline: 'Go 后端开发', email: 'a@example.com', phone: '13800000000',
+        location: '武汉', website: 'https://example.com',
+      },
+    });
+    expect(restored.sections.map((section) => section.type)).toEqual([
+      'summary', 'work', 'project', 'education', 'skills',
+    ]);
+    expect(restored.sections[0]).toMatchObject({ content: { markdown: '擅长 **Go** 开发。' } });
+    expect(restored.sections[1]).toMatchObject({
+      content: { items: [{ location: '', achievements: '', highlightsMarkdown: '- 交付后台需求\n- 保障稳定性' }] },
+    });
+    expect(restored.sections[2]).toMatchObject({
+      content: { items: [{ introduction: '客服系统', achievements: '', highlightsMarkdown: '- 支持意图识别' }] },
+    });
+  });
+
+  it('rejects malformed v2 variants and invalid legacy content', () => {
+    const document = createSampleResumeDocument();
+    const work = document.sections.find((section) => section.type === 'work');
+    if (!work) throw new Error('sample document must include work');
+    const malformedV2 = {
+      ...document,
+      sections: [{ ...work, content: { items: [{ ...work.content.items[0], showLocation: 'yes' }] } }],
+    };
+    const invalidLegacy = {
+      ...document,
+      schemaVersion: undefined,
+      sections: undefined,
+      profile: { ...document.profile, summary: '旧总结' },
+      experiences: [{ id: 'bad', company: '坏数据' }],
+      projects: [], education: [], skills: [],
+    };
+
+    expect(() => documentFromStored(stored(malformedV2))).toThrow('invalid stored resume content');
+    expect(() => documentFromStored(stored(invalidLegacy))).toThrow('invalid stored resume content');
+    expect(() => documentFromStored({ ...stored({}), content: '{' })).toThrow('invalid stored resume content');
+  });
+
+  it('rejects unknown outer template identifiers', () => {
+    const document = createSampleResumeDocument();
+    expect(() => documentFromStored({ ...stored(document), templateId: 'unknown' as 'business' })).toThrow();
   });
 });
