@@ -3,8 +3,10 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -102,7 +104,44 @@ func Migrate(ctx context.Context, db *sqlx.DB) error {
 CREATE INDEX IF NOT EXISTS idx_resume_versions_tenant_id ON resume_versions(tenant_id);`); err != nil {
 		return err
 	}
+	if err := backfillAvatarKeys(ctx, tx); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+// backfillAvatarKeys deterministically binds the lowest resume ID when legacy
+// rows duplicate a key; later duplicates remain unbound and are repaired only
+// after users select a different key.
+func backfillAvatarKeys(ctx context.Context, tx *sqlx.Tx) error {
+	rows, err := tx.QueryxContext(ctx, `SELECT id, tenant_id, content FROM resumes ORDER BY id ASC`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, tenantID int64
+		var content string
+		if err := rows.Scan(&id, &tenantID, &content); err != nil {
+			return err
+		}
+		var doc struct {
+			Profile struct {
+				Key string `json:"avatarStorageKey"`
+			} `json:"profile"`
+		}
+		if json.Unmarshal([]byte(content), &doc) != nil {
+			continue
+		}
+		parsed, err := uuid.Parse(doc.Profile.Key)
+		if err != nil || doc.Profile.Key == "" || parsed.String() != doc.Profile.Key {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO resume_avatar_keys (tenant_id, avatar_storage_key, resume_id) VALUES (?, ?, ?)`, tenantID, doc.Profile.Key, id); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 func addColumnIfMissing(ctx context.Context, tx *sqlx.Tx, table, column, definition string) error {

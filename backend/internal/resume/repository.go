@@ -100,6 +100,10 @@ func (r *Repository) Update(ctx context.Context, tenantID, id int64, input Updat
 				return Resume{}, avatarKeyError(err)
 			}
 		}
+	} else if newKey != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO resume_avatar_keys (tenant_id, avatar_storage_key, resume_id) VALUES (?, ?, ?)`, tenantID, newKey, id); err != nil {
+			return Resume{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Resume{}, err
