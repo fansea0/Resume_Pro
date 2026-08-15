@@ -171,6 +171,16 @@ func TestResumeCreateAndUpdateRequireMatchingMetadataAndBoundedContent(t *testin
 
 	tooManySections := `[` + strings.TrimSuffix(strings.Repeat(`{"id":"summary","type":"summary","title":"个人总结","visible":true,"content":{"markdown":""}},`, 51), ",") + `]`
 	tooManyItems := `[` + strings.TrimSuffix(strings.Repeat(`{"id":"skill","name":"Go","note":"熟悉"},`, 101), ",") + `]`
+	largeSkillItems := `[` + strings.TrimSuffix(strings.Repeat(`{"id":"skill","name":"`+strings.Repeat("n", 220)+`","note":"熟悉"},`, 100), ",") + `]`
+	largeSections := `[` + strings.TrimSuffix(strings.Repeat(`{"id":"skills","type":"skills","title":"专业技能","visible":true,"content":{"items":`+largeSkillItems+`}},`, 50), ",") + `]`
+	largeContent := validV2ContentWithSections("Valid", "minimal", largeSections)
+	largeRequest := `{"title":"Valid","templateId":"minimal","content":` + largeContent + `}`
+	if len(largeRequest) <= 1<<20 {
+		t.Fatalf("large request is %d bytes, want more than 1 MiB", len(largeRequest))
+	}
+	if !validResumeContent(json.RawMessage(largeContent), "Valid", "minimal") {
+		t.Fatal("large content should satisfy the v2 schema and collection/string limits")
+	}
 	invalidBodies := []string{
 		`{"title":"Outer","templateId":"minimal","content":` + validV2ResumeContent("Inner", "minimal") + `}`,
 		`{"title":"Valid","templateId":"minimal","content":` + validV2ResumeContent("Valid", "business") + `}`,
@@ -178,7 +188,7 @@ func TestResumeCreateAndUpdateRequireMatchingMetadataAndBoundedContent(t *testin
 		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithSections("Valid", "minimal", tooManySections) + `}`,
 		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithSections("Valid", "minimal", `[{"id":"skills","type":"skills","title":"专业技能","visible":true,"content":{"items":`+tooManyItems+`}}]`) + `}`,
 		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithSections("Valid", "minimal", `[{"id":"summary","type":"summary","title":"个人总结","visible":true,"content":{"markdown":"`+strings.Repeat("x", 20_001)+`"}}]`) + `}`,
-		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithSections("Valid", "minimal", `[{"id":"summary","type":"summary","title":"个人总结","visible":true,"content":{"markdown":"`+strings.Repeat("x", 1<<20)+`"}}]`) + `}`,
+		largeRequest,
 	}
 	for _, body := range invalidBodies {
 		for _, target := range []struct{ method, path string }{{http.MethodPost, "/api/resumes"}, {http.MethodPut, "/api/resumes/1"}} {
