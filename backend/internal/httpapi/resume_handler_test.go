@@ -181,6 +181,10 @@ func (s *lifecycleFileStorage) Store(context.Context, string, string, files.File
 	return files.StoredFile{}, nil
 }
 
+func (s *lifecycleFileStorage) PublicURL(string, string) string {
+	return "/uploads/avatars/avatar.avatar"
+}
+
 func (s *lifecycleFileStorage) Retain(_ context.Context, _ string, key string) error {
 	if s.retainErr != nil {
 		return s.retainErr
@@ -295,6 +299,28 @@ func TestResumeCreateAndUpdateRequireMatchingMetadataAndBoundedContent(t *testin
 				t.Errorf("%s: status = %d, want %d", target.method, response.Code, http.StatusBadRequest)
 			}
 		}
+	}
+}
+
+func TestResumeCreateAndUpdateRejectUnpairedOrForeignAvatarURLs(t *testing.T) {
+	storage := &lifecycleFileStorage{}
+	router, session := testRouterWithStorage(t, storage)
+	if response := requestJSON(t, router, http.MethodPost, "/api/resumes", validResumeRequest("Existing", "minimal"), session); response.Code != http.StatusCreated {
+		t.Fatalf("create existing status = %d: %s", response.Code, response.Body.String())
+	}
+	key := "550e8400-e29b-41d4-a716-446655440000"
+	badURLProfile := `{"fullName":"Ada","headline":"Engineer","email":"","phone":"","location":"","website":"","avatarUrl":"/uploads/avatars/another-owner.avatar","avatarStorageKey":"` + key + `"}`
+	badURL := `{"title":"Invalid","templateId":"minimal","content":` + validV2ContentWithProfile("Invalid", "minimal", badURLProfile) + `}`
+	for _, target := range []struct{ method, path string }{{http.MethodPost, "/api/resumes"}, {http.MethodPut, "/api/resumes/1"}} {
+		response := requestJSON(t, router, target.method, target.path, badURL, session)
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("%s bad avatar URL status = %d, want %d: %s", target.method, response.Code, http.StatusBadRequest, response.Body.String())
+		}
+	}
+	unpairedProfile := `{"fullName":"Ada","headline":"Engineer","email":"","phone":"","location":"","website":"","avatarUrl":"","avatarStorageKey":"` + key + `"}`
+	unpaired := `{"title":"Invalid","templateId":"minimal","content":` + validV2ContentWithProfile("Invalid", "minimal", unpairedProfile) + `}`
+	if response := requestJSON(t, router, http.MethodPost, "/api/resumes", unpaired, session); response.Code != http.StatusBadRequest {
+		t.Fatalf("unpaired avatar status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body.String())
 	}
 }
 

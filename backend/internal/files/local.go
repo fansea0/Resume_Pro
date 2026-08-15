@@ -100,7 +100,12 @@ func (s *LocalFileStorage) Store(ctx context.Context, owner, key string, file Fi
 		return StoredFile{}, fmt.Errorf("finalize avatar: %w", err)
 	}
 
-	return StoredFile{Path: path, URL: avatarURLPrefix + filename}, nil
+	return StoredFile{Path: path, URL: s.PublicURL(owner, key)}, nil
+}
+
+// PublicURL derives the stable public URL for one stored avatar.
+func (s *LocalFileStorage) PublicURL(owner, key string) string {
+	return avatarURLPrefix + avatarFilename(owner, key)
 }
 
 // Retain marks a successfully referenced upload as durable. New uploads are

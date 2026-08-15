@@ -176,6 +176,40 @@ func TestAvatarUploadRejectsImagesOverFourMillionPixels(t *testing.T) {
 	}
 }
 
+func TestAvatarUploadOnlyReplacesKeyBoundToItsExactResume(t *testing.T) {
+	storage := &recordingFileStorage{stored: files.StoredFile{URL: "/uploads/avatars/avatar.avatar"}}
+	router, session := newAvatarUploadTestRouter(t, storage)
+	key := "550e8400-e29b-41d4-a716-446655440000"
+	original := encodedPNG(t)
+	if response := multipartUploadRequestWithKeyAndResumeID(t, router, "avatar.png", original, key, "", session); response.Code != http.StatusCreated {
+		t.Fatalf("initial upload status = %d: %s", response.Code, response.Body.String())
+	}
+	if response := requestJSON(t, router, http.MethodPost, "/api/resumes", validResumeRequest("First", "minimal"), session); response.Code != http.StatusCreated {
+		t.Fatalf("first resume status = %d: %s", response.Code, response.Body.String())
+	}
+	profile := `{"fullName":"Ada","headline":"Engineer","email":"","phone":"","location":"","website":"","avatarUrl":"/uploads/avatars/avatar.avatar","avatarStorageKey":"` + key + `"}`
+	body := `{"title":"Second","templateId":"minimal","content":` + validV2ContentWithProfile("Second", "minimal", profile) + `}`
+	if response := requestJSON(t, router, http.MethodPost, "/api/resumes", body, session); response.Code != http.StatusCreated {
+		t.Fatalf("second resume status = %d: %s", response.Code, response.Body.String())
+	}
+	for _, resumeID := range []string{"", "1"} {
+		response := multipartUploadRequestWithKeyAndResumeID(t, router, "replacement.jpg", encodedJPEG(t), key, resumeID, session)
+		if response.Code != http.StatusConflict {
+			t.Errorf("replacement with resumeId %q status = %d, want %d: %s", resumeID, response.Code, http.StatusConflict, response.Body.String())
+		}
+		if storage.calls != 1 || !bytes.Equal(storage.content, original) {
+			t.Errorf("blocked replacement changed stored bytes or called storage: calls=%d content=%q", storage.calls, storage.content)
+		}
+	}
+	response := multipartUploadRequestWithKeyAndResumeID(t, router, "replacement.jpg", encodedJPEG(t), key, "2", session)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("same-resume replacement status = %d: %s", response.Code, response.Body.String())
+	}
+	if storage.calls != 2 || bytes.Equal(storage.content, original) {
+		t.Fatalf("same-resume replacement did not store new bytes: calls=%d", storage.calls)
+	}
+}
+
 type recordingFileStorage struct {
 	stored     files.StoredFile
 	file       files.File
@@ -200,6 +234,10 @@ func (s *recordingFileStorage) Store(_ context.Context, owner, key string, file 
 		return files.StoredFile{}, s.storeError
 	}
 	return s.stored, nil
+}
+
+func (s *recordingFileStorage) PublicURL(owner, key string) string {
+	return "/uploads/avatars/avatar.avatar"
 }
 
 func (s *recordingFileStorage) Retain(context.Context, string, string) error { return nil }
@@ -232,11 +270,20 @@ func multipartUploadRequest(t *testing.T, router http.Handler, filename, content
 }
 
 func multipartUploadRequestWithKey(t *testing.T, router http.Handler, filename, contentType string, content []byte, key string, cookie *http.Cookie) *httptest.ResponseRecorder {
+	return multipartUploadRequestWithKeyAndResumeID(t, router, filename, content, key, "", cookie)
+}
+
+func multipartUploadRequestWithKeyAndResumeID(t *testing.T, router http.Handler, filename string, content []byte, key, resumeID string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	if err := writer.WriteField("key", key); err != nil {
 		t.Fatal(err)
+	}
+	if resumeID != "" {
+		if err := writer.WriteField("resumeId", resumeID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	part, err := writer.CreateFormFile("avatar", filename)
 	if err != nil {
@@ -250,7 +297,6 @@ func multipartUploadRequestWithKey(t *testing.T, router http.Handler, filename, 
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/uploads/avatar", &body)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
-	request.Header.Set("X-Upload-Content-Type", contentType)
 	if cookie != nil {
 		request.AddCookie(cookie)
 	}

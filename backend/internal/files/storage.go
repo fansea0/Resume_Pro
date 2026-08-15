@@ -31,6 +31,10 @@ type StoredFile struct {
 // accumulating files.
 type FileStorage interface {
 	Store(ctx context.Context, owner, key string, file File) (StoredFile, error)
+	// PublicURL returns the deterministic URL for an owner's stable avatar key.
+	// Callers use this to ensure stored resume content cannot point at another
+	// owner's object when storage is configured.
+	PublicURL(owner, key string) string
 	Retain(ctx context.Context, owner, key string) error
 	Release(ctx context.Context, owner, key string) error
 }

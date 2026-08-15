@@ -20,6 +20,16 @@ describe('uploadResumeAvatar', () => {
     expect((init.body as FormData).get('file')).toBeNull();
   });
 
+  it('includes the active resume ID when replacing a saved resume avatar', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ url: '/uploads/avatars/photo.webp' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await uploadResumeAvatar(new File(['portrait'], 'photo.webp', { type: 'image/webp' }), '123e4567-e89b-42d3-a456-426614174000', 42);
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect((init.body as FormData).get('resumeId')).toBe('42');
+  });
+
   it('returns the API error message when upload fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: '请选择 JPG、PNG 或 WebP 图片。' }), { status: 400 })));
 

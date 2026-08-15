@@ -12,7 +12,9 @@ import (
 	"github.com/google/uuid"
 	_ "golang.org/x/image/webp"
 
+	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/files"
+	"resumepro/backend/internal/resume"
 )
 
 const (
@@ -20,10 +22,13 @@ const (
 	maxAvatarPixels      = 4_000_000
 )
 
-type uploadHandler struct{ storage files.FileStorage }
+type uploadHandler struct {
+	storage    files.FileStorage
+	repository *resume.Repository
+}
 
-func newUploadHandler(storage files.FileStorage) *uploadHandler {
-	return &uploadHandler{storage: storage}
+func newUploadHandler(storage files.FileStorage, repository *resume.Repository) *uploadHandler {
+	return &uploadHandler{storage: storage, repository: repository}
 }
 
 func (h *uploadHandler) avatar(context *gin.Context) {
@@ -60,6 +65,9 @@ func (h *uploadHandler) avatar(context *gin.Context) {
 		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
+	if !h.canReplaceAvatar(context, principal, key) {
+		return
+	}
 	stored, err := h.storage.Store(context.Request.Context(), "user-"+strconv.FormatInt(principal.UserID, 10), key, files.File{Name: filename, Content: file})
 	if err != nil {
 		if errors.Is(err, files.ErrAvatarQuotaExceeded) {
@@ -70,6 +78,26 @@ func (h *uploadHandler) avatar(context *gin.Context) {
 		return
 	}
 	writeJSON(context, http.StatusCreated, map[string]string{"url": stored.URL})
+}
+
+// canReplaceAvatar prevents a stable key bound to one resume from being used
+// to overwrite its bytes through another draft or resume. An unbound UUID is
+// intentionally accepted so users can upload before saving a new draft.
+func (h *uploadHandler) canReplaceAvatar(context *gin.Context, principal auth.Principal, key string) bool {
+	boundResumeID, bound, err := h.repository.AvatarKeyResumeID(context.Request.Context(), principal.TenantID, key)
+	if err != nil {
+		writeError(context, http.StatusInternalServerError, "could not verify avatar image")
+		return false
+	}
+	if !bound {
+		return true
+	}
+	requestedResumeID, err := strconv.ParseInt(context.PostForm("resumeId"), 10, 64)
+	if err != nil || requestedResumeID <= 0 || requestedResumeID != boundResumeID {
+		writeError(context, http.StatusConflict, "avatar image belongs to another resume")
+		return false
+	}
+	return true
 }
 
 func validatedAvatarName(file io.ReadSeeker) (string, error) {

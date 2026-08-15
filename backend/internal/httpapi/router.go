@@ -54,7 +54,7 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 	}
 	router.GET("/api/auth/me", requireAuthentication(service), authHandler.me)
 	if config.FileStorage != nil {
-		uploadHandler := newUploadHandler(config.FileStorage)
+		uploadHandler := newUploadHandler(config.FileStorage, resumeRepository)
 		router.POST("/api/uploads/avatar", requireAuthentication(service), uploadHandler.avatar)
 	}
 

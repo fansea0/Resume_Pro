@@ -65,6 +65,20 @@ func (r *Repository) List(ctx context.Context, tenantID int64) ([]Resume, error)
 	return items, err
 }
 
+// AvatarKeyResumeID returns the resume currently bound to an avatar key for a
+// tenant. It deliberately exposes no cross-tenant information.
+func (r *Repository) AvatarKeyResumeID(ctx context.Context, tenantID int64, key string) (int64, bool, error) {
+	var resumeID int64
+	err := r.db.GetContext(ctx, &resumeID, `SELECT resume_id FROM resume_avatar_keys WHERE tenant_id = ? AND avatar_storage_key = ?`, tenantID, key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return resumeID, true, nil
+}
+
 func (r *Repository) Update(ctx context.Context, tenantID, id int64, input UpdateInput) (Resume, error) {
 	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {

@@ -25,6 +25,7 @@ import {
 
 interface ResumeEditorProps {
   document: ResumeDocument;
+  resumeId?: number;
   onChange: (document: ResumeDocument) => void;
 }
 
@@ -66,7 +67,7 @@ function AddSectionButton({ label, onClick }: { label: string; onClick: () => vo
   return <button aria-label={`添加${label}区块`} className="editor-add-section" onClick={onClick} title={`添加${label}区块`} type="button"><Icon name="add" /><span>{label}</span></button>;
 }
 
-function ResumePhotoField({ profile, onChange }: { profile: ResumeProfile; onChange: (profile: ResumeProfile) => void }) {
+function ResumePhotoField({ profile, resumeId, onChange }: { profile: ResumeProfile; resumeId?: number; onChange: (profile: ResumeProfile) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState('');
@@ -84,7 +85,7 @@ function ResumePhotoField({ profile, onChange }: { profile: ResumeProfile; onCha
     setIsUploading(true);
     const avatarStorageKey = profile.avatarStorageKey || nextId();
     try {
-      const { url } = await uploadResumeAvatar(file, avatarStorageKey);
+      const { url } = await uploadResumeAvatar(file, avatarStorageKey, resumeId);
       onChange({ ...profile, avatarStorageKey, avatarUrl: url });
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : '头像上传失败，请稍后重试。');
@@ -144,7 +145,7 @@ const sectionLabels: Record<ResumeSectionType, string> = {
   education: '教育经历', skills: '专业技能', campus: '校园经历', honours: '荣誉奖项',
 };
 
-export function ResumeEditor({ document, onChange }: ResumeEditorProps) {
+export function ResumeEditor({ document, resumeId, onChange }: ResumeEditorProps) {
   const updateProfile = (field: keyof ResumeProfile, value: string) => onChange({ ...document, profile: { ...document.profile, [field]: value } });
   const updateSection = (id: string, update: (section: ResumeSection) => ResumeSection) => onChange({ ...document, sections: document.sections.map((section) => section.id === id ? update(section) : section) });
   const addSection = (type: ResumeSectionType) => onChange({ ...document, sections: [...document.sections, sectionFactories[type](nextId())] });
@@ -160,7 +161,7 @@ export function ResumeEditor({ document, onChange }: ResumeEditorProps) {
   return (
     <form className="resume-editor" onSubmit={(event) => event.preventDefault()}>
       <DetailsSection open title="基本信息">
-        <ResumePhotoField profile={document.profile} onChange={(profile) => onChange({ ...document, profile })} />
+        <ResumePhotoField profile={document.profile} resumeId={resumeId} onChange={(profile) => onChange({ ...document, profile })} />
         <div className="editor-fields editor-fields--two">
           <Field label="姓名" value={document.profile.fullName} onChange={(value) => updateProfile('fullName', value)} />
           <Field label="求职方向" value={document.profile.headline} onChange={(value) => updateProfile('headline', value)} />

@@ -63,6 +63,10 @@ func (h *resumeHandler) create(context *gin.Context) {
 		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
+	if !validAvatarBinding(input.Content, principal, h.storage) {
+		writeError(context, http.StatusBadRequest, "avatar URL and storage key must be a valid matching pair")
+		return
+	}
 	if err := h.retainAvatar(context.Request.Context(), principal, input.Content); err != nil {
 		writeError(context, http.StatusInternalServerError, "could not retain avatar image")
 		return
@@ -111,6 +115,10 @@ func (h *resumeHandler) update(context *gin.Context) {
 		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
+	if !validAvatarBinding(input.Content, principal, h.storage) {
+		writeError(context, http.StatusBadRequest, "avatar URL and storage key must be a valid matching pair")
+		return
+	}
 	previous, err := h.repository.Get(context.Request.Context(), principal.TenantID, id)
 	if !handleRepositoryError(context, err) {
 		return
@@ -136,6 +144,23 @@ func (h *resumeHandler) update(context *gin.Context) {
 		_ = h.storage.Release(context.Request.Context(), avatarOwner(principal), oldKey)
 	}
 	writeJSON(context, http.StatusOK, item)
+}
+
+func validAvatarBinding(raw json.RawMessage, principal auth.Principal, storage files.FileStorage) bool {
+	var document struct {
+		Profile struct {
+			AvatarURL        string `json:"avatarUrl"`
+			AvatarStorageKey string `json:"avatarStorageKey"`
+		} `json:"profile"`
+	}
+	if json.Unmarshal(raw, &document) != nil {
+		return false
+	}
+	hasURL, hasKey := document.Profile.AvatarURL != "", document.Profile.AvatarStorageKey != ""
+	if hasURL != hasKey {
+		return false
+	}
+	return !hasURL || storage == nil || document.Profile.AvatarURL == storage.PublicURL(avatarOwner(principal), document.Profile.AvatarStorageKey)
 }
 
 func (h *resumeHandler) delete(context *gin.Context) {

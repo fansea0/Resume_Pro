@@ -4,10 +4,11 @@ export interface AvatarUploadResponse {
   url: string;
 }
 
-export async function uploadResumeAvatar(file: File, key: string): Promise<AvatarUploadResponse> {
+export async function uploadResumeAvatar(file: File, key: string, resumeId?: number): Promise<AvatarUploadResponse> {
   const body = new FormData();
   body.append('avatar', file);
-  body.append('key', key);
+	body.append('key', key);
+	if (resumeId !== undefined) body.append('resumeId', String(resumeId));
   const response = await fetch('/api/uploads/avatar', { method: 'POST', credentials: 'include', body });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
