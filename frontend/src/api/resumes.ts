@@ -24,6 +24,7 @@ type ResumePayload = Pick<StoredResume, 'title' | 'templateId'> & { content: Res
 const templateIds = new Set<TemplateId>(['minimal', 'business', 'creative', 'tech', 'editorial', 'redline', 'violet', 'azure-chronicle']);
 const profileFields = ['fullName', 'headline', 'email', 'phone', 'location', 'website', 'avatarUrl', 'avatarStorageKey'] as const;
 const legacyProfileFields = ['fullName', 'headline', 'email', 'phone', 'location', 'website', 'summary'] as const;
+const canonicalUUIDPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -39,6 +40,10 @@ function isStringArray(value: unknown): value is string[] {
 
 function isTemplateId(value: unknown): value is TemplateId {
   return typeof value === 'string' && templateIds.has(value as TemplateId);
+}
+
+function isAvatarStorageKey(value: unknown): boolean {
+  return value === '' || (typeof value === 'string' && canonicalUUIDPattern.test(value));
 }
 
 function isSectionBase(
@@ -144,6 +149,7 @@ function isResumeContent(value: unknown): value is ResumeDocument {
   return hasStringFields(value, ['title'])
     && isTemplateId(value.templateId)
     && hasStringFields(value.profile, profileFields)
+    && isAvatarStorageKey(value.profile.avatarStorageKey)
     && Array.isArray(value.sections)
     && value.sections.every(isResumeSection);
 }

@@ -170,6 +170,17 @@ func TestResumeCreateAndUpdateRequireMatchingMetadataAndBoundedContent(t *testin
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create valid v2 status = %d: %s", created.Code, created.Body.String())
 	}
+	canonicalStorageKey := "550e8400-e29b-41d4-a716-446655440000"
+	canonicalAvatarRequest := `{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithProfile("Valid", "minimal", `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"/uploads/avatars/avatar.png","avatarStorageKey":"`+canonicalStorageKey+`"}`) + `}`
+	for _, target := range []struct {
+		method, path string
+		wantStatus   int
+	}{{http.MethodPost, "/api/resumes", http.StatusCreated}, {http.MethodPut, "/api/resumes/1", http.StatusOK}} {
+		response := requestJSON(t, router, target.method, target.path, canonicalAvatarRequest, session)
+		if response.Code != target.wantStatus {
+			t.Errorf("canonical avatar storage key %s: status = %d, want %d", target.method, response.Code, target.wantStatus)
+		}
+	}
 
 	tooManySections := `[` + strings.TrimSuffix(strings.Repeat(`{"id":"summary","type":"summary","title":"个人总结","visible":true,"content":{"markdown":""}},`, 51), ",") + `]`
 	tooManyItems := `[` + strings.TrimSuffix(strings.Repeat(`{"id":"skill","name":"Go","note":"熟悉"},`, 101), ",") + `]`
@@ -193,6 +204,7 @@ func TestResumeCreateAndUpdateRequireMatchingMetadataAndBoundedContent(t *testin
 		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithProfile("Valid", "minimal", `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"`+strings.Repeat("x", 20_001)+`","avatarStorageKey":""}`) + `}`,
 		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithProfile("Valid", "minimal", `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":false,"avatarStorageKey":""}`) + `}`,
 		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithProfile("Valid", "minimal", `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"","avatarStorageKey":false}`) + `}`,
+		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithProfile("Valid", "minimal", `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"","avatarStorageKey":"avatar-key"}`) + `}`,
 		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithProfile("Valid", "minimal", `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"","avatarStorageKey":"`+strings.Repeat("x", 20_001)+`"}`) + `}`,
 		largeRequest,
 	}

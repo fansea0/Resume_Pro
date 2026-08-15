@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"resumepro/backend/internal/resume"
 )
@@ -160,7 +161,7 @@ func validResumeContent(raw json.RawMessage, title, templateID string) bool {
 		return false
 	}
 	profile, ok := document["profile"].(map[string]any)
-	if !ok || !hasStringFields(profile, "fullName", "headline", "email", "phone", "location", "website", "avatarUrl", "avatarStorageKey") {
+	if !ok || !hasStringFields(profile, "fullName", "headline", "email", "phone", "location", "website", "avatarUrl", "avatarStorageKey") || !validAvatarStorageKey(profile["avatarStorageKey"].(string)) {
 		return false
 	}
 	sections, ok := document["sections"].([]any)
@@ -267,6 +268,14 @@ func hasStringFields(value map[string]any, fields ...string) bool {
 
 func validString(value string) bool {
 	return len(value) <= maxResumeStringLength
+}
+
+func validAvatarStorageKey(value string) bool {
+	if value == "" {
+		return true
+	}
+	storageKey, err := uuid.Parse(value)
+	return err == nil && storageKey.String() == value
 }
 
 func hasBooleanField(value map[string]any, field string) bool {

@@ -127,6 +127,22 @@ describe('documentFromStored', () => {
     expect(() => documentFromStored(stored(corruptAvatarStorageKey))).toThrow('invalid stored resume content');
   });
 
+  it('accepts canonical avatar storage keys and rejects invalid nonempty values', () => {
+    const document = createSampleResumeDocument();
+    const canonicalStorageKey = '550e8400-e29b-41d4-a716-446655440000';
+    const withCanonicalStorageKey = {
+      ...document,
+      profile: { ...document.profile, avatarStorageKey: canonicalStorageKey },
+    };
+    const withInvalidStorageKey = {
+      ...document,
+      profile: { ...document.profile, avatarStorageKey: 'avatar-key' },
+    };
+
+    expect(documentFromStored(stored(withCanonicalStorageKey)).profile.avatarStorageKey).toBe(canonicalStorageKey);
+    expect(() => documentFromStored(stored(withInvalidStorageKey))).toThrow('invalid stored resume content');
+  });
+
   it('rejects unknown outer template identifiers', () => {
     const document = createSampleResumeDocument();
     expect(() => documentFromStored({ ...stored(document), templateId: 'unknown' as 'business' })).toThrow();
