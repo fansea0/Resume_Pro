@@ -75,6 +75,32 @@ describe('ResumeEditor', () => {
     expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ showLocation: false, showLink: false, showIntroduction: false, showAchievements: false });
   });
 
+  it('deletes a project item by its stable ID', () => {
+    const onChange = vi.fn();
+    render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加项目经历区块' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加项目条目' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加项目条目' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '删除项目条目 1' }));
+    const items = latestDocument(onChange).sections[0].content.items;
+    expect(items).toHaveLength(1);
+    expect(items[0].id).not.toBe('');
+  });
+
+  it('assigns unique input IDs to same-named fields in different sections', () => {
+    const first = createWorkSection('work-first');
+    first.content.items = [{ id: 'work-item', company: '', role: '', startDate: '', endDate: '', location: '', achievements: '', highlightsMarkdown: '', showLocation: true, showAchievements: true }];
+    const second = createWorkSection('work-second');
+    second.content.items = [{ id: 'second-item', company: '', role: '', startDate: '', endDate: '', location: '', achievements: '', highlightsMarkdown: '', showLocation: true, showAchievements: true }];
+    render(<ResumeEditor document={{ ...createEmptyResumeDocument(), sections: [first, second] }} onChange={vi.fn()} />);
+
+    const inputs = screen.getAllByLabelText('公司 1');
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0].id).not.toBe(inputs[1].id);
+    inputs.forEach((input) => expect(document.querySelector(`label[for="${input.id}"]`)).toBeTruthy());
+  });
+
   it('adds and edits a campus item and a short honour item', () => {
     const onChange = vi.fn();
     render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);

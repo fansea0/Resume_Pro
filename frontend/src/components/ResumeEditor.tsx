@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import type {
   CampusItem,
   EducationItem,
@@ -31,13 +31,15 @@ function nextId() {
   return crypto.randomUUID();
 }
 
-function Field({ label, value, onChange, multiline = false }: {
+function Field({ label, value, onChange, multiline = false, inputId }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   multiline?: boolean;
+  inputId?: string;
 }) {
-  const id = `field-${label.replace(/\s/g, '-')}`;
+  const generatedId = useId();
+  const id = inputId ?? `field-${label.replace(/\s/g, '-')}-${generatedId}`;
   return (
     <label className="editor-field" htmlFor={id}>
       <span>{label}</span>
@@ -184,6 +186,10 @@ function ProjectItemsEditor({ section, update }: { section: Extract<ResumeSectio
     <Toggle label={`显示项目链接 ${index + 1}`} checked={item.showLink} onChange={() => change(item.id, (value) => ({ ...value, showLink: !value.showLink }))} />
     <Toggle label={`显示项目介绍 ${index + 1}`} checked={item.showIntroduction} onChange={() => change(item.id, (value) => ({ ...value, showIntroduction: !value.showIntroduction }))} />
     <Toggle label={`显示项目成绩 ${index + 1}`} checked={item.showAchievements} onChange={() => change(item.id, (value) => ({ ...value, showAchievements: !value.showAchievements }))} />
+    <button aria-label={`删除项目条目 ${index + 1}`} onClick={() => update((current) => {
+      const currentSection = current as typeof section;
+      return { ...currentSection, content: { items: currentSection.content.items.filter((value) => value.id !== item.id) } };
+    })} type="button">删除</button>
   </div>)}</>;
 }
 
