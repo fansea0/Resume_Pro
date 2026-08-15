@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -126,7 +127,8 @@ func TestAvatarUploadRejectsBodiesOverFiveMiB(t *testing.T) {
 
 func TestConfiguredUploadsAreServedStatically(t *testing.T) {
 	directory := t.TempDir()
-	path := filepath.Join(directory, "avatars", "saved.png")
+	filename := strings.Repeat("a", 64) + "-" + strings.Repeat("b", 64) + ".avatar"
+	path := filepath.Join(directory, "avatars", filename)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +138,7 @@ func TestConfiguredUploadsAreServedStatically(t *testing.T) {
 	storage := &recordingFileStorage{}
 	router, _ := newAvatarUploadTestRouterWithConfig(t, storage, RouterConfig{AvatarDirectory: filepath.Join(directory, "avatars")})
 
-	request := httptest.NewRequest(http.MethodGet, "/uploads/avatars/saved.png", nil)
+	request := httptest.NewRequest(http.MethodGet, "/uploads/avatars/"+filename, nil)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -152,6 +154,12 @@ func TestConfiguredUploadsAreServedStatically(t *testing.T) {
 		if response.Code != http.StatusNotFound {
 			t.Fatalf("directory %q status = %d, want %d", path, response.Code, http.StatusNotFound)
 		}
+	}
+	request = httptest.NewRequest(http.MethodGet, "/uploads/avatars/"+filename+".retained", nil)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("sidecar status = %d, want %d", response.Code, http.StatusNotFound)
 	}
 }
 

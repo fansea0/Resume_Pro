@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/gin-gonic/gin"
 
@@ -24,6 +25,8 @@ type RouterConfig struct {
 	// It is ignored unless explicitly configured.
 	AvatarDirectory string
 }
+
+var avatarFilenamePattern = regexp.MustCompile(`^[a-f0-9]{64}-[a-f0-9]{64}\.avatar$`)
 
 // NewRouter creates the Gin HTTP API router.
 func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Repository, templateRepository *templates.Repository, config RouterConfig) *gin.Engine {
@@ -77,7 +80,7 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 func serveAvatarFile(directory string) gin.HandlerFunc {
 	return func(context *gin.Context) {
 		filename := context.Param("filename")
-		if filename == "" || filename != filepath.Base(filename) {
+		if filename == "" || filename != filepath.Base(filename) || !avatarFilenamePattern.MatchString(filename) {
 			context.Status(http.StatusNotFound)
 			return
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -151,9 +152,29 @@ func TestResumeLifecycleRetainsNewAvatarAndReleasesReplacedOrDeletedAvatar(t *te
 	}
 }
 
+func TestResumeCreateDoesNotPersistAvatarWhenRetentionFails(t *testing.T) {
+	storage := &lifecycleFileStorage{retainErr: errors.New("storage unavailable")}
+	router, session := testRouterWithStorage(t, storage)
+	key := "550e8400-e29b-41d4-a716-446655440000"
+	profile := `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"/uploads/avatars/avatar.avatar","avatarStorageKey":"` + key + `"}`
+	body := `{"title":"Avatar","templateId":"minimal","content":` + validV2ContentWithProfile("Avatar", "minimal", profile) + `}`
+	if response := requestJSON(t, router, http.MethodPost, "/api/resumes", body, session); response.Code != http.StatusInternalServerError {
+		t.Fatalf("create status = %d: %s", response.Code, response.Body.String())
+	}
+	response := requestJSON(t, router, http.MethodGet, "/api/resumes", "", session)
+	var items []resume.Resume
+	if err := json.NewDecoder(response.Body).Decode(&items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("resume persisted despite retain failure: %#v", items)
+	}
+}
+
 type lifecycleFileStorage struct {
-	retained map[string]bool
-	released map[string]bool
+	retained  map[string]bool
+	released  map[string]bool
+	retainErr error
 }
 
 func (s *lifecycleFileStorage) Store(context.Context, string, string, files.File) (files.StoredFile, error) {
@@ -161,6 +182,9 @@ func (s *lifecycleFileStorage) Store(context.Context, string, string, files.File
 }
 
 func (s *lifecycleFileStorage) Retain(_ context.Context, _ string, key string) error {
+	if s.retainErr != nil {
+		return s.retainErr
+	}
 	if s.retained == nil {
 		s.retained = map[string]bool{}
 	}
@@ -231,7 +255,7 @@ func TestResumeCreateAndUpdateRequireMatchingMetadataAndBoundedContent(t *testin
 	for _, target := range []struct {
 		method, path string
 		wantStatus   int
-	}{{http.MethodPost, "/api/resumes", http.StatusCreated}, {http.MethodPut, "/api/resumes/1", http.StatusOK}} {
+	}{{http.MethodPost, "/api/resumes", http.StatusCreated}, {http.MethodPut, "/api/resumes/1", http.StatusConflict}} {
 		response := requestJSON(t, router, target.method, target.path, canonicalAvatarRequest, session)
 		if response.Code != target.wantStatus {
 			t.Errorf("canonical avatar storage key %s: status = %d, want %d", target.method, response.Code, target.wantStatus)

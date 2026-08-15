@@ -63,13 +63,17 @@ func (h *resumeHandler) create(context *gin.Context) {
 		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	item, err := h.repository.Create(context.Request.Context(), resume.CreateInput{TenantID: principal.TenantID, Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
-	if err != nil {
-		writeError(context, http.StatusInternalServerError, "could not create resume")
+	if !h.avatarKeyAvailable(context, principal, 0, input.Content) {
 		return
 	}
 	if err := h.retainAvatar(context.Request.Context(), principal, input.Content); err != nil {
 		writeError(context, http.StatusInternalServerError, "could not retain avatar image")
+		return
+	}
+	item, err := h.repository.Create(context.Request.Context(), resume.CreateInput{TenantID: principal.TenantID, Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
+	if err != nil {
+		h.releaseAvatar(context.Request.Context(), principal, input.Content)
+		writeError(context, http.StatusInternalServerError, "could not create resume")
 		return
 	}
 	writeJSON(context, http.StatusCreated, item)
@@ -110,19 +114,26 @@ func (h *resumeHandler) update(context *gin.Context) {
 	if !handleRepositoryError(context, err) {
 		return
 	}
-	item, err := h.repository.Update(context.Request.Context(), principal.TenantID, id, resume.UpdateInput{Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
-	if !handleRepositoryError(context, err) {
+	if !h.avatarKeyAvailable(context, principal, id, input.Content) {
 		return
 	}
-	if err := h.retainAvatar(context.Request.Context(), principal, input.Content); err != nil {
-		writeError(context, http.StatusInternalServerError, "could not retain avatar image")
-		return
-	}
-	if oldKey, newKey := avatarStorageKey(json.RawMessage(previous.Content)), avatarStorageKey(input.Content); h.storage != nil && oldKey != "" && oldKey != newKey {
-		if err := h.storage.Release(context.Request.Context(), avatarOwner(principal), oldKey); err != nil {
-			writeError(context, http.StatusInternalServerError, "could not release previous avatar image")
+	oldKey, newKey := avatarStorageKey(json.RawMessage(previous.Content)), avatarStorageKey(input.Content)
+	retainedNew := h.storage != nil && newKey != "" && newKey != oldKey
+	if retainedNew {
+		if err := h.retainAvatar(context.Request.Context(), principal, input.Content); err != nil {
+			writeError(context, http.StatusInternalServerError, "could not retain avatar image")
 			return
 		}
+	}
+	item, err := h.repository.Update(context.Request.Context(), principal.TenantID, id, resume.UpdateInput{Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
+	if !handleRepositoryError(context, err) {
+		if retainedNew {
+			h.releaseAvatar(context.Request.Context(), principal, input.Content)
+		}
+		return
+	}
+	if h.storage != nil && oldKey != "" && oldKey != newKey {
+		_ = h.storage.Release(context.Request.Context(), avatarOwner(principal), oldKey)
 	}
 	writeJSON(context, http.StatusOK, item)
 }
@@ -145,12 +156,34 @@ func (h *resumeHandler) delete(context *gin.Context) {
 		return
 	}
 	if oldKey := avatarStorageKey(json.RawMessage(previous.Content)); oldKey != "" && h.storage != nil {
-		if err := h.storage.Release(context.Request.Context(), avatarOwner(principal), oldKey); err != nil {
-			writeError(context, http.StatusInternalServerError, "could not release avatar image")
-			return
-		}
+		_ = h.storage.Release(context.Request.Context(), avatarOwner(principal), oldKey)
 	}
 	context.Status(http.StatusNoContent)
+}
+
+func (h *resumeHandler) avatarKeyAvailable(context *gin.Context, principal auth.Principal, excludeID int64, content json.RawMessage) bool {
+	key := avatarStorageKey(content)
+	if key == "" {
+		return true
+	}
+	inUse, err := h.repository.AvatarStorageKeyInUse(context.Request.Context(), principal.TenantID, excludeID, key)
+	if err != nil {
+		writeError(context, http.StatusInternalServerError, "could not validate avatar image")
+		return false
+	}
+	if inUse {
+		writeError(context, http.StatusConflict, "avatar image is already used by another resume")
+		return false
+	}
+	return true
+}
+
+func (h *resumeHandler) releaseAvatar(ctx context.Context, principal auth.Principal, content json.RawMessage) {
+	if h.storage != nil {
+		if key := avatarStorageKey(content); key != "" {
+			_ = h.storage.Release(ctx, avatarOwner(principal), key)
+		}
+	}
 }
 
 func (h *resumeHandler) retainAvatar(ctx context.Context, principal auth.Principal, content json.RawMessage) error {

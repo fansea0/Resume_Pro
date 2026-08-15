@@ -3,6 +3,7 @@ package resume
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -45,6 +46,30 @@ func (r *Repository) List(ctx context.Context, tenantID int64) ([]Resume, error)
 	items := []Resume{}
 	err := r.db.SelectContext(ctx, &items, `SELECT id, tenant_id, title, template_id, content, created_at, updated_at FROM resumes WHERE tenant_id = ? ORDER BY updated_at DESC, id DESC`, tenantID)
 	return items, err
+}
+
+// AvatarStorageKeyInUse reports whether another current resume in the tenant
+// owns key. Content is parsed instead of searched as text so formatting changes
+// cannot create a false match.
+func (r *Repository) AvatarStorageKeyInUse(ctx context.Context, tenantID, excludeID int64, key string) (bool, error) {
+	items, err := r.List(ctx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	for _, item := range items {
+		if item.ID == excludeID {
+			continue
+		}
+		var content struct {
+			Profile struct {
+				AvatarStorageKey string `json:"avatarStorageKey"`
+			} `json:"profile"`
+		}
+		if json.Unmarshal([]byte(item.Content), &content) == nil && content.Profile.AvatarStorageKey == key {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *Repository) Update(ctx context.Context, tenantID, id int64, input UpdateInput) (Resume, error) {
