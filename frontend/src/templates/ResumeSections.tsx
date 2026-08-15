@@ -139,7 +139,7 @@ function Metadata({
   return (
     <Meta className={classNames?.meta}>
       {hasDate && <time>{startDate}{startDate && endDate ? ' — ' : ''}{endDate}</time>}
-      {hasDate && location && <span aria-hidden="true" data-resume-metadata-separator> · </span>}
+      {hasDate && location && <span data-resume-metadata-separator> · </span>}
       {location && <span className={classNames?.location}>{location}</span>}
     </Meta>
   );

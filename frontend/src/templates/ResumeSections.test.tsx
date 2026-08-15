@@ -106,7 +106,9 @@ describe('ResumeSections', () => {
     const view = within(container);
 
     expect(view.getByText('北京').parentElement).toHaveTextContent('2023.01 — 2023.06 · 北京');
-    expect(container.querySelectorAll('[data-resume-metadata-separator]')).toHaveLength(1);
+    const separator = container.querySelector('[data-resume-metadata-separator]');
+    expect(separator).toHaveTextContent('·');
+    expect(separator).not.toHaveAttribute('aria-hidden');
     expect(view.getAllByText('2023.01 — 2023.06')[1].parentElement).toHaveTextContent('2023.01 — 2023.06');
     expect(view.getByText('深圳').parentElement).toHaveTextContent('深圳');
   });
