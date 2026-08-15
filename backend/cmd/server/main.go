@@ -62,7 +62,7 @@ func main() {
 		CookieSecure:    cookieSecure,
 		EnableDevLogin:  os.Getenv("APP_ENV") == "development",
 		FileStorage:     files.NewLocalFileStorage(filepath.Join(uploadDirectory, "avatars")),
-		UploadDirectory: uploadDirectory,
+		AvatarDirectory: filepath.Join(uploadDirectory, "avatars"),
 	}).Run(":8080"); err != nil {
 		logger.WithError(err).Fatal("resume API server stopped")
 	}

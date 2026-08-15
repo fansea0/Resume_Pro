@@ -6,6 +6,7 @@ import (
 	"image"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	_ "golang.org/x/image/webp"
@@ -15,7 +16,7 @@ import (
 
 const (
 	maxAvatarUploadBytes = 5 << 20 // 5 MiB, including multipart envelope.
-	maxAvatarPixels      = 25_000_000
+	maxAvatarPixels      = 4_000_000
 )
 
 type uploadHandler struct{ storage files.FileStorage }
@@ -47,7 +48,12 @@ func (h *uploadHandler) avatar(context *gin.Context) {
 		writeError(context, http.StatusBadRequest, "avatar image could not be read")
 		return
 	}
-	stored, err := h.storage.Store(context.Request.Context(), files.File{Name: filename, Content: file})
+	principal, ok := principalFromContext(context)
+	if !ok {
+		writeError(context, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	stored, err := h.storage.Store(context.Request.Context(), "user-"+strconv.FormatInt(principal.UserID, 10), files.File{Name: filename, Content: file})
 	if err != nil {
 		writeError(context, http.StatusInternalServerError, "could not store avatar image")
 		return

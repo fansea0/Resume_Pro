@@ -2,14 +2,13 @@ package files
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 const avatarURLPrefix = "/uploads/avatars/"
@@ -33,15 +32,17 @@ func NewLocalFileStorage(directory string) *LocalFileStorage {
 	return &LocalFileStorage{directory: directory}
 }
 
-// Store persists one supported avatar file with a generated name. It writes to a
-// temporary file in the destination directory and atomically renames it only
-// after the complete content has been copied.
-func (s *LocalFileStorage) Store(ctx context.Context, file File) (StoredFile, error) {
+// Store persists one supported avatar for owner. Each owner maps to one opaque,
+// stable path. A temporary file is atomically renamed over its previous avatar,
+// so repeated uploads do not leave unbounded orphan files behind.
+func (s *LocalFileStorage) Store(ctx context.Context, owner string, file File) (StoredFile, error) {
 	if err := ctx.Err(); err != nil {
 		return StoredFile{}, err
 	}
-	extension, err := safeAvatarExtension(file.Name)
-	if err != nil {
+	if !safeAvatarOwner(owner) {
+		return StoredFile{}, errors.New("avatar owner is invalid")
+	}
+	if _, err := safeAvatarExtension(file.Name); err != nil {
 		return StoredFile{}, err
 	}
 	if file.Content == nil {
@@ -72,13 +73,30 @@ func (s *LocalFileStorage) Store(ctx context.Context, file File) (StoredFile, er
 		return StoredFile{}, err
 	}
 
-	filename := uuid.NewString() + extension
+	filename := avatarFilename(owner)
 	path := filepath.Join(s.directory, filename)
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return StoredFile{}, fmt.Errorf("finalize avatar: %w", err)
 	}
 
 	return StoredFile{Path: path, URL: avatarURLPrefix + filename}, nil
+}
+
+func avatarFilename(owner string) string {
+	sum := sha256.Sum256([]byte(owner))
+	return fmt.Sprintf("%x.avatar", sum[:])
+}
+
+func safeAvatarOwner(owner string) bool {
+	if owner == "" || len(owner) > 128 {
+		return false
+	}
+	for _, character := range owner {
+		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '-' || character == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func safeAvatarExtension(name string) (string, error) {

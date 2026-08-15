@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 
@@ -18,9 +20,9 @@ type RouterConfig struct {
 	// FileStorage is optional so deployments can opt into avatar uploads only
 	// after configuring a durable storage backend.
 	FileStorage files.FileStorage
-	// UploadDirectory is the local public directory mounted at /uploads.
+	// AvatarDirectory is the local public directory mounted at /uploads/avatars.
 	// It is ignored unless explicitly configured.
-	UploadDirectory string
+	AvatarDirectory string
 }
 
 // NewRouter creates the Gin HTTP API router.
@@ -29,8 +31,8 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 	router.GET("/api/health", func(context *gin.Context) {
 		writeJSON(context, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	if config.UploadDirectory != "" {
-		router.StaticFS("/uploads", http.Dir(config.UploadDirectory))
+	if config.AvatarDirectory != "" {
+		router.GET("/uploads/avatars/:filename", serveAvatarFile(config.AvatarDirectory))
 	}
 	if authRepository == nil || resumeRepository == nil || templateRepository == nil {
 		return router
@@ -70,4 +72,21 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 	admin.DELETE("/:templateID", templateHandler.disable)
 
 	return router
+}
+
+func serveAvatarFile(directory string) gin.HandlerFunc {
+	return func(context *gin.Context) {
+		filename := context.Param("filename")
+		if filename == "" || filename != filepath.Base(filename) {
+			context.Status(http.StatusNotFound)
+			return
+		}
+		path := filepath.Join(directory, filename)
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			context.Status(http.StatusNotFound)
+			return
+		}
+		http.ServeFile(context.Writer, context.Request, path)
+	}
 }

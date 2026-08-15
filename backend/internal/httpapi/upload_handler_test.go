@@ -108,7 +108,7 @@ func TestConfiguredUploadsAreServedStatically(t *testing.T) {
 		t.Fatal(err)
 	}
 	storage := &recordingFileStorage{}
-	router, _ := newAvatarUploadTestRouterWithConfig(t, storage, RouterConfig{UploadDirectory: directory})
+	router, _ := newAvatarUploadTestRouterWithConfig(t, storage, RouterConfig{AvatarDirectory: filepath.Join(directory, "avatars")})
 
 	request := httptest.NewRequest(http.MethodGet, "/uploads/avatars/saved.png", nil)
 	response := httptest.NewRecorder()
@@ -119,6 +119,27 @@ func TestConfiguredUploadsAreServedStatically(t *testing.T) {
 	if !bytes.Equal(response.Body.Bytes(), encodedPNG(t)) {
 		t.Fatal("static upload response did not serve the configured file")
 	}
+	for _, path := range []string{"/uploads", "/uploads/avatars", "/uploads/avatars/"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("directory %q status = %d, want %d", path, response.Code, http.StatusNotFound)
+		}
+	}
+}
+
+func TestAvatarUploadRejectsImagesOverFourMillionPixels(t *testing.T) {
+	storage := &recordingFileStorage{}
+	router, session := newAvatarUploadTestRouter(t, storage)
+
+	response := multipartUploadRequest(t, router, "large.png", "image/png", encodedPNGWithDimensions(t, 2001, 2000), session)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if storage.calls != 0 {
+		t.Fatal("storage was called for an image over the pixel limit")
+	}
 }
 
 type recordingFileStorage struct {
@@ -126,10 +147,12 @@ type recordingFileStorage struct {
 	file    files.File
 	content []byte
 	calls   int
+	owner   string
 }
 
-func (s *recordingFileStorage) Store(_ context.Context, file files.File) (files.StoredFile, error) {
+func (s *recordingFileStorage) Store(_ context.Context, owner string, file files.File) (files.StoredFile, error) {
 	s.calls++
+	s.owner = owner
 	s.file = file
 	content, err := io.ReadAll(file.Content)
 	if err != nil {
@@ -189,6 +212,15 @@ func encodedPNG(t *testing.T) []byte {
 	t.Helper()
 	var output bytes.Buffer
 	if err := png.Encode(&output, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	return output.Bytes()
+}
+
+func encodedPNGWithDimensions(t *testing.T, width, height int) []byte {
+	t.Helper()
+	var output bytes.Buffer
+	if err := png.Encode(&output, image.NewRGBA(image.Rect(0, 0, width, height))); err != nil {
 		t.Fatal(err)
 	}
 	return output.Bytes()
