@@ -125,4 +125,26 @@ describe('templateRegistry', () => {
     const { container: editorial } = render(<Editorial document={sampleResume} />);
     expect(editorial.querySelector('.template-editorial__sidebar [data-resume-section]')).toBeInTheDocument();
   });
+
+  it.each(['business', 'tech'] as const)('renders optional item fields only while enabled in %s', (templateId) => {
+    const Renderer = templateRegistry.find(({ id }) => id === templateId)!.Renderer;
+    const { rerender } = render(<Renderer document={sampleResume} />);
+    expect(screen.getAllByText('上海').length).toBeGreaterThan(0);
+    expect(screen.getByText('项目介绍')).toBeInTheDocument();
+    expect(screen.getByText('项目成绩')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'https://example.com' })).toHaveAttribute('href', 'https://example.com');
+
+    const hidden = {
+      ...sampleResume,
+      sections: sampleResume.sections.map((section) => section.type === 'project'
+        ? { ...section, content: { items: section.content.items.map((item) => ({ ...item, showLocation: false, showLink: false, showIntroduction: false, showAchievements: false })) } }
+        : section.type === 'work'
+          ? { ...section, content: { items: section.content.items.map((item) => ({ ...item, showLocation: false, showAchievements: false })) } }
+          : section),
+    } as ResumeDocument;
+    rerender(<Renderer document={hidden} />);
+    expect(screen.queryByText('项目介绍')).not.toBeInTheDocument();
+    expect(screen.queryByText('项目成绩')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'https://example.com' })).not.toBeInTheDocument();
+  });
 });
