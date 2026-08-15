@@ -14,14 +14,16 @@ type Resume struct {
 }
 
 type CreateInput struct {
-	TenantID   int64
-	Title      string
-	TemplateID string
-	Content    string
+	TenantID    int64
+	AvatarOwner string
+	Title       string
+	TemplateID  string
+	Content     string
 }
 
 type UpdateInput struct {
-	Title      string
-	TemplateID string
-	Content    string
+	AvatarOwner string
+	Title       string
+	TemplateID  string
+	Content     string
 }

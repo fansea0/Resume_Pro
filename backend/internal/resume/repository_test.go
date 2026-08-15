@@ -128,6 +128,43 @@ func TestRepositoryTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestAvatarUploadReservationPreventsAnotherResumeFromClaimingItsKey(t *testing.T) {
+	db, err := sqlx.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	if err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	repository := resume.NewRepository(db)
+	tenantID := createTenant(t, db, "Reservation tenant")
+	key := "550e8400-e29b-41d4-a716-446655440000"
+	if err := repository.ReserveAvatarUpload(ctx, tenantID, key, "user-1", 0); err != nil {
+		t.Fatalf("reserve fresh key: %v", err)
+	}
+	input := func(owner, title string) resume.CreateInput {
+		return resume.CreateInput{TenantID: tenantID, AvatarOwner: owner, Title: title, TemplateID: "minimal", Content: avatarJSONContent(key)}
+	}
+	if _, err := repository.Create(ctx, input("user-2", "Other resume")); err != resume.ErrAvatarKeyReserved {
+		t.Fatalf("other resume create error = %v, want %v", err, resume.ErrAvatarKeyReserved)
+	}
+	created, err := repository.Create(ctx, input("user-1", "Reserved resume"))
+	if err != nil {
+		t.Fatalf("reservation owner create: %v", err)
+	}
+	if _, err := repository.Create(ctx, input("user-1", "Second resume")); err != resume.ErrAvatarKeyInUse {
+		t.Fatalf("second resume create error = %v, want %v", err, resume.ErrAvatarKeyInUse)
+	}
+	if err := repository.ReserveAvatarUpload(ctx, tenantID, key, "user-1", created.ID); err != nil {
+		t.Fatalf("same resume replacement reservation: %v", err)
+	}
+	if err := repository.ReserveAvatarUpload(ctx, tenantID, key, "user-1", created.ID+1); err != resume.ErrAvatarKeyInUse {
+		t.Fatalf("other resume replacement reservation error = %v, want %v", err, resume.ErrAvatarKeyInUse)
+	}
+}
+
 func createTenant(t *testing.T, db *sqlx.DB, displayName string) int64 {
 	t.Helper()
 	result, err := db.Exec(`INSERT INTO tenants (display_name, created_at, updated_at) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, displayName)
@@ -143,4 +180,8 @@ func createTenant(t *testing.T, db *sqlx.DB, displayName string) int64 {
 
 func jsonContent(name string) string {
 	return `{"profile":{"name":"` + name + `"}}`
+}
+
+func avatarJSONContent(key string) string {
+	return `{"profile":{"avatarStorageKey":"` + key + `"}}`
 }

@@ -71,9 +71,9 @@ func (h *resumeHandler) create(context *gin.Context) {
 		writeError(context, http.StatusInternalServerError, "could not retain avatar image")
 		return
 	}
-	item, err := h.repository.Create(context.Request.Context(), resume.CreateInput{TenantID: principal.TenantID, Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
+	item, err := h.repository.Create(context.Request.Context(), resume.CreateInput{TenantID: principal.TenantID, AvatarOwner: avatarOwner(principal), Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
 	if err != nil {
-		if errors.Is(err, resume.ErrAvatarKeyInUse) {
+		if errors.Is(err, resume.ErrAvatarKeyInUse) || errors.Is(err, resume.ErrAvatarKeyReserved) {
 			writeError(context, http.StatusConflict, "avatar image is already used by another resume")
 			return
 		}
@@ -131,10 +131,10 @@ func (h *resumeHandler) update(context *gin.Context) {
 			return
 		}
 	}
-	item, err := h.repository.Update(context.Request.Context(), principal.TenantID, id, resume.UpdateInput{Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
+	item, err := h.repository.Update(context.Request.Context(), principal.TenantID, id, resume.UpdateInput{AvatarOwner: avatarOwner(principal), Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
 	if !handleRepositoryError(context, err) {
 		if retainedNew {
-			if !errors.Is(err, resume.ErrAvatarKeyInUse) {
+			if !errors.Is(err, resume.ErrAvatarKeyInUse) && !errors.Is(err, resume.ErrAvatarKeyReserved) {
 				h.releaseAvatar(context.Request.Context(), principal, input.Content)
 			}
 		}
@@ -399,7 +399,7 @@ func handleRepositoryError(context *gin.Context, err error) bool {
 	}
 	if errors.Is(err, resume.ErrNotFound) {
 		writeError(context, http.StatusNotFound, "resume not found")
-	} else if errors.Is(err, resume.ErrAvatarKeyInUse) {
+	} else if errors.Is(err, resume.ErrAvatarKeyInUse) || errors.Is(err, resume.ErrAvatarKeyReserved) {
 		writeError(context, http.StatusConflict, "avatar image is already used by another resume")
 	} else {
 		writeError(context, http.StatusInternalServerError, "resume operation failed")

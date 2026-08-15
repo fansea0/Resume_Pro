@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	ErrNotFound       = errors.New("resume not found")
-	ErrAvatarKeyInUse = errors.New("avatar storage key is already in use")
+	ErrNotFound          = errors.New("resume not found")
+	ErrAvatarKeyInUse    = errors.New("avatar storage key is already in use")
+	ErrAvatarKeyReserved = errors.New("avatar storage key is reserved by another upload")
 )
 
 type Repository struct {
@@ -40,8 +41,8 @@ func (r *Repository) Create(ctx context.Context, input CreateInput) (Resume, err
 		return Resume{}, err
 	}
 	if key := avatarKey(input.Content); key != "" {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO resume_avatar_keys (tenant_id, avatar_storage_key, resume_id) VALUES (?, ?, ?)`, input.TenantID, key, id); err != nil {
-			return Resume{}, avatarKeyError(err)
+		if err := claimAvatarForResume(ctx, tx, input.TenantID, key, input.AvatarOwner, id); err != nil {
+			return Resume{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -79,6 +80,47 @@ func (r *Repository) AvatarKeyResumeID(ctx context.Context, tenantID int64, key 
 	return resumeID, true, nil
 }
 
+// ReserveAvatarUpload atomically claims an unbound key before bytes are sent
+// to storage. The durable reservation closes the gap between a fresh upload
+// and the later resume save, and expires with local temporary uploads.
+func (r *Repository) ReserveAvatarUpload(ctx context.Context, tenantID int64, key, owner string, resumeID int64) error {
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM avatar_upload_reservations WHERE expires_at <= ?`, time.Now().UTC()); err != nil {
+		return err
+	}
+	var boundID int64
+	err = tx.GetContext(ctx, &boundID, `SELECT resume_id FROM resume_avatar_keys WHERE tenant_id = ? AND avatar_storage_key = ?`, tenantID, key)
+	if err == nil {
+		if resumeID != boundID {
+			return ErrAvatarKeyInUse
+		}
+		return tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	var reservationOwner string
+	err = tx.GetContext(ctx, &reservationOwner, `SELECT owner FROM avatar_upload_reservations WHERE tenant_id = ? AND avatar_storage_key = ?`, tenantID, key)
+	if err == nil {
+		if reservationOwner != owner {
+			return ErrAvatarKeyReserved
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE avatar_upload_reservations SET expires_at = ? WHERE tenant_id = ? AND avatar_storage_key = ?`, time.Now().UTC().Add(24*time.Hour), tenantID, key)
+	} else if errors.Is(err, sql.ErrNoRows) {
+		_, err = tx.ExecContext(ctx, `INSERT INTO avatar_upload_reservations (tenant_id, avatar_storage_key, owner, expires_at) VALUES (?, ?, ?, ?)`, tenantID, key, owner, time.Now().UTC().Add(24*time.Hour))
+	} else {
+		return err
+	}
+	if err != nil {
+		return avatarKeyError(err)
+	}
+	return tx.Commit()
+}
+
 func (r *Repository) Update(ctx context.Context, tenantID, id int64, input UpdateInput) (Resume, error) {
 	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -110,8 +152,8 @@ func (r *Repository) Update(ctx context.Context, tenantID, id int64, input Updat
 			}
 		}
 		if newKey != "" {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO resume_avatar_keys (tenant_id, avatar_storage_key, resume_id) VALUES (?, ?, ?)`, tenantID, newKey, id); err != nil {
-				return Resume{}, avatarKeyError(err)
+			if err := claimAvatarForResume(ctx, tx, tenantID, newKey, input.AvatarOwner, id); err != nil {
+				return Resume{}, err
 			}
 		}
 	} else if newKey != "" {
@@ -123,6 +165,28 @@ func (r *Repository) Update(ctx context.Context, tenantID, id int64, input Updat
 		return Resume{}, err
 	}
 	return r.Get(ctx, tenantID, id)
+}
+
+func claimAvatarForResume(ctx context.Context, tx *sqlx.Tx, tenantID int64, key, owner string, resumeID int64) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM avatar_upload_reservations WHERE expires_at <= ?`, time.Now().UTC()); err != nil {
+		return err
+	}
+	var reservationOwner string
+	err := tx.GetContext(ctx, &reservationOwner, `SELECT owner FROM avatar_upload_reservations WHERE tenant_id = ? AND avatar_storage_key = ?`, tenantID, key)
+	if err == nil {
+		if reservationOwner != owner {
+			return ErrAvatarKeyReserved
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM avatar_upload_reservations WHERE tenant_id = ? AND avatar_storage_key = ? AND owner = ?`, tenantID, key, owner); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO resume_avatar_keys (tenant_id, avatar_storage_key, resume_id) VALUES (?, ?, ?)`, tenantID, key, resumeID); err != nil {
+		return avatarKeyError(err)
+	}
+	return nil
 }
 
 func avatarKey(content string) string {

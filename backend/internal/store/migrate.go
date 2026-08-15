@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS resume_avatar_keys (
   PRIMARY KEY (tenant_id, avatar_storage_key),
   UNIQUE (resume_id)
 );
+CREATE TABLE IF NOT EXISTS avatar_upload_reservations (
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+  avatar_storage_key TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  expires_at DATETIME NOT NULL,
+  PRIMARY KEY (tenant_id, avatar_storage_key)
+);
+CREATE INDEX IF NOT EXISTS idx_avatar_upload_reservations_expires_at ON avatar_upload_reservations(expires_at);
 CREATE TABLE IF NOT EXISTS disabled_templates (
   template_id TEXT PRIMARY KEY,
   disabled_at DATETIME NOT NULL

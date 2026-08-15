@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	_ "golang.org/x/image/webp"
 
-	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/resume"
 )
@@ -65,7 +64,17 @@ func (h *uploadHandler) avatar(context *gin.Context) {
 		writeError(context, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	if !h.canReplaceAvatar(context, principal, key) {
+	resumeID, err := optionalResumeID(context.PostForm("resumeId"))
+	if err != nil {
+		writeError(context, http.StatusBadRequest, "resume ID must be a positive integer")
+		return
+	}
+	if err := h.repository.ReserveAvatarUpload(context.Request.Context(), principal.TenantID, key, avatarOwner(principal), resumeID); err != nil {
+		if errors.Is(err, resume.ErrAvatarKeyInUse) || errors.Is(err, resume.ErrAvatarKeyReserved) {
+			writeError(context, http.StatusConflict, "avatar image belongs to another resume")
+			return
+		}
+		writeError(context, http.StatusInternalServerError, "could not reserve avatar image")
 		return
 	}
 	stored, err := h.storage.Store(context.Request.Context(), "user-"+strconv.FormatInt(principal.UserID, 10), key, files.File{Name: filename, Content: file})
@@ -80,24 +89,17 @@ func (h *uploadHandler) avatar(context *gin.Context) {
 	writeJSON(context, http.StatusCreated, map[string]string{"url": stored.URL})
 }
 
-// canReplaceAvatar prevents a stable key bound to one resume from being used
-// to overwrite its bytes through another draft or resume. An unbound UUID is
-// intentionally accepted so users can upload before saving a new draft.
-func (h *uploadHandler) canReplaceAvatar(context *gin.Context, principal auth.Principal, key string) bool {
-	boundResumeID, bound, err := h.repository.AvatarKeyResumeID(context.Request.Context(), principal.TenantID, key)
-	if err != nil {
-		writeError(context, http.StatusInternalServerError, "could not verify avatar image")
-		return false
+// optionalResumeID accepts the saved resume identity when an existing avatar
+// is replaced, while keeping uploads for unsaved drafts possible.
+func optionalResumeID(value string) (int64, error) {
+	if value == "" {
+		return 0, nil
 	}
-	if !bound {
-		return true
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, errors.New("invalid resume ID")
 	}
-	requestedResumeID, err := strconv.ParseInt(context.PostForm("resumeId"), 10, 64)
-	if err != nil || requestedResumeID <= 0 || requestedResumeID != boundResumeID {
-		writeError(context, http.StatusConflict, "avatar image belongs to another resume")
-		return false
-	}
-	return true
+	return id, nil
 }
 
 func validatedAvatarName(file io.ReadSeeker) (string, error) {
