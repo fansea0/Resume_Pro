@@ -5,12 +5,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 )
 
-var ErrNotFound = errors.New("resume not found")
+var (
+	ErrNotFound       = errors.New("resume not found")
+	ErrAvatarKeyInUse = errors.New("avatar storage key is already in use")
+)
 
 type Repository struct {
 	db *sqlx.DB
@@ -21,13 +25,26 @@ func NewRepository(db *sqlx.DB) *Repository {
 }
 
 func (r *Repository) Create(ctx context.Context, input CreateInput) (Resume, error) {
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return Resume{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	now := time.Now().UTC()
-	result, err := r.db.ExecContext(ctx, `INSERT INTO resumes (tenant_id, title, template_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`, input.TenantID, input.Title, input.TemplateID, input.Content, now, now)
+	result, err := tx.ExecContext(ctx, `INSERT INTO resumes (tenant_id, title, template_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`, input.TenantID, input.Title, input.TemplateID, input.Content, now, now)
 	if err != nil {
 		return Resume{}, err
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
+		return Resume{}, err
+	}
+	if key := avatarKey(input.Content); key != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO resume_avatar_keys (tenant_id, avatar_storage_key, resume_id) VALUES (?, ?, ?)`, input.TenantID, key, id); err != nil {
+			return Resume{}, avatarKeyError(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return Resume{}, err
 	}
 	return r.Get(ctx, input.TenantID, id)
@@ -46,30 +63,6 @@ func (r *Repository) List(ctx context.Context, tenantID int64) ([]Resume, error)
 	items := []Resume{}
 	err := r.db.SelectContext(ctx, &items, `SELECT id, tenant_id, title, template_id, content, created_at, updated_at FROM resumes WHERE tenant_id = ? ORDER BY updated_at DESC, id DESC`, tenantID)
 	return items, err
-}
-
-// AvatarStorageKeyInUse reports whether another current resume in the tenant
-// owns key. Content is parsed instead of searched as text so formatting changes
-// cannot create a false match.
-func (r *Repository) AvatarStorageKeyInUse(ctx context.Context, tenantID, excludeID int64, key string) (bool, error) {
-	items, err := r.List(ctx, tenantID)
-	if err != nil {
-		return false, err
-	}
-	for _, item := range items {
-		if item.ID == excludeID {
-			continue
-		}
-		var content struct {
-			Profile struct {
-				AvatarStorageKey string `json:"avatarStorageKey"`
-			} `json:"profile"`
-		}
-		if json.Unmarshal([]byte(item.Content), &content) == nil && content.Profile.AvatarStorageKey == key {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func (r *Repository) Update(ctx context.Context, tenantID, id int64, input UpdateInput) (Resume, error) {
@@ -95,10 +88,40 @@ func (r *Repository) Update(ctx context.Context, tenantID, id int64, input Updat
 	if _, err := tx.ExecContext(ctx, `UPDATE resumes SET title = ?, template_id = ?, content = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`, input.Title, input.TemplateID, input.Content, now, id, tenantID); err != nil {
 		return Resume{}, err
 	}
+	oldKey, newKey := avatarKey(current.Content), avatarKey(input.Content)
+	if oldKey != newKey {
+		if oldKey != "" {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM resume_avatar_keys WHERE tenant_id = ? AND avatar_storage_key = ? AND resume_id = ?`, tenantID, oldKey, id); err != nil {
+				return Resume{}, err
+			}
+		}
+		if newKey != "" {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO resume_avatar_keys (tenant_id, avatar_storage_key, resume_id) VALUES (?, ?, ?)`, tenantID, newKey, id); err != nil {
+				return Resume{}, avatarKeyError(err)
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return Resume{}, err
 	}
 	return r.Get(ctx, tenantID, id)
+}
+
+func avatarKey(content string) string {
+	var document struct {
+		Profile struct {
+			AvatarStorageKey string `json:"avatarStorageKey"`
+		} `json:"profile"`
+	}
+	_ = json.Unmarshal([]byte(content), &document)
+	return document.Profile.AvatarStorageKey
+}
+
+func avatarKeyError(err error) error {
+	if strings.Contains(strings.ToLower(err.Error()), "unique") {
+		return ErrAvatarKeyInUse
+	}
+	return err
 }
 
 func (r *Repository) Delete(ctx context.Context, tenantID, id int64) error {
