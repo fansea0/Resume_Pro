@@ -1,5 +1,4 @@
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 interface ResumeMarkdownProps {
   markdown: string;
@@ -20,7 +19,6 @@ export function ResumeMarkdown({ markdown }: ResumeMarkdownProps) {
   return (
     <ReactMarkdown
       allowedElements={allowedElements}
-      remarkPlugins={[remarkGfm]}
       urlTransform={safeUrl}
       components={{
         p: ({ children }) => <p className="resume-markdown-paragraph">{children}</p>,

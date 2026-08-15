@@ -38,6 +38,7 @@ describe('ResumeMarkdown', () => {
     );
 
     expect(container.querySelector('h1, img, table, del, code, input')).not.toBeInTheDocument();
+    expect(container.querySelector('.contains-task-list, .task-list-item')).not.toBeInTheDocument();
   });
 
   it('does not expose javascript URLs in links', () => {
@@ -46,5 +47,11 @@ describe('ResumeMarkdown', () => {
     const link = container.querySelector('a');
     expect(link).toHaveTextContent('危险链接');
     expect(link?.getAttribute('href')).not.toMatch(/^javascript:/i);
+  });
+
+  it('does not expose data URLs in links', () => {
+    const { container } = render(<ResumeMarkdown markdown={'[危险链接](data:text/html;base64,PHNjcmlwdD4=)'} />);
+
+    expect(container.querySelector('a')?.getAttribute('href')).not.toMatch(/^data:/i);
   });
 });
