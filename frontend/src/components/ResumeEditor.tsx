@@ -1,4 +1,5 @@
-import { useId, type ReactNode } from 'react';
+import { useId, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import { uploadResumeAvatar } from '../api/uploads';
 import type {
   CampusItem,
   EducationItem,
@@ -31,7 +32,76 @@ function nextId() {
   return crypto.randomUUID();
 }
 
-function Field({ label, value, onChange, multiline = false, inputId, placeholder, helperText }: {
+interface FieldVisibility {
+  shown: boolean;
+  onToggle: () => void;
+}
+
+function EyeButton({ label, shown, onToggle }: FieldVisibility & { label: string }) {
+  const action = shown ? '隐藏' : '显示';
+  return <button aria-label={`${action}${label}`} className="editor-field__visibility" onClick={onToggle} title={`${action}${label}`} type="button">
+    <svg aria-hidden="true" viewBox="0 0 24 24">{shown ? <><path d="M2.5 12s3.4-5.5 9.5-5.5S21.5 12 21.5 12s-3.4 5.5-9.5 5.5S2.5 12 2.5 12Z" /><circle cx="12" cy="12" r="2.6" /></> : <><path d="m3 3 18 18" /><path d="M10.2 6.8A10.8 10.8 0 0 1 12 6.5c6.1 0 9.5 5.5 9.5 5.5a18.1 18.1 0 0 1-3.2 3.6M6.1 9A18.1 18.1 0 0 0 2.5 12s3.4 5.5 9.5 5.5c.9 0 1.7-.1 2.5-.4" /><path d="M9.8 9.8a3.1 3.1 0 0 0 4.4 4.4" /></> }</svg>
+  </button>;
+}
+
+type IconName = 'add' | 'delete' | 'eye' | 'eyeOff' | 'moveDown' | 'moveUp';
+
+function Icon({ name }: { name: IconName }) {
+  const paths: Record<IconName, ReactNode> = {
+    add: <><path d="M12 5v14M5 12h14" /></>,
+    delete: <><path d="M5 7h14M10 11v5M14 11v5M8 7l1-2h6l1 2M7 7l.8 12h8.4L17 7" /></>,
+    eye: <><path d="M2.5 12s3.4-5.5 9.5-5.5S21.5 12 21.5 12s-3.4 5.5-9.5 5.5S2.5 12 2.5 12Z" /><circle cx="12" cy="12" r="2.6" /></>,
+    eyeOff: <><path d="m3 3 18 18" /><path d="M10.2 6.8A10.8 10.8 0 0 1 12 6.5c6.1 0 9.5 5.5 9.5 5.5a18.1 18.1 0 0 1-3.2 3.6M6.1 9A18.1 18.1 0 0 0 2.5 12s3.4 5.5 9.5 5.5c.9 0 1.7-.1 2.5-.4" /><path d="M9.8 9.8a3.1 3.1 0 0 0 4.4 4.4" /></>,
+    moveDown: <><path d="M12 4v15M7 14l5 5 5-5" /></>,
+    moveUp: <><path d="M12 20V5M7 10l5-5 5 5" /></>,
+  };
+  return <svg aria-hidden="true" viewBox="0 0 24 24">{paths[name]}</svg>;
+}
+
+function IconButton({ icon, label, ...props }: Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & { icon: IconName; label: string }) {
+  return <button aria-label={label} className="editor-icon-button" title={label} type="button" {...props}><Icon name={icon} /></button>;
+}
+
+function AddSectionButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return <button aria-label={`添加${label}区块`} className="editor-add-section" onClick={onClick} title={`添加${label}区块`} type="button"><Icon name="add" /><span>{label}</span></button>;
+}
+
+function ResumePhotoField({ profile, onChange }: { profile: ResumeProfile; onChange: (profile: ResumeProfile) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState('');
+  const initial = profile.fullName.trim().slice(0, 1) || '简';
+
+  const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setError('请选择 JPG、PNG 或 WebP 格式的证件照。');
+      return;
+    }
+    setError('');
+    setIsUploading(true);
+    const avatarStorageKey = profile.avatarStorageKey || nextId();
+    try {
+      const { url } = await uploadResumeAvatar(file, avatarStorageKey);
+      onChange({ ...profile, avatarStorageKey, avatarUrl: url });
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : '头像上传失败，请稍后重试。');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  return <div className="editor-photo-field">
+    <div className="editor-photo-field__preview" aria-label="简历证件照预览">
+      {profile.avatarUrl ? <img alt="简历证件照预览" src={profile.avatarUrl} /> : <span aria-hidden="true">{initial}</span>}
+    </div>
+    <div className="editor-photo-field__content"><div><span className="editor-photo-field__label">简历证件照</span><p>建议使用清晰正面照，按 25 × 35 比例裁切展示。</p></div><button className="editor-photo-field__trigger" disabled={isUploading} onClick={() => inputRef.current?.click()} type="button">{isUploading ? '上传中…' : profile.avatarUrl ? '更换照片' : '上传照片'}</button><input accept="image/png,image/jpeg,image/webp" aria-label="上传简历证件照" className="editor-photo-field__input" onChange={handleFile} ref={inputRef} type="file" />{error ? <p className="editor-photo-field__error" role="alert">{error}</p> : null}</div>
+  </div>;
+}
+
+function Field({ label, value, onChange, multiline = false, inputId, placeholder, helperText, visibility, actions }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
@@ -39,21 +109,19 @@ function Field({ label, value, onChange, multiline = false, inputId, placeholder
   inputId?: string;
   placeholder?: string;
   helperText?: string;
+  visibility?: FieldVisibility;
+  actions?: ReactNode;
 }) {
   const generatedId = useId();
   const id = inputId ?? `field-${label.replace(/\s/g, '-')}-${generatedId}`;
   const hintId = `${id}-hint`;
   return (
     <div className="editor-field">
-      <label htmlFor={id}>{label}</label>
+      <div className="editor-field__label"><label htmlFor={id}>{label}</label>{visibility || actions ? <span className="editor-field__actions">{visibility ? <EyeButton label={label} {...visibility} /> : null}{actions}</span> : null}</div>
       {multiline ? <textarea id={id} value={value} onChange={(event) => onChange(event.target.value)} /> : <input aria-describedby={helperText ? hintId : undefined} id={id} placeholder={placeholder} value={value} onChange={(event) => onChange(event.target.value)} />}
       {helperText ? <span className="editor-field__hint" id={hintId}>{helperText}</span> : null}
     </div>
   );
-}
-
-function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
-  return <label className="editor-toggle"><input checked={checked} onChange={onChange} type="checkbox" /><span aria-hidden="true" className="editor-toggle__control" /><span className="editor-toggle__label">{label}</span></label>;
 }
 
 function DetailsSection({ title, open = false, children }: { title: string; open?: boolean; children: ReactNode }) {
@@ -92,6 +160,7 @@ export function ResumeEditor({ document, onChange }: ResumeEditorProps) {
   return (
     <form className="resume-editor" onSubmit={(event) => event.preventDefault()}>
       <DetailsSection open title="基本信息">
+        <ResumePhotoField profile={document.profile} onChange={(profile) => onChange({ ...document, profile })} />
         <div className="editor-fields editor-fields--two">
           <Field label="姓名" value={document.profile.fullName} onChange={(value) => updateProfile('fullName', value)} />
           <Field label="求职方向" value={document.profile.headline} onChange={(value) => updateProfile('headline', value)} />
@@ -103,7 +172,7 @@ export function ResumeEditor({ document, onChange }: ResumeEditorProps) {
       </DetailsSection>
 
       <DetailsSection title="添加区块">
-        <div className="editor-section__actions">{(Object.keys(sectionLabels) as ResumeSectionType[]).map((type) => <button key={type} onClick={() => addSection(type)} type="button">添加{sectionLabels[type]}区块</button>)}</div>
+        <div className="editor-add-section-grid">{(Object.keys(sectionLabels) as ResumeSectionType[]).map((type) => <AddSectionButton key={type} label={sectionLabels[type]} onClick={() => addSection(type)} />)}</div>
       </DetailsSection>
 
       {document.sections.map((section, index) => <SectionCard
@@ -133,10 +202,10 @@ function SectionCard({ section, index, sectionCount, onUpdate, onMove, onRemove 
     <div className="editor-card__heading">
       <Field label={`区块标题 ${index + 1}`} value={section.title} onChange={(title) => update((current) => ({ ...current, title }))} />
       <div className="editor-section__actions">
-        <button aria-label={`上移 ${label}`} disabled={index === 0} onClick={() => onMove(index, -1)} type="button">上移</button>
-        <button aria-label={`下移 ${label}`} disabled={index === sectionCount - 1} onClick={() => onMove(index, 1)} type="button">下移</button>
-        <button aria-label={`${section.visible ? '隐藏' : '显示'} ${label}`} onClick={() => update((current) => ({ ...current, visible: !current.visible }))} type="button">{section.visible ? '隐藏' : '显示'}</button>
-        <button aria-label={`删除区块 ${label}`} onClick={() => onRemove(section.id)} type="button">删除</button>
+        <IconButton disabled={index === 0} icon="moveUp" label={`上移 ${label}`} onClick={() => onMove(index, -1)} />
+        <IconButton disabled={index === sectionCount - 1} icon="moveDown" label={`下移 ${label}`} onClick={() => onMove(index, 1)} />
+        <IconButton icon={section.visible ? 'eyeOff' : 'eye'} label={`${section.visible ? '隐藏' : '显示'} ${label}`} onClick={() => update((current) => ({ ...current, visible: !current.visible }))} />
+        <IconButton icon="delete" label={`删除区块 ${label}`} onClick={() => onRemove(section.id)} />
       </div>
     </div>
     {section.type === 'summary' ? <Field label="个人总结 Markdown" multiline value={section.content.markdown} onChange={(markdown) => update((current) => ({ ...current, content: { markdown } } as ResumeSection))} /> : null}
@@ -155,56 +224,44 @@ function ExperienceItemsEditor({ section, update }: { section: Extract<ResumeSec
   const itemLabel = section.type === 'work' ? '工作' : '实习';
   const change = (id: string, fn: (item: ExperienceItem) => ExperienceItem) => update((current) => ({ ...section, content: { items: updateItems(section.content.items, id, fn) } }));
   const add = () => update((current) => ({ ...section, content: { items: [...section.content.items, { id: nextId(), company: '', role: '', startDate: '', endDate: '', location: '', achievements: '', highlightsMarkdown: '', showLocation: true, showAchievements: true }] } }));
-  return <><div className="editor-section__actions"><button onClick={add} type="button">添加{itemLabel}条目</button></div>{section.content.items.map((item, index) => <div className="editor-card" key={item.id}>
+  return <><div className="editor-section__actions"><IconButton icon="add" label={`添加${itemLabel}条目`} onClick={add} /></div>{section.content.items.map((item, index) => <div className="editor-card" key={item.id}>
     <div className="editor-fields editor-fields--two">
       <Field label={`公司 ${index + 1}`} value={item.company} onChange={(company) => change(item.id, (value) => ({ ...value, company }))} />
       <Field label={`职位 ${index + 1}`} value={item.role} onChange={(role) => change(item.id, (value) => ({ ...value, role }))} />
       <Field label={`开始时间 ${index + 1}`} value={item.startDate} onChange={(startDate) => change(item.id, (value) => ({ ...value, startDate }))} />
       <Field label={`结束时间 ${index + 1}`} value={item.endDate} onChange={(endDate) => change(item.id, (value) => ({ ...value, endDate }))} />
-      <Field label={`地点 ${index + 1}`} helperText="填写城市、区域或办公地点；可在下方选择是否显示在简历中。" placeholder="例如：武汉 · 光谷" value={item.location} onChange={(location) => change(item.id, (value) => ({ ...value, location }))} />
-      <Field label={`业绩贡献 ${index + 1}`} value={item.achievements} onChange={(achievements) => change(item.id, (value) => ({ ...value, achievements }))} />
+      <Field label={`地点 ${index + 1}`} placeholder="例如：武汉 · 光谷" value={item.location} visibility={{ shown: item.showLocation, onToggle: () => change(item.id, (value) => ({ ...value, showLocation: !value.showLocation })) }} onChange={(location) => change(item.id, (value) => ({ ...value, location }))} />
     </div>
+    <Field label={`业绩贡献 ${index + 1}`} multiline value={item.achievements} visibility={{ shown: item.showAchievements, onToggle: () => change(item.id, (value) => ({ ...value, showAchievements: !value.showAchievements })) }} onChange={(achievements) => change(item.id, (value) => ({ ...value, achievements }))} />
     <Field label={`列表说明 ${index + 1}`} multiline value={item.highlightsMarkdown} onChange={(highlightsMarkdown) => change(item.id, (value) => ({ ...value, highlightsMarkdown }))} />
-    <fieldset className="editor-display-settings">
-      <legend>展示设置 {index + 1}</legend>
-      <p>控制这些补充信息是否出现在简历中。</p>
-      <div className="editor-display-settings__options">
-        <Toggle label={`显示地点 ${index + 1}`} checked={item.showLocation} onChange={() => change(item.id, (value) => ({ ...value, showLocation: !value.showLocation }))} />
-        <Toggle label={`显示业绩贡献 ${index + 1}`} checked={item.showAchievements} onChange={() => change(item.id, (value) => ({ ...value, showAchievements: !value.showAchievements }))} />
-      </div>
-    </fieldset>
-    <button aria-label={`删除${itemLabel}条目 ${index + 1}`} onClick={() => update((current) => ({ ...section, content: { items: section.content.items.filter((value) => value.id !== item.id) } }))} type="button">删除</button>
+    <IconButton icon="delete" label={`删除${itemLabel}条目 ${index + 1}`} onClick={() => update((current) => ({ ...section, content: { items: section.content.items.filter((value) => value.id !== item.id) } }))} />
   </div>)}</>;
 }
 
 function ProjectItemsEditor({ section, update }: { section: Extract<ResumeSection, { type: 'project' }>; update: (fn: (s: ResumeSection) => ResumeSection) => void }) {
   const change = (id: string, fn: (item: ProjectItem) => ProjectItem) => update(() => ({ ...section, content: { items: updateItems(section.content.items, id, fn) } }));
   const add = () => update(() => ({ ...section, content: { items: [...section.content.items, { id: nextId(), name: '', role: '', startDate: '', endDate: '', location: '', link: '', introduction: '', achievements: '', highlightsMarkdown: '', showLocation: true, showLink: true, showIntroduction: true, showAchievements: true }] } }));
-  return <><div className="editor-section__actions"><button onClick={add} type="button">添加项目条目</button></div>{section.content.items.map((item, index) => <div className="editor-card" key={item.id}>
+  return <><div className="editor-section__actions"><IconButton icon="add" label="添加项目条目" onClick={add} /></div>{section.content.items.map((item, index) => <div className="editor-card" key={item.id}>
     <div className="editor-fields editor-fields--two">
       <Field label={`项目名称 ${index + 1}`} value={item.name} onChange={(name) => change(item.id, (value) => ({ ...value, name }))} />
       <Field label={`项目角色 ${index + 1}`} value={item.role} onChange={(role) => change(item.id, (value) => ({ ...value, role }))} />
       <Field label={`开始时间 ${index + 1}`} value={item.startDate} onChange={(startDate) => change(item.id, (value) => ({ ...value, startDate }))} />
       <Field label={`结束时间 ${index + 1}`} value={item.endDate} onChange={(endDate) => change(item.id, (value) => ({ ...value, endDate }))} />
-      <Field label={`地点 ${index + 1}`} value={item.location} onChange={(location) => change(item.id, (value) => ({ ...value, location }))} />
-      <Field label={`项目链接 ${index + 1}`} value={item.link} onChange={(link) => change(item.id, (value) => ({ ...value, link }))} />
+      <Field label={`地点 ${index + 1}`} value={item.location} visibility={{ shown: item.showLocation, onToggle: () => change(item.id, (value) => ({ ...value, showLocation: !value.showLocation })) }} onChange={(location) => change(item.id, (value) => ({ ...value, location }))} />
+      <Field label={`项目链接 ${index + 1}`} value={item.link} visibility={{ shown: item.showLink, onToggle: () => change(item.id, (value) => ({ ...value, showLink: !value.showLink })) }} onChange={(link) => change(item.id, (value) => ({ ...value, link }))} />
     </div>
-    <Field label={`项目介绍 ${index + 1}`} multiline value={item.introduction} onChange={(introduction) => change(item.id, (value) => ({ ...value, introduction }))} />
-    <Field label={`项目成绩 ${index + 1}`} value={item.achievements} onChange={(achievements) => change(item.id, (value) => ({ ...value, achievements }))} />
+    <Field label={`项目介绍 ${index + 1}`} multiline value={item.introduction} visibility={{ shown: item.showIntroduction, onToggle: () => change(item.id, (value) => ({ ...value, showIntroduction: !value.showIntroduction })) }} onChange={(introduction) => change(item.id, (value) => ({ ...value, introduction }))} />
+    <Field label={`项目成绩 ${index + 1}`} multiline value={item.achievements} visibility={{ shown: item.showAchievements, onToggle: () => change(item.id, (value) => ({ ...value, showAchievements: !value.showAchievements })) }} onChange={(achievements) => change(item.id, (value) => ({ ...value, achievements }))} />
     <Field label={`列表说明 ${index + 1}`} multiline value={item.highlightsMarkdown} onChange={(highlightsMarkdown) => change(item.id, (value) => ({ ...value, highlightsMarkdown }))} />
-    <Toggle label={`显示地点 ${index + 1}`} checked={item.showLocation} onChange={() => change(item.id, (value) => ({ ...value, showLocation: !value.showLocation }))} />
-    <Toggle label={`显示项目链接 ${index + 1}`} checked={item.showLink} onChange={() => change(item.id, (value) => ({ ...value, showLink: !value.showLink }))} />
-    <Toggle label={`显示项目介绍 ${index + 1}`} checked={item.showIntroduction} onChange={() => change(item.id, (value) => ({ ...value, showIntroduction: !value.showIntroduction }))} />
-    <Toggle label={`显示项目成绩 ${index + 1}`} checked={item.showAchievements} onChange={() => change(item.id, (value) => ({ ...value, showAchievements: !value.showAchievements }))} />
-    <button aria-label={`删除项目条目 ${index + 1}`} onClick={() => update((current) => {
+    <IconButton icon="delete" label={`删除项目条目 ${index + 1}`} onClick={() => update((current) => {
       const currentSection = current as typeof section;
       return { ...currentSection, content: { items: currentSection.content.items.filter((value) => value.id !== item.id) } };
-    })} type="button">删除</button>
+    })} />
   </div>)}</>;
 }
 
-function SimpleItemsEditor<T extends { id: string }>({ addLabel, items, addItem, removeItem, children }: { addLabel: string; items: T[]; addItem: () => void; removeItem: (id: string) => void; children: (item: T, index: number) => ReactNode }) {
-  return <><div className="editor-section__actions"><button onClick={addItem} type="button">{addLabel}</button></div>{items.map((item, index) => <div className="editor-card" key={item.id}>{children(item, index)}<button aria-label={`删除条目 ${index + 1}`} onClick={() => removeItem(item.id)} type="button">删除</button></div>)}</>;
+function SimpleItemsEditor<T extends { id: string }>({ addLabel, items, addItem, removeItem, children, itemsClassName, cardClassName }: { addLabel: string; items: T[]; addItem: () => void; removeItem: (id: string) => void; children: (item: T, index: number) => ReactNode; itemsClassName?: string; cardClassName?: string }) {
+  return <><div className="editor-section__actions"><IconButton icon="add" label={addLabel} onClick={addItem} /></div><div className={itemsClassName}>{items.map((item, index) => <div className={`editor-card${cardClassName ? ` ${cardClassName}` : ''}`} key={item.id}>{children(item, index)}<IconButton icon="delete" label={`删除条目 ${index + 1}`} onClick={() => removeItem(item.id)} /></div>)}</div></>;
 }
 
 function EducationItemsEditor({ section, update }: { section: Extract<ResumeSection, { type: 'education' }>; update: (fn: (s: ResumeSection) => ResumeSection) => void }) {
@@ -214,7 +271,12 @@ function EducationItemsEditor({ section, update }: { section: Extract<ResumeSect
 
 function SkillsItemsEditor({ section, update }: { section: Extract<ResumeSection, { type: 'skills' }>; update: (fn: (s: ResumeSection) => ResumeSection) => void }) {
   const change = (id: string, fn: (item: SkillItem) => SkillItem) => update(() => ({ ...section, content: { items: updateItems(section.content.items, id, fn) } }));
-  return <SimpleItemsEditor addLabel="添加技能" items={section.content.items} addItem={() => update(() => ({ ...section, content: { items: [...section.content.items, { id: nextId(), name: '', note: '' }] } }))} removeItem={(id) => update(() => ({ ...section, content: { items: section.content.items.filter((item) => item.id !== id) } }))}>{(item, index) => <><Field label={`技能 ${index + 1}`} value={item.name} onChange={(name) => change(item.id, (value) => ({ ...value, name }))} /><Field label={`备注 ${index + 1}`} value={item.note} onChange={(note) => change(item.id, (value) => ({ ...value, note }))} /></>}</SimpleItemsEditor>;
+  const remove = (id: string) => update(() => ({ ...section, content: { items: section.content.items.filter((item) => item.id !== id) } }));
+  const add = () => update(() => ({ ...section, content: { items: [...section.content.items, { id: nextId(), name: '', note: '' }] } }));
+  return <><div className="editor-section__actions"><IconButton icon="add" label="添加技能" onClick={add} /></div><div className="editor-item-grid editor-item-grid--skills">{section.content.items.map((item, index) => <div className="editor-card editor-card--skill" key={item.id}>
+    <Field actions={<IconButton icon="delete" label={`删除技能 ${index + 1}`} onClick={() => remove(item.id)} />} label={`技能 ${index + 1}`} value={item.name} onChange={(name) => change(item.id, (value) => ({ ...value, name }))} />
+    <Field label={`备注 ${index + 1}`} value={item.note} onChange={(note) => change(item.id, (value) => ({ ...value, note }))} />
+  </div>)}</div></>;
 }
 
 function CampusItemsEditor({ section, update }: { section: Extract<ResumeSection, { type: 'campus' }>; update: (fn: (s: ResumeSection) => ResumeSection) => void }) {

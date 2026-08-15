@@ -1,10 +1,13 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ResumeEditor } from './ResumeEditor';
 import { createEmptyResumeDocument, createWorkSection } from '../types/resume';
+import { uploadResumeAvatar } from '../api/uploads';
 
-afterEach(cleanup);
+vi.mock('../api/uploads', () => ({ uploadResumeAvatar: vi.fn() }));
+
+afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 function latestDocument(onChange: ReturnType<typeof vi.fn>) {
   return onChange.mock.calls[onChange.mock.calls.length - 1]?.[0];
@@ -16,6 +19,40 @@ function StatefulEditor({ document, onChange }: { document: ReturnType<typeof cr
 }
 
 describe('ResumeEditor', () => {
+  it('uploads a 5:7 resume photo, initializes its key, and reuses the key when replacing it', async () => {
+    const onChange = vi.fn();
+    const upload = vi.mocked(uploadResumeAvatar);
+    upload.mockResolvedValueOnce({ url: '/uploads/avatars/first.webp' }).mockResolvedValueOnce({ url: '/uploads/avatars/second.webp' });
+    render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);
+    const input = screen.getByLabelText('上传简历证件照');
+
+    fireEvent.change(input, { target: { files: [new File(['first'], 'first.webp', { type: 'image/webp' })] } });
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    const stored = latestDocument(onChange).profile.avatarStorageKey;
+    expect(stored).toMatch(/^[0-9a-f-]{36}$/);
+    expect(latestDocument(onChange).profile.avatarUrl).toBe('/uploads/avatars/first.webp');
+    expect(screen.getByAltText('简历证件照预览')).toHaveAttribute('src', '/uploads/avatars/first.webp');
+
+    fireEvent.change(input, { target: { files: [new File(['second'], 'second.webp', { type: 'image/webp' })] } });
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
+    expect(upload.mock.calls[1][1]).toBe(stored);
+  });
+
+  it('keeps the profile unchanged and explains invalid or failed photo uploads', async () => {
+    const onChange = vi.fn();
+    const upload = vi.mocked(uploadResumeAvatar);
+    upload.mockRejectedValueOnce(new Error('图片内容无法识别。'));
+    render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);
+    const input = screen.getByLabelText('上传简历证件照');
+
+    fireEvent.change(input, { target: { files: [new File(['bad'], 'bad.gif', { type: 'image/gif' })] } });
+    expect(screen.getByRole('alert')).toHaveTextContent('请选择 JPG、PNG 或 WebP 格式的证件照。');
+    expect(upload).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { files: [new File(['bad'], 'bad.png', { type: 'image/png' })] } });
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('图片内容无法识别。'));
+    expect(onChange).not.toHaveBeenCalled();
+  });
   it('adds fully initialized work and internship sections', () => {
     const onChange = vi.fn();
     render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);
@@ -58,14 +95,17 @@ describe('ResumeEditor', () => {
 
     fireEvent.change(screen.getByLabelText('公司 1'), { target: { value: 'Acme' } });
     expect(latestDocument(onChange).sections[0].content.items[0].company).toBe('Acme');
-    fireEvent.click(screen.getByLabelText('显示地点 1'));
+    fireEvent.click(screen.getByRole('button', { name: '隐藏地点 1' }));
     expect(latestDocument(onChange).sections[0].content.items[0].showLocation).toBe(false);
     fireEvent.change(screen.getByLabelText('地点 1'), { target: { value: '武汉 · 光谷' } });
     expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ location: '武汉 · 光谷', showLocation: false });
     expect(screen.getByLabelText('地点 1')).toHaveAttribute('placeholder', '例如：武汉 · 光谷');
-    expect(screen.getByRole('group', { name: '展示设置 1' })).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText('显示业绩贡献 1'));
-    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ showLocation: false, showAchievements: false });
+    expect(screen.queryByText('填写城市、区域或办公地点；可在下方选择是否显示在简历中。')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: '展示设置 1' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '显示地点 1' }));
+    expect(screen.getByRole('button', { name: '隐藏地点 1' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '隐藏业绩贡献 1' }));
+    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ showLocation: true, showAchievements: false });
   });
 
   it('initializes and edits all project optional field switches', () => {
@@ -76,7 +116,7 @@ describe('ResumeEditor', () => {
 
     const project = latestDocument(onChange).sections[0].content.items[0];
     expect(project).toMatchObject({ showLocation: true, showLink: true, showIntroduction: true, showAchievements: true });
-    ['显示地点 1', '显示项目链接 1', '显示项目介绍 1', '显示项目成绩 1'].forEach((label) => fireEvent.click(screen.getByLabelText(label)));
+    ['隐藏地点 1', '隐藏项目链接 1', '隐藏项目介绍 1', '隐藏项目成绩 1'].forEach((label) => fireEvent.click(screen.getByRole('button', { name: label })));
     expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ showLocation: false, showLink: false, showIntroduction: false, showAchievements: false });
   });
 
@@ -131,8 +171,10 @@ describe('ResumeEditor', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '添加专业技能区块' }));
     fireEvent.click(screen.getByRole('button', { name: '添加技能' }));
+    expect(screen.getByRole('button', { name: '删除技能 1' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('备注 1'), { target: { value: '熟悉' } });
     expect(latestDocument(onChange).sections[1].content.items[0]).toMatchObject({ name: '', note: '熟悉' });
+    expect(document.querySelector('.editor-item-grid--skills')).toBeInTheDocument();
   });
 
   it('updates summary markdown', () => {

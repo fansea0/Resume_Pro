@@ -15,6 +15,8 @@ const sampleResume: ResumeDocument = {
     phone: '13800000000',
     location: '上海',
     website: 'https://example.com',
+    avatarUrl: '/uploads/avatars/test.webp',
+    avatarStorageKey: '123e4567-e89b-42d3-a456-426614174000',
   },
   // Deliberately non-standard: every template must honor this stored order.
   sections: [
@@ -47,6 +49,11 @@ describe('templateRegistry', () => {
 
   it.each(templateRegistry)('defines a static preview cover for $id', (template) => {
     expect(template.previewImage).toBe(`/template-previews/${template.id}.png`);
+  });
+
+  it.each(templateRegistry)('renders the resume photo when one is provided in $id', ({ Renderer }) => {
+    render(<Renderer document={sampleResume} />);
+    expect(screen.getByAltText('林晓的简历照片')).toHaveAttribute('src', '/uploads/avatars/test.webp');
   });
 
   it.each(templateRegistry)('defines Chinese job tags and a style description for $id', (template) => {
