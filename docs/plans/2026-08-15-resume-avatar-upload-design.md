@@ -27,7 +27,7 @@ Command: `cd backend && go test ./internal/files`
 
 **Step 3: Write minimal implementation**
 
-Define `FileStorage` with `Store(ctx, owner, key, File) (StoredFile, error)`; implement local storage with owner/key-isolated paths, atomic replacement, a bounded per-owner image count, and a public URL prefix.
+Define `FileStorage` with `Store(ctx, owner, key, File) (StoredFile, error)`, `Retain(ctx, owner, key) error`, and `Release(ctx, owner, key) error`; implement local storage with owner/key-isolated paths, atomic replacement, a bounded per-owner image count, and a public URL prefix. Uploads begin as expiring temporary files, are retained only when their resume is saved, and are released when the avatar is replaced or the resume is deleted.
 
 **Step 4: Run test — confirm it passes**
 
@@ -55,7 +55,7 @@ Command: `cd backend && go test ./internal/httpapi -run AvatarUpload`
 
 **Step 3: Write minimal implementation**
 
-Register `POST /api/uploads/avatar`, require an opaque UUID `key` form field, limit multipart body to 5 MiB, verify decoded image type/dimensions, invoke `FileStorage` with the authenticated user owner and key, and return `{ "url": "..." }`. Serve only individual avatar files, never a browsable upload directory.
+Register `POST /api/uploads/avatar`, require an opaque UUID `key` form field, limit multipart body to 5 MiB, verify decoded image type/dimensions, invoke `FileStorage` with the authenticated user owner and key, and return `{ "url": "..." }`. Return a client error when the temporary-avatar quota is full. Resume create/update/delete retain or release storage keys after successful persistence. Serve only individual avatar files, never a browsable upload directory.
 
 **Step 4: Run test — confirm it passes**
 
