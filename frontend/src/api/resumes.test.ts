@@ -101,12 +101,12 @@ describe('documentFromStored', () => {
     expect(() => documentFromStored({ ...stored({}), content: '{' })).toThrow('invalid stored resume content');
   });
 
-  it('requires avatarUrl in v2 content while legacy documents migrate it as empty', () => {
+  it('upgrades earlier v2 content without avatarUrl while legacy documents migrate it as empty', () => {
     const document = createSampleResumeDocument();
     const withoutAvatarUrl = { ...document, profile: { ...document.profile } };
     delete (withoutAvatarUrl.profile as Partial<typeof document.profile>).avatarUrl;
 
-    expect(() => documentFromStored(stored(withoutAvatarUrl))).toThrow('invalid stored resume content');
+    expect(documentFromStored(stored(withoutAvatarUrl)).profile.avatarUrl).toBe('');
   });
 
   it('rejects unknown outer template identifiers', () => {

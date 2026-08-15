@@ -148,6 +148,16 @@ function isResumeContent(value: unknown): value is ResumeDocument {
     && value.sections.every(isResumeSection);
 }
 
+function upgradeV2AvatarUrl(value: unknown): unknown {
+  if (!isRecord(value) || value.schemaVersion !== 2 || !isRecord(value.profile)) return value;
+  if (Object.prototype.hasOwnProperty.call(value.profile, 'avatarUrl')) return value;
+
+  return {
+    ...value,
+    profile: { ...value.profile, avatarUrl: '' },
+  };
+}
+
 function isLegacyExperience(value: unknown): value is Record<string, unknown> {
   return isRecord(value)
     && hasStringFields(value, ['id', 'company', 'role', 'startDate', 'endDate'])
@@ -278,7 +288,8 @@ export function documentFromStored(resume: StoredResume): ResumeDocument {
   }
 
   if (!isTemplateId(resume.templateId)) throw new Error('invalid stored resume content');
-  const document = isResumeContent(content) ? content : migrateLegacyDocument(content);
+  const upgradedContent = upgradeV2AvatarUrl(content);
+  const document = isResumeContent(upgradedContent) ? upgradedContent : migrateLegacyDocument(content);
   if (!document) throw new Error('invalid stored resume content');
 
   return { ...document, title: resume.title, templateId: resume.templateId };
