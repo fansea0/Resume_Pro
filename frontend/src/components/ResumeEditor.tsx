@@ -31,25 +31,29 @@ function nextId() {
   return crypto.randomUUID();
 }
 
-function Field({ label, value, onChange, multiline = false, inputId }: {
+function Field({ label, value, onChange, multiline = false, inputId, placeholder, helperText }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   multiline?: boolean;
   inputId?: string;
+  placeholder?: string;
+  helperText?: string;
 }) {
   const generatedId = useId();
   const id = inputId ?? `field-${label.replace(/\s/g, '-')}-${generatedId}`;
+  const hintId = `${id}-hint`;
   return (
-    <label className="editor-field" htmlFor={id}>
-      <span>{label}</span>
-      {multiline ? <textarea id={id} value={value} onChange={(event) => onChange(event.target.value)} /> : <input id={id} value={value} onChange={(event) => onChange(event.target.value)} />}
-    </label>
+    <div className="editor-field">
+      <label htmlFor={id}>{label}</label>
+      {multiline ? <textarea id={id} value={value} onChange={(event) => onChange(event.target.value)} /> : <input aria-describedby={helperText ? hintId : undefined} id={id} placeholder={placeholder} value={value} onChange={(event) => onChange(event.target.value)} />}
+      {helperText ? <span className="editor-field__hint" id={hintId}>{helperText}</span> : null}
+    </div>
   );
 }
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
-  return <label className="editor-field"><input checked={checked} onChange={onChange} type="checkbox" /> <span>{label}</span></label>;
+  return <label className="editor-toggle"><input checked={checked} onChange={onChange} type="checkbox" /><span aria-hidden="true" className="editor-toggle__control" /><span className="editor-toggle__label">{label}</span></label>;
 }
 
 function DetailsSection({ title, open = false, children }: { title: string; open?: boolean; children: ReactNode }) {
@@ -157,12 +161,18 @@ function ExperienceItemsEditor({ section, update }: { section: Extract<ResumeSec
       <Field label={`职位 ${index + 1}`} value={item.role} onChange={(role) => change(item.id, (value) => ({ ...value, role }))} />
       <Field label={`开始时间 ${index + 1}`} value={item.startDate} onChange={(startDate) => change(item.id, (value) => ({ ...value, startDate }))} />
       <Field label={`结束时间 ${index + 1}`} value={item.endDate} onChange={(endDate) => change(item.id, (value) => ({ ...value, endDate }))} />
-      <Field label={`地点 ${index + 1}`} value={item.location} onChange={(location) => change(item.id, (value) => ({ ...value, location }))} />
+      <Field label={`地点 ${index + 1}`} helperText="填写城市、区域或办公地点；填写后会自动显示在简历中。" placeholder="例如：武汉 · 光谷" value={item.location} onChange={(location) => change(item.id, (value) => ({ ...value, location, showLocation: location.trim() ? true : value.showLocation }))} />
       <Field label={`业绩贡献 ${index + 1}`} value={item.achievements} onChange={(achievements) => change(item.id, (value) => ({ ...value, achievements }))} />
     </div>
     <Field label={`列表说明 ${index + 1}`} multiline value={item.highlightsMarkdown} onChange={(highlightsMarkdown) => change(item.id, (value) => ({ ...value, highlightsMarkdown }))} />
-    <Toggle label={`显示地点 ${index + 1}`} checked={item.showLocation} onChange={() => change(item.id, (value) => ({ ...value, showLocation: !value.showLocation }))} />
-    <Toggle label={`显示业绩贡献 ${index + 1}`} checked={item.showAchievements} onChange={() => change(item.id, (value) => ({ ...value, showAchievements: !value.showAchievements }))} />
+    <fieldset className="editor-display-settings">
+      <legend>展示设置 {index + 1}</legend>
+      <p>控制这些补充信息是否出现在简历中。</p>
+      <div className="editor-display-settings__options">
+        <Toggle label={`显示地点 ${index + 1}`} checked={item.showLocation} onChange={() => change(item.id, (value) => ({ ...value, showLocation: !value.showLocation }))} />
+        <Toggle label={`显示业绩贡献 ${index + 1}`} checked={item.showAchievements} onChange={() => change(item.id, (value) => ({ ...value, showAchievements: !value.showAchievements }))} />
+      </div>
+    </fieldset>
     <button aria-label={`删除${itemLabel}条目 ${index + 1}`} onClick={() => update((current) => ({ ...section, content: { items: section.content.items.filter((value) => value.id !== item.id) } }))} type="button">删除</button>
   </div>)}</>;
 }
