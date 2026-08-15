@@ -189,7 +189,7 @@ func TestProtectedResumeRequiresSessionAndHidesCrossTenantResume(t *testing.T) {
 	}
 
 	first := registerAuthUser(t, router, "first@example.com")
-	created := authJSONRequest(t, router, http.MethodPost, "/api/resumes", `{"title":"Private","templateId":"minimal","content":{}}`, first)
+	created := authJSONRequest(t, router, http.MethodPost, "/api/resumes", validResumeRequest("Private", "minimal"), first)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
 	}
@@ -200,7 +200,7 @@ func TestProtectedResumeRequiresSessionAndHidesCrossTenantResume(t *testing.T) {
 
 	second := registerAuthUser(t, router, "second@example.com")
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
-		response := authJSONRequest(t, router, method, "/api/resumes/"+jsonNumber(owned.ID), `{"title":"Stolen","templateId":"minimal","content":{}}`, second)
+		response := authJSONRequest(t, router, method, "/api/resumes/"+jsonNumber(owned.ID), validResumeRequest("Stolen", "minimal"), second)
 		if response.Code != http.StatusNotFound {
 			t.Errorf("cross-tenant %s status = %d: %s", method, response.Code, response.Body.String())
 		}

@@ -126,8 +126,137 @@ func validInput(input resumeInput) bool {
 	if strings.TrimSpace(input.Title) == "" || strings.TrimSpace(input.TemplateID) == "" || len(input.Content) == 0 {
 		return false
 	}
-	var object map[string]json.RawMessage
-	return json.Unmarshal(input.Content, &object) == nil && object != nil
+	return validResumeContent(input.Content)
+}
+
+var validTemplateIDs = map[string]struct{}{
+	"minimal": {}, "business": {}, "creative": {}, "tech": {},
+	"editorial": {}, "redline": {}, "violet": {}, "azure-chronicle": {},
+}
+
+// validResumeContent mirrors the v2 ResumeDocument contract used by the editor.
+// Existing v1 content remains readable so the frontend can migrate it, but all
+// newly-created or updated documents must use this fixed storage format.
+func validResumeContent(raw json.RawMessage) bool {
+	var document map[string]any
+	if json.Unmarshal(raw, &document) != nil || document == nil {
+		return false
+	}
+	if schemaVersion, ok := document["schemaVersion"].(float64); !ok || schemaVersion != 2 {
+		return false
+	}
+	if !hasStringFields(document, "title", "templateId") || !validTemplateID(document["templateId"]) {
+		return false
+	}
+	profile, ok := document["profile"].(map[string]any)
+	if !ok || !hasStringFields(profile, "fullName", "headline", "email", "phone", "location", "website") {
+		return false
+	}
+	sections, ok := document["sections"].([]any)
+	if !ok {
+		return false
+	}
+	for _, section := range sections {
+		if !validResumeSection(section) {
+			return false
+		}
+	}
+	return true
+}
+
+func validTemplateID(value any) bool {
+	templateID, ok := value.(string)
+	if !ok {
+		return false
+	}
+	_, ok = validTemplateIDs[templateID]
+	return ok
+}
+
+func validResumeSection(value any) bool {
+	section, ok := value.(map[string]any)
+	if !ok || !hasStringFields(section, "id", "title", "type") || !hasBooleanField(section, "visible") {
+		return false
+	}
+	content, ok := section["content"].(map[string]any)
+	if !ok {
+		return false
+	}
+	switch section["type"] {
+	case "summary":
+		return hasStringFields(content, "markdown")
+	case "work", "internship":
+		return validItems(content, validExperienceItem)
+	case "project":
+		return validItems(content, validProjectItem)
+	case "education":
+		return validItems(content, validEducationItem)
+	case "skills":
+		return validItems(content, validSkillItem)
+	case "campus":
+		return validItems(content, validCampusItem)
+	case "honours":
+		return validItems(content, validHonourItem)
+	default:
+		return false
+	}
+}
+
+func validItems(content map[string]any, validItem func(any) bool) bool {
+	items, ok := content["items"].([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range items {
+		if !validItem(item) {
+			return false
+		}
+	}
+	return true
+}
+
+func validExperienceItem(value any) bool {
+	item, ok := value.(map[string]any)
+	return ok && hasStringFields(item, "id", "company", "role", "startDate", "endDate", "location", "achievements", "highlightsMarkdown") && hasBooleanField(item, "showLocation") && hasBooleanField(item, "showAchievements")
+}
+
+func validProjectItem(value any) bool {
+	item, ok := value.(map[string]any)
+	return ok && hasStringFields(item, "id", "name", "role", "startDate", "endDate", "location", "link", "introduction", "achievements", "highlightsMarkdown") && hasBooleanField(item, "showLocation") && hasBooleanField(item, "showLink") && hasBooleanField(item, "showIntroduction") && hasBooleanField(item, "showAchievements")
+}
+
+func validEducationItem(value any) bool {
+	item, ok := value.(map[string]any)
+	return ok && hasStringFields(item, "id", "school", "startDate", "endDate", "degree", "college", "major")
+}
+
+func validSkillItem(value any) bool {
+	item, ok := value.(map[string]any)
+	return ok && hasStringFields(item, "id", "name", "note")
+}
+
+func validCampusItem(value any) bool {
+	item, ok := value.(map[string]any)
+	return ok && hasStringFields(item, "id", "name", "role", "highlightsMarkdown")
+}
+
+func validHonourItem(value any) bool {
+	item, ok := value.(map[string]any)
+	return ok && hasStringFields(item, "id", "name")
+}
+
+func hasStringFields(value map[string]any, fields ...string) bool {
+	for _, field := range fields {
+		if _, ok := value[field].(string); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func hasBooleanField(value map[string]any, field string) bool {
+	_, ok := value[field].(bool)
+	return ok
 }
 
 func routeID(context *gin.Context) (int64, bool) {
