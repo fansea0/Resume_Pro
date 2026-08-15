@@ -114,4 +114,45 @@ describe('ResumeSections', () => {
     expect(screen.getByTestId('template-honours')).toHaveClass('template-honours');
     expect(within(screen.getByTestId('template-honours')).getByText('一等奖学金')).toBeInTheDocument();
   });
+
+  it('允许模板覆盖 section 和 entry 容器', () => {
+    const { container } = render(
+      <ResumeSections
+        sections={[sections[3]]}
+        slots={{
+          section: ({ children, section }) => <div data-section-type={section.type}>{children}</div>,
+          entry: ({ children, section }) => <div data-entry-section-type={section.type}>{children}</div>,
+        }}
+      />,
+    );
+
+    expect(container.querySelector('[data-section-type="work"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-entry-section-type="work"]')).toHaveTextContent('示例公司');
+  });
+
+  it.each(['javascript:alert(1)', 'data:text/html;base64,PHNjcmlwdD4=', ''])('不渲染不安全的项目链接：%s', (link) => {
+    const project = sections[1];
+    if (project.type !== 'project') throw new Error('test fixture must be a project section');
+    const { container } = render(
+      <ResumeSections sections={[{
+        ...project,
+        content: { items: [{ ...project.content.items[0], link, showLink: true }] },
+      }]} />,
+    );
+
+    expect(container.querySelector('a')).not.toBeInTheDocument();
+  });
+
+  it('使用安全的项目链接', () => {
+    const project = sections[1];
+    if (project.type !== 'project') throw new Error('test fixture must be a project section');
+    render(
+      <ResumeSections sections={[{
+        ...project,
+        content: { items: [{ ...project.content.items[0], showLink: true }] },
+      }]} />,
+    );
+
+    expect(screen.getByRole('link', { name: 'https://example.com' })).toHaveAttribute('href', 'https://example.com');
+  });
 });

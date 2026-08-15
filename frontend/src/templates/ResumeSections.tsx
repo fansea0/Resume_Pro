@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from 'react';
-import { ResumeMarkdown } from '../components/ResumeMarkdown';
+import { ResumeMarkdown, safeUrl } from '../components/ResumeMarkdown';
 import type {
   CampusItem,
   ExperienceItem,
@@ -76,6 +76,10 @@ export interface ResumeSectionsProps {
 function joinClassNames(...classNames: Array<string | undefined>): string | undefined {
   const value = classNames.filter(Boolean).join(' ');
   return value || undefined;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unsupported resume section: ${JSON.stringify(value)}`);
 }
 
 function DefaultSection({ children, className, section }: SectionSlotProps) {
@@ -170,6 +174,8 @@ function ProjectEntry({
   Meta: ComponentType<ContentSlotProps>;
   Role: ComponentType<ContentSlotProps>;
 }) {
+  const safeLink = safeUrl(item.link);
+
   return (
     <Entry className={classNames?.entry} item={item} section={section}>
       <h3>{item.name}</h3>
@@ -181,7 +187,7 @@ function ProjectEntry({
         startDate={item.startDate}
       />
       {item.role && <Role className={classNames?.role}>{item.role}</Role>}
-      {item.showLink && item.link && <a className={classNames?.link} href={item.link}>{item.link}</a>}
+      {item.showLink && safeLink && <a className={classNames?.link} href={safeLink}>{item.link}</a>}
       {item.showIntroduction && item.introduction && <p className={classNames?.introduction}>{item.introduction}</p>}
       {item.showAchievements && item.achievements && <p className={classNames?.achievements}>{item.achievements}</p>}
       {item.highlightsMarkdown && <div className={classNames?.markdown}><ResumeMarkdown markdown={item.highlightsMarkdown} /></div>}
@@ -290,6 +296,8 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
               </Honours>
             );
             break;
+          default:
+            content = assertNever(section);
         }
 
         return (

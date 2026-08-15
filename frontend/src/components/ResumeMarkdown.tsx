@@ -10,7 +10,8 @@ function preserveLineBreaks(markdown: string): string {
 
 const allowedElements = ['p', 'br', 'strong', 'em', 'a', 'ul', 'ol', 'li'];
 
-function safeUrl(url: string): string {
+/** Shared URL allowlist for Markdown links and template-owned links. */
+export function safeUrl(url: string): string {
   return /^(https?:|mailto:|tel:)/i.test(url) ? url : '';
 }
 
