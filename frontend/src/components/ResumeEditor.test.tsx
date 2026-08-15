@@ -1,110 +1,114 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import App from '../app';
 import { ResumeEditor } from './ResumeEditor';
-import { createEmptyResumeDocument } from '../types/resume';
-
-vi.mock('../api/auth', () => ({
-  getCurrentUser: vi.fn().mockResolvedValue({ id: 1, email: 'ada@example.com', tenantId: 1 }),
-  login: vi.fn(), register: vi.fn(), logout: vi.fn(),
-}));
+import { createEmptyResumeDocument, createWorkSection } from '../types/resume';
 
 afterEach(cleanup);
 
+function latestDocument(onChange: ReturnType<typeof vi.fn>) {
+  return onChange.mock.calls[onChange.mock.calls.length - 1]?.[0];
+}
+
+function StatefulEditor({ document, onChange }: { document: ReturnType<typeof createEmptyResumeDocument>; onChange: ReturnType<typeof vi.fn> }) {
+  const [current, setCurrent] = useState(document);
+  return <ResumeEditor document={current} onChange={(next) => { setCurrent(next); onChange(next); }} />;
+}
+
 describe('ResumeEditor', () => {
-  it('updates the preview when the profile name changes', async () => {
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: '选择模板：赤线单栏' }));
-
-    fireEvent.change(screen.getByLabelText('姓名'), { target: { value: '林然' } });
-
-    expect(screen.getByTestId('resume-preview')).toHaveTextContent('林然');
-  });
-
-  it('selects the business template', async () => {
-    render(<App />);
-
-    fireEvent.click(await screen.findByRole('button', { name: '选择模板：现代商务' }));
-
-  });
-
-  it('adds and removes a work experience', async () => {
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: '选择模板：赤线单栏' }));
-
-    const addExperience = screen.getByRole('button', { name: '添加工作经历' });
-    fireEvent.click(addExperience.closest('details')?.querySelector('summary')!);
-    fireEvent.click(addExperience);
-    expect(screen.getByLabelText('公司 3')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '删除工作经历 3' }));
-    expect(screen.queryByLabelText('公司 3')).not.toBeInTheDocument();
-  });
-
-  it('uses a UUID when adding an experience to a loaded resume', () => {
-    const document = createEmptyResumeDocument();
-    document.experiences = [{
-      id: 'experience-1', company: '已保存公司', role: '', startDate: '', endDate: '', highlights: [],
-    }];
+  it('adds fully initialized work and internship sections', () => {
     const onChange = vi.fn();
-    const randomUUID = vi.fn(() => 'new-uuid');
-    vi.stubGlobal('crypto', { randomUUID });
+    render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);
 
-    render(<ResumeEditor document={document} onChange={onChange} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加工作经历' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加工作经历区块' }));
+    expect(latestDocument(onChange).sections).toEqual([expect.objectContaining({
+      type: 'work', title: '工作经历', visible: true, content: { items: [] },
+    })]);
 
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
-      experiences: expect.arrayContaining([expect.objectContaining({ id: 'new-uuid' })]),
-    }));
-    vi.unstubAllGlobals();
+    fireEvent.click(screen.getByRole('button', { name: '添加实习经历区块' }));
+    expect(latestDocument(onChange).sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'internship', title: '实习经历', visible: true, content: { items: [] } }),
+    ]));
   });
 
-  it('keeps basic profile open and repeatable sections collapsed by default', () => {
-    render(<ResumeEditor document={createEmptyResumeDocument()} onChange={vi.fn()} />);
-
-    const profile = screen.getByText('基本信息').closest('details');
-    expect(profile).toHaveAttribute('open');
-    expect(profile?.querySelector('summary')).toHaveTextContent('基本信息');
-    expect(profile?.querySelector('summary')?.querySelector('h1, h2, h3, h4, h5, h6')).not.toBeInTheDocument();
-
-    ['工作经历', '项目经历', '教育经历', '专业技能'].forEach((title) => {
-      const section = screen.getByText(title).closest('details');
-      expect(section).toBeInTheDocument();
-      expect(section).not.toHaveAttribute('open');
-      expect(section?.querySelector('summary')).toHaveTextContent(title);
-      expect(section?.querySelector('summary')?.querySelector('h1, h2, h3, h4, h5, h6')).not.toBeInTheDocument();
-    });
-  });
-
-  it('toggles each native section independently from its summary', () => {
-    render(<ResumeEditor document={createEmptyResumeDocument()} onChange={vi.fn()} />);
-
-    const work = screen.getByText('工作经历').closest('details');
-    const projects = screen.getByText('项目经历').closest('details');
-    fireEvent.click(screen.getByText('工作经历'));
-    fireEvent.click(screen.getByText('项目经历'));
-
-    expect(work).toHaveAttribute('open');
-    expect(projects).toHaveAttribute('open');
-
-    fireEvent.click(screen.getByText('工作经历'));
-    expect(work).not.toHaveAttribute('open');
-    expect(projects).toHaveAttribute('open');
-  });
-
-  it('updates document inputs after opening a collapsed section', () => {
-    const document = createEmptyResumeDocument();
-    document.experiences = [{
-      id: 'experience-1', company: '', role: '', startDate: '', endDate: '', highlights: [],
-    }];
+  it('moves sections and toggles a section visibility', () => {
+    const work = createWorkSection('work-1');
+    const document = { ...createEmptyResumeDocument(), sections: [
+      { ...work, title: '第一段' },
+      { ...createWorkSection('work-2'), title: '第二段' },
+    ] };
     const onChange = vi.fn();
-    render(<ResumeEditor document={document} onChange={onChange} />);
+    render(<StatefulEditor document={document} onChange={onChange} />);
 
-    fireEvent.click(screen.getByText('工作经历'));
-    fireEvent.change(screen.getByLabelText('公司 1'), { target: { value: 'Apple' } });
+    fireEvent.click(screen.getByRole('button', { name: '下移 第一段' }));
+    expect(latestDocument(onChange).sections.map((section: { id: string }) => section.id)).toEqual(['work-2', 'work-1']);
 
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
-      experiences: [expect.objectContaining({ company: 'Apple' })],
-    }));
+    fireEvent.click(screen.getByRole('button', { name: '隐藏 第一段' }));
+    expect(latestDocument(onChange).sections.find((section: { id: string }) => section.id === 'work-1')).toEqual(expect.objectContaining({ visible: false }));
+  });
+
+  it('edits a work item and its location and achievement display switches', () => {
+    const document = { ...createEmptyResumeDocument(), sections: [createWorkSection('work-1')] };
+    const onChange = vi.fn();
+    render(<StatefulEditor document={document} onChange={onChange} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '添加工作条目' }));
+    const added = latestDocument(onChange).sections[0].content.items[0];
+    expect(added).toMatchObject({ location: '', achievements: '', highlightsMarkdown: '', showLocation: true, showAchievements: true });
+
+    fireEvent.change(screen.getByLabelText('公司 1'), { target: { value: 'Acme' } });
+    expect(latestDocument(onChange).sections[0].content.items[0].company).toBe('Acme');
+    fireEvent.click(screen.getByLabelText('显示地点 1'));
+    fireEvent.click(screen.getByLabelText('显示业绩贡献 1'));
+    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ showLocation: false, showAchievements: false });
+  });
+
+  it('initializes and edits all project optional field switches', () => {
+    const onChange = vi.fn();
+    render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加项目经历区块' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加项目条目' }));
+
+    const project = latestDocument(onChange).sections[0].content.items[0];
+    expect(project).toMatchObject({ showLocation: true, showLink: true, showIntroduction: true, showAchievements: true });
+    ['显示地点 1', '显示项目链接 1', '显示项目介绍 1', '显示项目成绩 1'].forEach((label) => fireEvent.click(screen.getByLabelText(label)));
+    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ showLocation: false, showLink: false, showIntroduction: false, showAchievements: false });
+  });
+
+  it('adds and edits a campus item and a short honour item', () => {
+    const onChange = vi.fn();
+    render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加校园经历区块' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加校园条目' }));
+    fireEvent.change(screen.getByLabelText('活动或部门 1'), { target: { value: '学生会' } });
+    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ name: '学生会', role: '', highlightsMarkdown: '' });
+
+    fireEvent.click(screen.getByRole('button', { name: '添加荣誉奖项区块' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加荣誉奖项' }));
+    fireEvent.change(screen.getByLabelText('奖项名称 1'), { target: { value: '一等奖学金' } });
+    expect(latestDocument(onChange).sections[1].content.items[0]).toMatchObject({ name: '一等奖学金' });
+  });
+
+  it('adds fully initialized education and skill items', () => {
+    const onChange = vi.fn();
+    render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加教育经历区块' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加教育条目' }));
+    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ school: '', startDate: '', endDate: '', degree: '', college: '', major: '' });
+    fireEvent.change(screen.getByLabelText('院校 1'), { target: { value: '复旦大学' } });
+    expect(latestDocument(onChange).sections[0].content.items[0].school).toBe('复旦大学');
+
+    fireEvent.click(screen.getByRole('button', { name: '添加专业技能区块' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加技能' }));
+    fireEvent.change(screen.getByLabelText('备注 1'), { target: { value: '熟悉' } });
+    expect(latestDocument(onChange).sections[1].content.items[0]).toMatchObject({ name: '', note: '熟悉' });
+  });
+
+  it('updates summary markdown', () => {
+    const onChange = vi.fn();
+    render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加个人总结区块' }));
+    fireEvent.change(screen.getByLabelText('个人总结 Markdown'), { target: { value: '**重点**\n\n- 条目' } });
+    expect(latestDocument(onChange).sections[0]).toMatchObject({ type: 'summary', content: { markdown: '**重点**\n\n- 条目' } });
   });
 });
