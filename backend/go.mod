@@ -8,6 +8,7 @@ require (
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/sirupsen/logrus v1.9.4
 	golang.org/x/crypto v0.55.0
+	golang.org/x/image v0.45.0
 	modernc.org/sqlite v1.56.0
 )
 

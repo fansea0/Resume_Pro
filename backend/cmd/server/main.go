@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/sirupsen/logrus"
 	_ "modernc.org/sqlite"
 	"resumepro/backend/internal/auth"
+	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/httpapi"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/store"
@@ -45,13 +47,23 @@ func main() {
 		logger.WithError(err).Fatal("migrate resume database")
 	}
 	authRepository := auth.NewRepository(db)
+	uploadDirectory := os.Getenv("UPLOAD_DIR")
+	if uploadDirectory == "" {
+		uploadDirectory = "./uploads"
+	}
 	logger.WithFields(logrus.Fields{
 		"address":       ":8080",
 		"cookie_secure": cookieSecure,
 		"database_path": databasePath,
 	}).Info("starting resume API server")
 
-	if err := httpapi.NewRouter(authRepository, resume.NewRepository(db), templates.NewRepository(db), httpapi.RouterConfig{JWTSecret: jwtSecret, CookieSecure: cookieSecure, EnableDevLogin: os.Getenv("APP_ENV") == "development"}).Run(":8080"); err != nil {
+	if err := httpapi.NewRouter(authRepository, resume.NewRepository(db), templates.NewRepository(db), httpapi.RouterConfig{
+		JWTSecret:       jwtSecret,
+		CookieSecure:    cookieSecure,
+		EnableDevLogin:  os.Getenv("APP_ENV") == "development",
+		FileStorage:     files.NewLocalFileStorage(filepath.Join(uploadDirectory, "avatars")),
+		UploadDirectory: uploadDirectory,
+	}).Run(":8080"); err != nil {
 		logger.WithError(err).Fatal("resume API server stopped")
 	}
 }

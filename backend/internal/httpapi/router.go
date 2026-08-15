@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"resumepro/backend/internal/auth"
+	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/templates"
 )
@@ -14,6 +15,12 @@ type RouterConfig struct {
 	JWTSecret      string
 	CookieSecure   bool
 	EnableDevLogin bool
+	// FileStorage is optional so deployments can opt into avatar uploads only
+	// after configuring a durable storage backend.
+	FileStorage files.FileStorage
+	// UploadDirectory is the local public directory mounted at /uploads.
+	// It is ignored unless explicitly configured.
+	UploadDirectory string
 }
 
 // NewRouter creates the Gin HTTP API router.
@@ -22,6 +29,9 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 	router.GET("/api/health", func(context *gin.Context) {
 		writeJSON(context, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	if config.UploadDirectory != "" {
+		router.StaticFS("/uploads", http.Dir(config.UploadDirectory))
+	}
 	if authRepository == nil || resumeRepository == nil || templateRepository == nil {
 		return router
 	}
@@ -38,6 +48,10 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 		router.POST("/api/dev/login", authHandler.developmentLogin)
 	}
 	router.GET("/api/auth/me", requireAuthentication(service), authHandler.me)
+	if config.FileStorage != nil {
+		uploadHandler := newUploadHandler(config.FileStorage)
+		router.POST("/api/uploads/avatar", requireAuthentication(service), uploadHandler.avatar)
+	}
 
 	resumeHandler := newResumeHandler(resumeRepository)
 	protected := router.Group("/api/resumes")
