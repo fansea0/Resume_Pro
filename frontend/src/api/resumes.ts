@@ -22,8 +22,8 @@ export interface StoredResume {
 type ResumePayload = Pick<StoredResume, 'title' | 'templateId'> & { content: ResumeDocument };
 
 const templateIds = new Set<TemplateId>(['minimal', 'business', 'creative', 'tech', 'editorial', 'redline', 'violet', 'azure-chronicle']);
-const profileFields = ['fullName', 'headline', 'email', 'phone', 'location', 'website'] as const;
-const legacyProfileFields = [...profileFields, 'summary'] as const;
+const profileFields = ['fullName', 'headline', 'email', 'phone', 'location', 'website', 'avatarUrl'] as const;
+const legacyProfileFields = ['fullName', 'headline', 'email', 'phone', 'location', 'website', 'summary'] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -243,6 +243,7 @@ function migrateLegacyDocument(value: unknown): ResumeDocument | null {
       phone: value.profile.phone as string,
       location: value.profile.location as string,
       website: value.profile.website as string,
+      avatarUrl: '',
     },
     sections: [summary, work, project, education, skills],
   };

@@ -15,6 +15,7 @@ export interface ResumeProfile {
   phone: string;
   location: string;
   website: string;
+  avatarUrl: string;
 }
 
 export type ResumeSectionType =
@@ -187,6 +188,7 @@ export function createEmptyResumeDocument(): ResumeDocument {
       phone: '',
       location: '',
       website: '',
+      avatarUrl: '',
     },
     sections: [],
   };
@@ -297,6 +299,7 @@ export function createSampleResumeDocument(): ResumeDocument {
       phone: '138-0000-2026',
       location: '上海',
       website: 'zhixia-lin.dev',
+      avatarUrl: '',
     },
     sections: [summary, work, internship, project, education, skills, campus, honours],
   };

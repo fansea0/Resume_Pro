@@ -64,7 +64,7 @@ describe('documentFromStored', () => {
       templateId: 'business',
       profile: {
         fullName: '达钦海', headline: 'Go 后端开发', email: 'a@example.com', phone: '13800000000',
-        location: '武汉', website: 'https://example.com',
+        location: '武汉', website: 'https://example.com', avatarUrl: '',
       },
     });
     expect(restored.sections.map((section) => section.type)).toEqual([
@@ -99,6 +99,14 @@ describe('documentFromStored', () => {
     expect(() => documentFromStored(stored(malformedV2))).toThrow('invalid stored resume content');
     expect(() => documentFromStored(stored(invalidLegacy))).toThrow('invalid stored resume content');
     expect(() => documentFromStored({ ...stored({}), content: '{' })).toThrow('invalid stored resume content');
+  });
+
+  it('requires avatarUrl in v2 content while legacy documents migrate it as empty', () => {
+    const document = createSampleResumeDocument();
+    const withoutAvatarUrl = { ...document, profile: { ...document.profile } };
+    delete (withoutAvatarUrl.profile as Partial<typeof document.profile>).avatarUrl;
+
+    expect(() => documentFromStored(stored(withoutAvatarUrl))).toThrow('invalid stored resume content');
   });
 
   it('rejects unknown outer template identifiers', () => {
