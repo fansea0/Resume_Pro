@@ -3,11 +3,13 @@ package files
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLocalFileStorageStoreWritesAvatarAndReturnsPublicURL(t *testing.T) {
@@ -44,6 +46,49 @@ func TestLocalFileStorageStoreWritesAvatarAndReturnsPublicURL(t *testing.T) {
 	}
 	if !bytes.Equal(written, contents) {
 		t.Fatalf("stored content = %q, want %q", written, contents)
+	}
+}
+
+func TestLocalFileStorageRetainAndReleaseLifecycle(t *testing.T) {
+	t.Parallel()
+
+	storage := NewLocalFileStorage(filepath.Join(t.TempDir(), "uploads", "avatars"))
+	stored, err := storage.Store(context.Background(), "user-42", "550e8400-e29b-41d4-a716-446655440000", File{Name: "portrait.png", Content: strings.NewReader("avatar")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Retain(context.Background(), "user-42", "550e8400-e29b-41d4-a716-446655440000"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stored.Path + ".retained"); err != nil {
+		t.Fatalf("retained marker missing: %v", err)
+	}
+	if err := storage.Release(context.Background(), "user-42", "550e8400-e29b-41d4-a716-446655440000"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stored.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("avatar file still exists after release: %v", err)
+	}
+}
+
+func TestLocalFileStoragePurgesExpiredTemporaryUploadsBeforeQuota(t *testing.T) {
+	t.Parallel()
+
+	storage := NewLocalFileStorage(filepath.Join(t.TempDir(), "uploads", "avatars"))
+	storage.now = func() time.Time { return time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC) }
+	for index := 0; index < maxAvatarsPerOwner; index++ {
+		key := fmt.Sprintf("expired-%d", index)
+		stored, err := storage.Store(context.Background(), "user-42", key, File{Name: "portrait.png", Content: strings.NewReader("avatar")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		expired := storage.now().Add(-temporaryAvatarTTL - time.Hour)
+		if err := os.Chtimes(stored.Path, expired, expired); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := storage.Store(context.Background(), "user-42", "fresh", File{Name: "portrait.png", Content: strings.NewReader("avatar")}); err != nil {
+		t.Fatalf("Store() did not purge expired temporary avatars: %v", err)
 	}
 }
 

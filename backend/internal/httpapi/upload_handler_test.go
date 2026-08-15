@@ -101,6 +101,16 @@ func TestAvatarUploadRequiresUUIDKey(t *testing.T) {
 	}
 }
 
+func TestAvatarUploadMapsStorageQuotaToTooManyRequests(t *testing.T) {
+	storage := &recordingFileStorage{storeError: files.ErrAvatarQuotaExceeded}
+	router, session := newAvatarUploadTestRouter(t, storage)
+
+	response := multipartUploadRequest(t, router, "avatar.png", "image/png", encodedPNG(t), session)
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestAvatarUploadRejectsBodiesOverFiveMiB(t *testing.T) {
 	storage := &recordingFileStorage{}
 	router, session := newAvatarUploadTestRouter(t, storage)
@@ -159,12 +169,13 @@ func TestAvatarUploadRejectsImagesOverFourMillionPixels(t *testing.T) {
 }
 
 type recordingFileStorage struct {
-	stored  files.StoredFile
-	file    files.File
-	content []byte
-	calls   int
-	owner   string
-	key     string
+	stored     files.StoredFile
+	file       files.File
+	content    []byte
+	calls      int
+	owner      string
+	key        string
+	storeError error
 }
 
 func (s *recordingFileStorage) Store(_ context.Context, owner, key string, file files.File) (files.StoredFile, error) {
@@ -177,8 +188,15 @@ func (s *recordingFileStorage) Store(_ context.Context, owner, key string, file 
 		return files.StoredFile{}, err
 	}
 	s.content = content
+	if s.storeError != nil {
+		return files.StoredFile{}, s.storeError
+	}
 	return s.stored, nil
 }
+
+func (s *recordingFileStorage) Retain(context.Context, string, string) error { return nil }
+
+func (s *recordingFileStorage) Release(context.Context, string, string) error { return nil }
 
 func newAvatarUploadTestRouter(t *testing.T, storage files.FileStorage) (http.Handler, *http.Cookie) {
 	t.Helper()

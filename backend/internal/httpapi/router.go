@@ -55,7 +55,7 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 		router.POST("/api/uploads/avatar", requireAuthentication(service), uploadHandler.avatar)
 	}
 
-	resumeHandler := newResumeHandler(resumeRepository)
+	resumeHandler := newResumeHandler(resumeRepository, config.FileStorage)
 	protected := router.Group("/api/resumes")
 	protected.Use(requireAuthentication(service))
 	protected.GET("", resumeHandler.list)

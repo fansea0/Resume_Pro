@@ -10,11 +10,14 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 const avatarURLPrefix = "/uploads/avatars/"
 
 const maxAvatarsPerOwner = 20
+
+const temporaryAvatarTTL = 24 * time.Hour
 
 var supportedAvatarExtensions = map[string]struct{}{
 	".jpeg": {},
@@ -29,11 +32,12 @@ var supportedAvatarExtensions = map[string]struct{}{
 type LocalFileStorage struct {
 	directory string
 	mu        sync.Mutex
+	now       func() time.Time
 }
 
 // NewLocalFileStorage creates a local adapter that writes avatar files to directory.
 func NewLocalFileStorage(directory string) *LocalFileStorage {
-	return &LocalFileStorage{directory: directory}
+	return &LocalFileStorage{directory: directory, now: time.Now}
 }
 
 // Store persists one supported avatar for owner and key. The pair maps to one
@@ -60,6 +64,9 @@ func (s *LocalFileStorage) Store(ctx context.Context, owner, key string, file Fi
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.purgeExpiredTemporaryAvatars(); err != nil {
+		return StoredFile{}, err
+	}
 
 	filename := avatarFilename(owner, key)
 	path := filepath.Join(s.directory, filename)
@@ -96,6 +103,49 @@ func (s *LocalFileStorage) Store(ctx context.Context, owner, key string, file Fi
 	return StoredFile{Path: path, URL: avatarURLPrefix + filename}, nil
 }
 
+// Retain marks a successfully referenced upload as durable. New uploads are
+// temporary until the associated resume create or update has completed.
+func (s *LocalFileStorage) Retain(ctx context.Context, owner, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !safeAvatarIdentifier(owner) || !safeAvatarIdentifier(key) {
+		return errors.New("avatar owner or key is invalid")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path := filepath.Join(s.directory, avatarFilename(owner, key))
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("find avatar to retain: %w", err)
+	}
+	marker, err := os.OpenFile(path+".retained", os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("mark avatar retained: %w", err)
+	}
+	return marker.Close()
+}
+
+// Release removes both the avatar and its retention marker. It is idempotent
+// so a resume can safely clear a key that has already expired as temporary.
+func (s *LocalFileStorage) Release(ctx context.Context, owner, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !safeAvatarIdentifier(owner) || !safeAvatarIdentifier(key) {
+		return errors.New("avatar owner or key is invalid")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path := filepath.Join(s.directory, avatarFilename(owner, key))
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove avatar: %w", err)
+	}
+	if err := os.Remove(path + ".retained"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove avatar retention marker: %w", err)
+	}
+	return nil
+}
+
 func avatarFilename(owner, key string) string {
 	ownerSum := sha256.Sum256([]byte(owner))
 	keySum := sha256.Sum256([]byte(key))
@@ -116,7 +166,36 @@ func (s *LocalFileStorage) ensureOwnerHasAvatarCapacity(owner string) error {
 		}
 	}
 	if count >= maxAvatarsPerOwner {
-		return fmt.Errorf("avatar quota exceeded for owner")
+		return ErrAvatarQuotaExceeded
+	}
+	return nil
+}
+
+func (s *LocalFileStorage) purgeExpiredTemporaryAvatars() error {
+	entries, err := os.ReadDir(s.directory)
+	if err != nil {
+		return fmt.Errorf("list temporary avatars: %w", err)
+	}
+	now := s.now()
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".avatar") {
+			continue
+		}
+		path := filepath.Join(s.directory, entry.Name())
+		if _, err := os.Stat(path + ".retained"); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect avatar retention marker: %w", err)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect temporary avatar: %w", err)
+		}
+		if now.Sub(info.ModTime()) > temporaryAvatarTTL {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove expired temporary avatar: %w", err)
+			}
+		}
 	}
 	return nil
 }

@@ -62,6 +62,10 @@ func (h *uploadHandler) avatar(context *gin.Context) {
 	}
 	stored, err := h.storage.Store(context.Request.Context(), "user-"+strconv.FormatInt(principal.UserID, 10), key, files.File{Name: filename, Content: file})
 	if err != nil {
+		if errors.Is(err, files.ErrAvatarQuotaExceeded) {
+			writeError(context, http.StatusTooManyRequests, "avatar upload quota exceeded")
+			return
+		}
 		writeError(context, http.StatusInternalServerError, "could not store avatar image")
 		return
 	}

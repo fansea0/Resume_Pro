@@ -13,6 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"resumepro/backend/internal/auth"
+	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/store"
 	"resumepro/backend/internal/templates"
@@ -118,6 +119,61 @@ func TestResumeResponsesUseFrontendFieldNames(t *testing.T) {
 	if _, ok := payload["template_id"]; ok {
 		t.Fatalf("response must not expose storage field template_id")
 	}
+}
+
+func TestResumeLifecycleRetainsNewAvatarAndReleasesReplacedOrDeletedAvatar(t *testing.T) {
+	storage := &lifecycleFileStorage{}
+	router, session := testRouterWithStorage(t, storage)
+	firstKey := "550e8400-e29b-41d4-a716-446655440000"
+	secondKey := "550e8400-e29b-41d4-a716-446655440001"
+	profile := func(key string) string {
+		return `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"/uploads/avatars/avatar.avatar","avatarStorageKey":"` + key + `"}`
+	}
+	create := `{"title":"Avatar","templateId":"minimal","content":` + validV2ContentWithProfile("Avatar", "minimal", profile(firstKey)) + `}`
+	if response := requestJSON(t, router, http.MethodPost, "/api/resumes", create, session); response.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", response.Code, response.Body.String())
+	}
+	if !storage.retained[firstKey] {
+		t.Fatalf("create did not retain %q", firstKey)
+	}
+	update := `{"title":"Avatar updated","templateId":"minimal","content":` + validV2ContentWithProfile("Avatar updated", "minimal", profile(secondKey)) + `}`
+	if response := requestJSON(t, router, http.MethodPut, "/api/resumes/1", update, session); response.Code != http.StatusOK {
+		t.Fatalf("update status = %d: %s", response.Code, response.Body.String())
+	}
+	if !storage.retained[secondKey] || !storage.released[firstKey] {
+		t.Fatalf("update lifecycle = retained:%v released:%v", storage.retained, storage.released)
+	}
+	if response := requestJSON(t, router, http.MethodDelete, "/api/resumes/1", "", session); response.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d: %s", response.Code, response.Body.String())
+	}
+	if !storage.released[secondKey] {
+		t.Fatalf("delete did not release %q", secondKey)
+	}
+}
+
+type lifecycleFileStorage struct {
+	retained map[string]bool
+	released map[string]bool
+}
+
+func (s *lifecycleFileStorage) Store(context.Context, string, string, files.File) (files.StoredFile, error) {
+	return files.StoredFile{}, nil
+}
+
+func (s *lifecycleFileStorage) Retain(_ context.Context, _ string, key string) error {
+	if s.retained == nil {
+		s.retained = map[string]bool{}
+	}
+	s.retained[key] = true
+	return nil
+}
+
+func (s *lifecycleFileStorage) Release(_ context.Context, _ string, key string) error {
+	if s.released == nil {
+		s.released = map[string]bool{}
+	}
+	s.released[key] = true
+	return nil
 }
 
 func TestResumeInvalidCreateReturnsBadRequest(t *testing.T) {
@@ -257,6 +313,10 @@ func validV2ContentWithProfile(title, templateID, profile string, sections ...st
 }
 
 func testRouter(t *testing.T) (http.Handler, *http.Cookie) {
+	return testRouterWithStorage(t, nil)
+}
+
+func testRouterWithStorage(t *testing.T, fileStorage files.FileStorage) (http.Handler, *http.Cookie) {
 	t.Helper()
 	db, err := sqlx.Open("sqlite", ":memory:")
 	if err != nil {
@@ -266,7 +326,7 @@ func testRouter(t *testing.T) (http.Handler, *http.Cookie) {
 	if err := store.Migrate(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	router := NewRouter(auth.NewRepository(db), resume.NewRepository(db), templates.NewRepository(db), RouterConfig{JWTSecret: "resume-handler-test-secret"})
+	router := NewRouter(auth.NewRepository(db), resume.NewRepository(db), templates.NewRepository(db), RouterConfig{JWTSecret: "resume-handler-test-secret", FileStorage: fileStorage})
 	return router, registerAuthUser(t, router, "resume-handler@example.com")
 }
 

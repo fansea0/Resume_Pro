@@ -3,8 +3,13 @@ package files
 
 import (
 	"context"
+	"errors"
 	"io"
 )
+
+// ErrAvatarQuotaExceeded is returned when an owner has exhausted the bounded
+// number of retained or still-active temporary avatar uploads.
+var ErrAvatarQuotaExceeded = errors.New("avatar quota exceeded")
 
 // File is an upload ready to be persisted by a FileStorage implementation.
 // Name is used only to derive a safe output extension; Content supplies bytes.
@@ -26,4 +31,6 @@ type StoredFile struct {
 // accumulating files.
 type FileStorage interface {
 	Store(ctx context.Context, owner, key string, file File) (StoredFile, error)
+	Retain(ctx context.Context, owner, key string) error
+	Release(ctx context.Context, owner, key string) error
 }
