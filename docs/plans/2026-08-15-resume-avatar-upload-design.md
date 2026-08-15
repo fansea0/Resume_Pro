@@ -4,7 +4,7 @@
 
 **Goal:** Let a user upload a profile avatar, persist its URL in the v2 resume document, and display it on every resume template while retaining an interchangeable storage backend.
 
-**Architecture:** The backend exposes an authenticated avatar upload endpoint backed by a `FileStorage` interface. `LocalFileStorage` is the initial adapter and saves validated images under a configured project-local upload directory; an OSS adapter can later implement the same interface without changing the handler or frontend. The v2 profile receives an optional `avatarUrl` string, and templates render it when present while retaining their existing textual fallback.
+**Architecture:** The backend exposes an authenticated avatar upload endpoint backed by a `FileStorage` interface. `LocalFileStorage` is the initial adapter and saves validated images under a configured project-local upload directory; an OSS adapter can later implement the same interface without changing the handler or frontend. The v2 profile stores both `avatarUrl` and an opaque `avatarStorageKey`: the key makes an image independent for each resume while allowing replacement to atomically overwrite the same stored file. Templates render the image when present while retaining their existing textual fallback.
 
 **Tech Stack:** Go, Gin, multipart uploads, project-local file storage, React, TypeScript, Vitest, existing template registry.
 
@@ -27,7 +27,7 @@ Command: `cd backend && go test ./internal/files`
 
 **Step 3: Write minimal implementation**
 
-Define `FileStorage` with `Store(ctx, File) (StoredFile, error)`; implement local storage with generated names, atomic creation, and a public URL prefix.
+Define `FileStorage` with `Store(ctx, owner, key, File) (StoredFile, error)`; implement local storage with owner/key-isolated paths, atomic replacement, a bounded per-owner image count, and a public URL prefix.
 
 **Step 4: Run test — confirm it passes**
 
@@ -55,7 +55,7 @@ Command: `cd backend && go test ./internal/httpapi -run AvatarUpload`
 
 **Step 3: Write minimal implementation**
 
-Register `POST /api/uploads/avatar`, limit multipart body to 5 MiB, verify decoded image type/dimensions, invoke `FileStorage`, and return `{ "url": "..." }`. Serve the configured local upload directory at `/uploads`.
+Register `POST /api/uploads/avatar`, require an opaque UUID `key` form field, limit multipart body to 5 MiB, verify decoded image type/dimensions, invoke `FileStorage` with the authenticated user owner and key, and return `{ "url": "..." }`. Serve only individual avatar files, never a browsable upload directory.
 
 **Step 4: Run test — confirm it passes**
 
@@ -84,7 +84,7 @@ Commands: `cd frontend && npm test -- --run src/api/resumes.test.ts`; `cd backen
 
 **Step 3: Write minimal implementation**
 
-Add `avatarUrl` to frontend profile models/factories/migration validators and backend v2 content validation.
+Add `avatarUrl` and `avatarStorageKey` to frontend profile models/factories/migration validators and backend v2 content validation. Pre-avatar schema-v2 resumes must be read-upgraded by adding empty values before strict validation.
 
 **Step 4: Run tests — confirm they pass**
 
@@ -108,7 +108,7 @@ Commands: `cd frontend && npm test -- --run src/api/resumes.test.ts`; `cd backen
 
 **Step 1: Write failing tests**
 
-Test multipart API request handling, successful editor upload updates `profile.avatarUrl`, invalid upload reports a clear error, and each template renders the profile image with meaningful alt text when a URL exists.
+Test multipart API request handling, successful editor upload initializes or reuses `profile.avatarStorageKey` and updates `profile.avatarUrl`, invalid upload reports a clear error, and each template renders the profile image with meaningful alt text when a URL exists.
 
 **Step 2: Run tests — confirm they fail**
 
@@ -116,7 +116,7 @@ Commands: `cd frontend && npm test -- --run src/api/uploads.test.ts src/componen
 
 **Step 3: Write minimal implementation**
 
-Add a compact image picker in 基本信息 with preview, replacement control, loading/error states, and `accept="image/png,image/jpeg,image/webp"`. Render image in each template header without image layout shifts; use existing initials/placeholders when no URL is present.
+Add a compact image picker in 基本信息 with preview, replacement control, loading/error states, and `accept="image/png,image/jpeg,image/webp"`. Treat this as a resume photo rather than a social avatar: use a fixed 25×35 / 5:7 portrait frame with `object-fit: cover`, show the same portrait proportion in every template header, and retain existing initials/placeholders when no URL is present.
 
 **Step 4: Run tests — confirm they pass**
 
