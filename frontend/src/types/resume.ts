@@ -51,8 +51,11 @@ export interface ExperienceItem {
   showAchievements: boolean;
 }
 
-export interface ExperienceSection
-  extends ResumeSectionBase<'work' | 'internship', { items: ExperienceItem[] }> {}
+export interface ExperienceSection<TType extends 'work' | 'internship'>
+  extends ResumeSectionBase<TType, { items: ExperienceItem[] }> {}
+
+export type WorkSection = ExperienceSection<'work'>;
+export type InternshipSection = ExperienceSection<'internship'>;
 
 export interface ProjectItem {
   id: string;
@@ -116,7 +119,8 @@ export interface HonoursSection
 
 export type ResumeSection =
   | SummarySection
-  | ExperienceSection
+  | WorkSection
+  | InternshipSection
   | ProjectSection
   | EducationSection
   | SkillsSection
@@ -135,19 +139,19 @@ export function createSummarySection(id = 'summary'): SummarySection {
   return { id, type: 'summary', title: '个人总结', visible: true, content: { markdown: '' } };
 }
 
-function createExperienceSection(
+function createExperienceSection<TType extends 'work' | 'internship'>(
   id: string,
-  type: 'work' | 'internship',
+  type: TType,
   title: string,
-): ExperienceSection {
+): ExperienceSection<TType> {
   return { id, type, title, visible: true, content: { items: [] } };
 }
 
-export function createWorkSection(id = 'work'): ExperienceSection {
+export function createWorkSection(id = 'work'): WorkSection {
   return createExperienceSection(id, 'work', '工作经历');
 }
 
-export function createInternshipSection(id = 'internship'): ExperienceSection {
+export function createInternshipSection(id = 'internship'): InternshipSection {
   return createExperienceSection(id, 'internship', '实习经历');
 }
 

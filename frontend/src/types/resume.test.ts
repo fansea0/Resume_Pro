@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
-import { createEmptyResumeDocument, createSampleResumeDocument } from './resume';
+import {
+  createEmptyResumeDocument,
+  createInternshipSection,
+  createSampleResumeDocument,
+  createWorkSection,
+  type InternshipSection,
+  type WorkSection,
+} from './resume';
 
 describe('createEmptyResumeDocument', () => {
   it('creates an internet-job-ready document with meaningful defaults', () => {
@@ -25,7 +32,7 @@ describe('createEmptyResumeDocument', () => {
 });
 
 describe('createSampleResumeDocument', () => {
-  it('creates a complete v2 document with every visible section type and stable unique IDs', () => {
+  it('creates a complete v2 document with every visible section type and unique IDs', () => {
     const document = createSampleResumeDocument();
     const sectionTypes = document.sections.map((section) => section.type);
     const identifiers = document.sections.flatMap((section) => [
@@ -52,5 +59,20 @@ describe('createSampleResumeDocument', () => {
     expect(document.sections.every((section) => section.visible)).toBe(true);
     expect(identifiers.every(Boolean)).toBe(true);
     expect(new Set(identifiers).size).toBe(identifiers.length);
+  });
+
+  it('uses stable IDs for each factory call', () => {
+    expect(createWorkSection().id).toBe('work');
+    expect(createInternshipSection().id).toBe('internship');
+  });
+
+  it('returns type-discriminated work and internship sections from their factories', () => {
+    const work = createWorkSection();
+    const internship = createInternshipSection();
+
+    expect(work.type).toBe('work');
+    expect(internship.type).toBe('internship');
+    expectTypeOf(work).toEqualTypeOf<WorkSection>();
+    expectTypeOf(internship).toEqualTypeOf<InternshipSection>();
   });
 });
