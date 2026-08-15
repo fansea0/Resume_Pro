@@ -12,6 +12,7 @@ type ClassNameKey =
   | 'section'
   | 'title'
   | 'entry'
+  | 'entryHeading'
   | 'meta'
   | 'role'
   | 'summary'
@@ -54,6 +55,10 @@ export interface HonoursSlotProps extends ContentSlotProps {
   section: Extract<ResumeSection, { type: 'honours' }>;
 }
 
+export interface SkillsSlotProps extends ContentSlotProps {
+  section: Extract<ResumeSection, { type: 'skills' }>;
+}
+
 /**
  * Wrapper slots let every template keep ownership of its visual hierarchy while
  * this component preserves the resume document's semantic content and order.
@@ -62,9 +67,11 @@ export interface ResumeSectionsSlots {
   section: ComponentType<SectionSlotProps>;
   title: ComponentType<TitleSlotProps>;
   entry: ComponentType<ItemSlotProps>;
+  entryHeading: ComponentType<ContentSlotProps>;
   meta: ComponentType<ContentSlotProps>;
   role: ComponentType<ContentSlotProps>;
   honours: ComponentType<HonoursSlotProps>;
+  skills: ComponentType<SkillsSlotProps>;
 }
 
 export interface ResumeSectionsProps {
@@ -106,6 +113,14 @@ function DefaultHonours({ children, className }: HonoursSlotProps) {
   return <ul className={className}>{children}</ul>;
 }
 
+function DefaultSkills({ children, className }: SkillsSlotProps) {
+  return <div className={className}>{children}</div>;
+}
+
+function DefaultEntryHeading({ children, className }: ContentSlotProps) {
+  return <div className={className}>{children}</div>;
+}
+
 function Metadata({
   startDate,
   endDate,
@@ -134,6 +149,7 @@ function ExperienceEntry({
   Entry,
   Meta,
   Role,
+  EntryHeading,
 }: {
   item: ExperienceItem;
   section: Extract<ResumeSection, { type: 'work' | 'internship' }>;
@@ -141,17 +157,17 @@ function ExperienceEntry({
   Entry: ComponentType<ItemSlotProps>;
   Meta: ComponentType<ContentSlotProps>;
   Role: ComponentType<ContentSlotProps>;
+  EntryHeading: ComponentType<ContentSlotProps>;
 }) {
   return (
     <Entry className={classNames?.entry} item={item} section={section}>
-      <h3>{item.company}</h3>
-      <Metadata
+      <EntryHeading className={classNames?.entryHeading}><h3>{item.company}</h3><Metadata
         Meta={Meta}
         classNames={classNames}
         endDate={item.endDate}
         location={item.showLocation ? item.location : undefined}
         startDate={item.startDate}
-      />
+      /></EntryHeading>
       {item.role && <Role className={classNames?.role}>{item.role}</Role>}
       {item.showAchievements && item.achievements && <p className={classNames?.achievements}>{item.achievements}</p>}
       {item.highlightsMarkdown && <div className={classNames?.markdown}><ResumeMarkdown markdown={item.highlightsMarkdown} /></div>}
@@ -166,6 +182,7 @@ function ProjectEntry({
   Entry,
   Meta,
   Role,
+  EntryHeading,
 }: {
   item: ProjectItem;
   section: Extract<ResumeSection, { type: 'project' }>;
@@ -173,19 +190,19 @@ function ProjectEntry({
   Entry: ComponentType<ItemSlotProps>;
   Meta: ComponentType<ContentSlotProps>;
   Role: ComponentType<ContentSlotProps>;
+  EntryHeading: ComponentType<ContentSlotProps>;
 }) {
   const safeLink = safeUrl(item.link);
 
   return (
     <Entry className={classNames?.entry} item={item} section={section}>
-      <h3>{item.name}</h3>
-      <Metadata
+      <EntryHeading className={classNames?.entryHeading}><h3>{item.name}</h3><Metadata
         Meta={Meta}
         classNames={classNames}
         endDate={item.endDate}
         location={item.showLocation ? item.location : undefined}
         startDate={item.startDate}
-      />
+      /></EntryHeading>
       {item.role && <Role className={classNames?.role}>{item.role}</Role>}
       {item.showLink && safeLink && <a className={classNames?.link} href={safeLink}>{item.link}</a>}
       {item.showIntroduction && item.introduction && <p className={classNames?.introduction}>{item.introduction}</p>}
@@ -222,9 +239,11 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
   const Section = slots?.section ?? DefaultSection;
   const Title = slots?.title ?? DefaultTitle;
   const Entry = slots?.entry ?? DefaultEntry;
+  const EntryHeading = slots?.entryHeading ?? DefaultEntryHeading;
   const Meta = slots?.meta ?? DefaultMeta;
   const Role = slots?.role ?? DefaultRole;
   const Honours = slots?.honours ?? DefaultHonours;
+  const Skills = slots?.skills ?? DefaultSkills;
 
   return (
     <>
@@ -246,6 +265,7 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
                 Entry={Entry}
                 Meta={Meta}
                 Role={Role}
+                EntryHeading={EntryHeading}
                 classNames={classNames}
                 item={item}
                 key={item.id}
@@ -259,6 +279,7 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
                 Entry={Entry}
                 Meta={Meta}
                 Role={Role}
+                EntryHeading={EntryHeading}
                 classNames={classNames}
                 item={item}
                 key={item.id}
@@ -269,8 +290,7 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
           case 'education':
             content = section.content.items.map((item) => (
               <Entry className={classNames?.entry} item={item} key={item.id} section={section}>
-                <h3>{item.school}</h3>
-                <Metadata Meta={Meta} classNames={classNames} endDate={item.endDate} startDate={item.startDate} />
+                <EntryHeading className={classNames?.entryHeading}><h3>{item.school}</h3><Metadata Meta={Meta} classNames={classNames} endDate={item.endDate} startDate={item.startDate} /></EntryHeading>
                 {[item.degree, item.college, item.major].filter(Boolean).length > 0 && (
                   <Role className={classNames?.role}>{[item.degree, item.college, item.major].filter(Boolean).join(' · ')}</Role>
                 )}
@@ -278,9 +298,9 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
             ));
             break;
           case 'skills':
-            content = <div className={classNames?.skills}>{section.content.items.map((item) => (
+            content = <Skills className={classNames?.skills} section={section}>{section.content.items.map((item) => (
               <span className={classNames?.skill} key={item.id}>{item.name}{item.note && <small>{item.note}</small>}</span>
-            ))}</div>;
+            ))}</Skills>;
             break;
           case 'campus':
             content = section.content.items.map((item) => (

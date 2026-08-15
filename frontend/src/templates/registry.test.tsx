@@ -90,7 +90,32 @@ describe('templateRegistry', () => {
     expect(screen.getByText('年度创新奖')).toBeInTheDocument();
     expect(screen.getByText('产品社')).toBeInTheDocument();
     expect(screen.getByText('增长平台')).toBeInTheDocument();
-    const titles = Array.from(document.querySelectorAll('[data-resume-section-title]')).map((node) => node.textContent);
+    const titles = Array.from(document.querySelectorAll('[data-resume-section-title]')).map((node) => node.lastElementChild?.textContent ?? node.textContent);
     expect(titles).toEqual(['荣誉奖项', '校园经历', '专业技能', '教育经历', '项目经历', '实习经历', '工作经历', '个人总结']);
+    expect(document.querySelector('[data-template-honours]')).toBeInTheDocument();
+  });
+
+  it('keeps the business intro, tech education grid, and redline entry heading contracts', () => {
+    const Business = templateRegistry.find(({ id }) => id === 'business')!.Renderer;
+    const { container: business } = render(<Business document={sampleResume} />);
+    expect(business.querySelector('.template-business__intro')).toBeInTheDocument();
+
+    const Tech = templateRegistry.find(({ id }) => id === 'tech')!.Renderer;
+    const { container: tech } = render(<Tech document={sampleResume} />);
+    expect(tech.querySelector('.template-tech__education')).toBeInTheDocument();
+
+    const Redline = templateRegistry.find(({ id }) => id === 'redline')!.Renderer;
+    const { container: redline } = render(<Redline document={sampleResume} />);
+    expect(redline.querySelector('.template-redline__entry-heading')).toBeInTheDocument();
+  });
+
+  it('keeps visible section content in both creative and editorial columns', () => {
+    const Creative = templateRegistry.find(({ id }) => id === 'creative')!.Renderer;
+    const { container: creative } = render(<Creative document={sampleResume} />);
+    expect(creative.querySelector('.template-creative__sidebar [data-resume-section]')).toBeInTheDocument();
+
+    const Editorial = templateRegistry.find(({ id }) => id === 'editorial')!.Renderer;
+    const { container: editorial } = render(<Editorial document={sampleResume} />);
+    expect(editorial.querySelector('.template-editorial__sidebar [data-resume-section]')).toBeInTheDocument();
   });
 });

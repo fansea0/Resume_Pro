@@ -19,10 +19,24 @@ describe('AzureChronicleTemplate skills', () => {
     const { container } = render(<AzureChronicleTemplate document={document} />);
 
     const skills = container.querySelector('.template-azure-chronicle__skills');
-    expect(skills?.tagName).toBe('DIV');
-    expect(skills?.querySelectorAll('span')).toHaveLength(2);
-    expect(skills?.querySelectorAll('small')).toHaveLength(2);
+    expect(skills?.tagName).toBe('DL');
+    expect(skills?.querySelectorAll('dt')).toHaveLength(2);
+    expect(skills?.querySelectorAll('dd')).toHaveLength(2);
     expect(skills).toHaveTextContent('Go 后端开发');
     expect(skills).toHaveTextContent('有实际工作经验');
+  });
+
+  it('uses icon headings and a template-specific honour container', () => {
+    const withHonours: ResumeDocument = {
+      ...document,
+      sections: [
+        { id: 'honours', type: 'honours', title: '荣誉奖项', visible: true, content: { items: [{ id: 'award', name: '年度创新奖' }] } },
+        ...document.sections,
+      ],
+    };
+    const { container } = render(<AzureChronicleTemplate document={withHonours} />);
+    expect(container.querySelectorAll('.template-azure-chronicle__icon')).not.toHaveLength(0);
+    expect(container.querySelector('.template-azure-chronicle__honours[data-template-honours]')).toBeInTheDocument();
+    expect(container.querySelector('.template-azure-chronicle__entry-heading')).toBeNull();
   });
 });
