@@ -72,6 +72,7 @@ export interface ResumeSectionsSlots {
   role: ComponentType<ContentSlotProps>;
   honours: ComponentType<HonoursSlotProps>;
   skills: ComponentType<SkillsSlotProps>;
+  item: (section: ResumeSection, item: ExperienceItem | ProjectItem | CampusItem | Extract<ResumeSection, { type: 'education' }>['content']['items'][number]) => ReactNode;
 }
 
 export interface ResumeSectionsProps {
@@ -261,7 +262,7 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
           case 'work':
           case 'internship':
             content = section.content.items.map((item) => (
-              <ExperienceEntry
+              slots?.item ? slots.item(section, item) : <ExperienceEntry
                 Entry={Entry}
                 Meta={Meta}
                 Role={Role}
@@ -275,7 +276,7 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
             break;
           case 'project':
             content = section.content.items.map((item) => (
-              <ProjectEntry
+              slots?.item ? slots.item(section, item) : <ProjectEntry
                 Entry={Entry}
                 Meta={Meta}
                 Role={Role}
@@ -289,7 +290,7 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
             break;
           case 'education':
             content = section.content.items.map((item) => (
-              <Entry className={classNames?.entry} item={item} key={item.id} section={section}>
+              slots?.item ? slots.item(section, item) : <Entry className={classNames?.entry} item={item} key={item.id} section={section}>
                 <EntryHeading className={classNames?.entryHeading}><h3>{item.school}</h3><Metadata Meta={Meta} classNames={classNames} endDate={item.endDate} startDate={item.startDate} /></EntryHeading>
                 {[item.degree, item.college, item.major].filter(Boolean).length > 0 && (
                   <Role className={classNames?.role}>{[item.degree, item.college, item.major].filter(Boolean).join(' · ')}</Role>
@@ -304,7 +305,7 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
             break;
           case 'campus':
             content = section.content.items.map((item) => (
-              <CampusEntry Entry={Entry} Role={Role} classNames={classNames} item={item} key={item.id} section={section} />
+              slots?.item ? slots.item(section, item) : <CampusEntry Entry={Entry} Role={Role} classNames={classNames} item={item} key={item.id} section={section} />
             ));
             break;
           case 'honours':

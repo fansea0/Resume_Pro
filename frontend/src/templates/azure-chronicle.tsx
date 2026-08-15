@@ -1,10 +1,10 @@
 import { ResumeSections, type SkillsSlotProps, type TitleSlotProps } from './ResumeSections';
 import type { ResumeDocument } from '../types/resume';
 
-const icons: Record<string, string> = { summary: '●', work: '▣', internship: '▣', project: '◇', education: '◆', skills: '◌', campus: '★', honours: '✦' };
+const icons: Record<string, string> = { summary: 'M5 4h10v9H9l-3 3V7a3 3 0 0 1 3-3h6', work: 'M5 7h10v8H5zm3 0V5h4v2m-4 4h4', internship: 'M5 7h10v8H5zm3 0V5h4v2m-4 4h4', project: 'M5 5h10v10H5zm3 3h4m-4 3h4', education: 'm4 8 6-3 6 3-6 3zm2 2v3c2 1 4 1 6 0v-3', skills: 'M10 4.5a5.5 5.5 0 1 0 5.5 5.5M10 7v3h3', campus: 'm10 4 1.6 3.3 3.6.5-2.6 2.5.6 3.6-3.2-1.7-3.2 1.7.6-3.6L4.8 7.8l3.6-.5z', honours: 'm10 4 1.3 3 3.2.3-2.4 2.1.7 3.2-2.8-1.6-2.8 1.6.7-3.2-2.4-2.1 3.2-.3z' };
 
 function AzureTitle({ children, className, section }: TitleSlotProps) {
-  return <h2 className={className} data-resume-section-title><span aria-hidden="true" className="template-azure-chronicle__icon">{icons[section.type]}</span><span>{children}</span></h2>;
+  return <h2 className={className} data-resume-section-title><span aria-hidden="true" className="template-azure-chronicle__icon"><svg viewBox="0 0 20 20"><path d={icons[section.type]} /></svg></span><span>{children}</span></h2>;
 }
 
 function AzureSkills({ className, section }: SkillsSlotProps) {

@@ -99,10 +99,17 @@ describe('templateRegistry', () => {
     const Business = templateRegistry.find(({ id }) => id === 'business')!.Renderer;
     const { container: business } = render(<Business document={sampleResume} />);
     expect(business.querySelector('.template-business__intro')).toBeInTheDocument();
+    const businessEntry = business.querySelector('.template-business__entry');
+    expect(businessEntry?.children).toHaveLength(2);
+    expect(businessEntry?.firstElementChild).toHaveClass('template-business__period');
 
     const Tech = templateRegistry.find(({ id }) => id === 'tech')!.Renderer;
     const { container: tech } = render(<Tech document={sampleResume} />);
     expect(tech.querySelector('.template-tech__education')).toBeInTheDocument();
+    const techEducation = tech.querySelector('.template-tech__education');
+    expect(techEducation?.querySelector(':scope > strong')).toBeInTheDocument();
+    expect(techEducation?.querySelector(':scope > span')).toBeInTheDocument();
+    expect(techEducation?.querySelector(':scope > time')).toBeInTheDocument();
 
     const Redline = templateRegistry.find(({ id }) => id === 'redline')!.Renderer;
     const { container: redline } = render(<Redline document={sampleResume} />);

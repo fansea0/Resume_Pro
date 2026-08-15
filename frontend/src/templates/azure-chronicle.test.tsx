@@ -35,7 +35,8 @@ describe('AzureChronicleTemplate skills', () => {
       ],
     };
     const { container } = render(<AzureChronicleTemplate document={withHonours} />);
-    expect(container.querySelectorAll('.template-azure-chronicle__icon')).not.toHaveLength(0);
+    expect(container.querySelectorAll('.template-azure-chronicle__icon svg')).not.toHaveLength(0);
+    expect(container.querySelectorAll('.template-azure-chronicle__icon svg path')).not.toHaveLength(0);
     expect(container.querySelector('.template-azure-chronicle__honours[data-template-honours]')).toBeInTheDocument();
     expect(container.querySelector('.template-azure-chronicle__entry-heading')).toBeNull();
   });
