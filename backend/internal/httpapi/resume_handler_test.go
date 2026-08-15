@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -161,6 +162,34 @@ func TestResumeCreateAndUpdateRequireCompleteV2Content(t *testing.T) {
 	}
 }
 
+func TestResumeCreateAndUpdateRequireMatchingMetadataAndBoundedContent(t *testing.T) {
+	router, session := testRouter(t)
+	created := requestJSON(t, router, http.MethodPost, "/api/resumes", validResumeRequest("Valid", "minimal"), session)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create valid v2 status = %d: %s", created.Code, created.Body.String())
+	}
+
+	tooManySections := `[` + strings.TrimSuffix(strings.Repeat(`{"id":"summary","type":"summary","title":"个人总结","visible":true,"content":{"markdown":""}},`, 51), ",") + `]`
+	tooManyItems := `[` + strings.TrimSuffix(strings.Repeat(`{"id":"skill","name":"Go","note":"熟悉"},`, 101), ",") + `]`
+	invalidBodies := []string{
+		`{"title":"Outer","templateId":"minimal","content":` + validV2ResumeContent("Inner", "minimal") + `}`,
+		`{"title":"Valid","templateId":"minimal","content":` + validV2ResumeContent("Valid", "business") + `}`,
+		validResumeRequest("Valid", "unknown"),
+		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithSections("Valid", "minimal", tooManySections) + `}`,
+		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithSections("Valid", "minimal", `[{"id":"skills","type":"skills","title":"专业技能","visible":true,"content":{"items":`+tooManyItems+`}}]`) + `}`,
+		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithSections("Valid", "minimal", `[{"id":"summary","type":"summary","title":"个人总结","visible":true,"content":{"markdown":"`+strings.Repeat("x", 20_001)+`"}}]`) + `}`,
+		`{"title":"Valid","templateId":"minimal","content":` + validV2ContentWithSections("Valid", "minimal", `[{"id":"summary","type":"summary","title":"个人总结","visible":true,"content":{"markdown":"`+strings.Repeat("x", 1<<20)+`"}}]`) + `}`,
+	}
+	for _, body := range invalidBodies {
+		for _, target := range []struct{ method, path string }{{http.MethodPost, "/api/resumes"}, {http.MethodPut, "/api/resumes/1"}} {
+			response := requestJSON(t, router, target.method, target.path, body, session)
+			if response.Code != http.StatusBadRequest {
+				t.Errorf("%s: status = %d, want %d", target.method, response.Code, http.StatusBadRequest)
+			}
+		}
+	}
+}
+
 func TestResumeMissingReturnsNotFound(t *testing.T) {
 	router, session := testRouter(t)
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
@@ -176,15 +205,19 @@ func validResumeRequest(title, templateID string) string {
 }
 
 func validV2ResumeContent(title, templateID string) string {
-	return `{"schemaVersion":2,"title":"` + title + `","templateId":"` + templateID + `","profile":{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":""},"sections":[` +
-		`{"id":"summary","type":"summary","title":"个人总结","visible":true,"content":{"markdown":"总结"}},` +
-		`{"id":"work","type":"work","title":"工作经历","visible":true,"content":{"items":[{"id":"work-1","company":"公司","role":"工程师","startDate":"2024.01","endDate":"至今","location":"上海","achievements":"交付","highlightsMarkdown":"- 说明","showLocation":true,"showAchievements":true}]}},` +
-		`{"id":"internship","type":"internship","title":"实习经历","visible":true,"content":{"items":[{"id":"intern-1","company":"实习公司","role":"实习生","startDate":"2023.01","endDate":"2023.06","location":"上海","achievements":"交付","highlightsMarkdown":"- 说明","showLocation":false,"showAchievements":false}]}},` +
-		`{"id":"project","type":"project","title":"项目经历","visible":true,"content":{"items":[{"id":"project-1","name":"项目","role":"负责人","startDate":"2024.01","endDate":"至今","location":"上海","link":"https://example.com","introduction":"介绍","achievements":"成绩","highlightsMarkdown":"- 说明","showLocation":true,"showLink":true,"showIntroduction":true,"showAchievements":true}]}},` +
-		`{"id":"education","type":"education","title":"教育经历","visible":true,"content":{"items":[{"id":"education-1","school":"学校","startDate":"2020.09","endDate":"2024.06","degree":"本科","college":"学院","major":"专业"}]}},` +
-		`{"id":"skills","type":"skills","title":"专业技能","visible":true,"content":{"items":[{"id":"skill-1","name":"Go","note":"熟悉"}]}},` +
-		`{"id":"campus","type":"campus","title":"校园经历","visible":true,"content":{"items":[{"id":"campus-1","name":"社团","role":"负责人","highlightsMarkdown":"- 说明"}]}},` +
-		`{"id":"honours","type":"honours","title":"荣誉奖项","visible":true,"content":{"items":[{"id":"honour-1","name":"一等奖"}]}}]}`
+	return validV2ContentWithSections(title, templateID, `[`+
+		`{"id":"summary","type":"summary","title":"个人总结","visible":true,"content":{"markdown":"总结"}},`+
+		`{"id":"work","type":"work","title":"工作经历","visible":true,"content":{"items":[{"id":"work-1","company":"公司","role":"工程师","startDate":"2024.01","endDate":"至今","location":"上海","achievements":"交付","highlightsMarkdown":"- 说明","showLocation":true,"showAchievements":true}]}},`+
+		`{"id":"internship","type":"internship","title":"实习经历","visible":true,"content":{"items":[{"id":"intern-1","company":"实习公司","role":"实习生","startDate":"2023.01","endDate":"2023.06","location":"上海","achievements":"交付","highlightsMarkdown":"- 说明","showLocation":false,"showAchievements":false}]}},`+
+		`{"id":"project","type":"project","title":"项目经历","visible":true,"content":{"items":[{"id":"project-1","name":"项目","role":"负责人","startDate":"2024.01","endDate":"至今","location":"上海","link":"https://example.com","introduction":"介绍","achievements":"成绩","highlightsMarkdown":"- 说明","showLocation":true,"showLink":true,"showIntroduction":true,"showAchievements":true}]}},`+
+		`{"id":"education","type":"education","title":"教育经历","visible":true,"content":{"items":[{"id":"education-1","school":"学校","startDate":"2020.09","endDate":"2024.06","degree":"本科","college":"学院","major":"专业"}]}},`+
+		`{"id":"skills","type":"skills","title":"专业技能","visible":true,"content":{"items":[{"id":"skill-1","name":"Go","note":"熟悉"}]}},`+
+		`{"id":"campus","type":"campus","title":"校园经历","visible":true,"content":{"items":[{"id":"campus-1","name":"社团","role":"负责人","highlightsMarkdown":"- 说明"}]}},`+
+		`{"id":"honours","type":"honours","title":"荣誉奖项","visible":true,"content":{"items":[{"id":"honour-1","name":"一等奖"}]}}]`)
+}
+
+func validV2ContentWithSections(title, templateID, sections string) string {
+	return `{"schemaVersion":2,"title":"` + title + `","templateId":"` + templateID + `","profile":{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":""},"sections":` + sections + `}`
 }
 
 func testRouter(t *testing.T) (http.Handler, *http.Cookie) {

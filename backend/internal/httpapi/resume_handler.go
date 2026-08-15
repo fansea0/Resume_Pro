@@ -21,6 +21,13 @@ type resumeInput struct {
 	Content    json.RawMessage `json:"content"`
 }
 
+const (
+	maxResumeRequestBodyBytes = 1 << 20 // 1 MiB
+	maxResumeSections         = 50
+	maxResumeItemsPerSection  = 100
+	maxResumeStringLength     = 20_000
+)
+
 func newResumeHandler(repository *resume.Repository) *resumeHandler {
 	return &resumeHandler{repository: repository}
 }
@@ -112,6 +119,7 @@ func (h *resumeHandler) delete(context *gin.Context) {
 }
 
 func decodeInput(context *gin.Context) (resumeInput, bool) {
+	context.Request.Body = http.MaxBytesReader(context.Writer, context.Request.Body, maxResumeRequestBodyBytes)
 	decoder := json.NewDecoder(context.Request.Body)
 	decoder.DisallowUnknownFields()
 	var input resumeInput
@@ -123,10 +131,10 @@ func decodeInput(context *gin.Context) (resumeInput, bool) {
 }
 
 func validInput(input resumeInput) bool {
-	if strings.TrimSpace(input.Title) == "" || strings.TrimSpace(input.TemplateID) == "" || len(input.Content) == 0 {
+	if strings.TrimSpace(input.Title) == "" || strings.TrimSpace(input.TemplateID) == "" || !validString(input.Title) || !validTemplateID(input.TemplateID) || len(input.Content) == 0 {
 		return false
 	}
-	return validResumeContent(input.Content)
+	return validResumeContent(input.Content, input.Title, input.TemplateID)
 }
 
 var validTemplateIDs = map[string]struct{}{
@@ -137,7 +145,7 @@ var validTemplateIDs = map[string]struct{}{
 // validResumeContent mirrors the v2 ResumeDocument contract used by the editor.
 // Existing v1 content remains readable so the frontend can migrate it, but all
 // newly-created or updated documents must use this fixed storage format.
-func validResumeContent(raw json.RawMessage) bool {
+func validResumeContent(raw json.RawMessage, title, templateID string) bool {
 	var document map[string]any
 	if json.Unmarshal(raw, &document) != nil || document == nil {
 		return false
@@ -148,12 +156,15 @@ func validResumeContent(raw json.RawMessage) bool {
 	if !hasStringFields(document, "title", "templateId") || !validTemplateID(document["templateId"]) {
 		return false
 	}
+	if document["title"] != title || document["templateId"] != templateID {
+		return false
+	}
 	profile, ok := document["profile"].(map[string]any)
 	if !ok || !hasStringFields(profile, "fullName", "headline", "email", "phone", "location", "website") {
 		return false
 	}
 	sections, ok := document["sections"].([]any)
-	if !ok {
+	if !ok || len(sections) > maxResumeSections {
 		return false
 	}
 	for _, section := range sections {
@@ -166,7 +177,7 @@ func validResumeContent(raw json.RawMessage) bool {
 
 func validTemplateID(value any) bool {
 	templateID, ok := value.(string)
-	if !ok {
+	if !ok || !validString(templateID) {
 		return false
 	}
 	_, ok = validTemplateIDs[templateID]
@@ -204,7 +215,7 @@ func validResumeSection(value any) bool {
 
 func validItems(content map[string]any, validItem func(any) bool) bool {
 	items, ok := content["items"].([]any)
-	if !ok {
+	if !ok || len(items) > maxResumeItemsPerSection {
 		return false
 	}
 	for _, item := range items {
@@ -247,11 +258,15 @@ func validHonourItem(value any) bool {
 
 func hasStringFields(value map[string]any, fields ...string) bool {
 	for _, field := range fields {
-		if _, ok := value[field].(string); !ok {
+		if stringValue, ok := value[field].(string); !ok || !validString(stringValue) {
 			return false
 		}
 	}
 	return true
+}
+
+func validString(value string) bool {
+	return len(value) <= maxResumeStringLength
 }
 
 func hasBooleanField(value map[string]any, field string) bool {
