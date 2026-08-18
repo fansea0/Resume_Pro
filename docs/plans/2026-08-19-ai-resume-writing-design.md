@@ -53,34 +53,218 @@ interface ResumeDocument {
 
 `validResumeContent` 升级：放过 `targetJobId`（int 或缺失），其他校验不变。**老 v2 简历无需迁移**。
 
-### 字段级改写权限（核心设计）
+### 字段级改写权限（v1 关键设计，详细版）
 
-**铁律**：AI 改写 schema **只包含 rewriteable 字段 + 必带的 `id`**。LLM 在响应里**物理上没有输出位**给 frozen 字段，无法篡改。
+**v1 只对 4 类 section 提供 AI 润色**：`summary` / `work` / `internship` / `project`。其余 4 类（`education` / `skills` / `campus` / `honours`）**隐藏 AI 润色按钮**——这些节的内容要么全为事实（education、honours），要么可改写价值低（skills 的 note 通常是"熟练/了解"短标签，campus 的 highlights 在 v1 数据稀疏）。
 
 | Section Type | Frozen（AI 不能改） | Rewriteable（AI 可改） | v1 提供润色？ |
 | --- | --- | --- | --- |
 | `summary` | — | `markdown` | ✓ |
-| `work` / `internship` | `company, role, startDate, endDate, location` | `achievements, highlightsMarkdown` | ✓ |
-| `project` | `name, role, startDate, endDate, location, link` | `introduction, achievements, highlightsMarkdown` | ✓ |
-| `education` | 全部（学校、日期、学历、学院、专业） | — | ✗（隐藏按钮） |
-| `skills` | `id, name` | `note` | ✓ |
-| `campus` | `name, role` | `highlightsMarkdown` | ✓ |
-| `honours` | `name` | — | ✗（隐藏按钮） |
+| `work` | `id, company, role, startDate, endDate, location, showLocation, showAchievements` | `achievements, highlightsMarkdown` | ✓ |
+| `internship` | `id, company, role, startDate, endDate, location, showLocation, showAchievements` | `achievements, highlightsMarkdown` | ✓ |
+| `project` | `id, name, role, startDate, endDate, location, link, showLocation, showLink, showIntroduction, showAchievements` | `introduction, achievements, highlightsMarkdown` | ✓ |
+| `education` | 全部 | — | **✗ 隐藏按钮** |
+| `skills` | 全部 | — | **✗ 隐藏按钮** |
+| `campus` | 全部 | — | **✗ 隐藏按钮** |
+| `honours` | 全部 | — | **✗ 隐藏按钮** |
 
-例：`project` 改写的输出 schema（窄于输入）：
+**核心不变量**：
+
+1. **rewrite schema ⊊ section schema**：每种提供润色的 section 对应一个独立的 `RewriteOutput` Go struct，其字段集**严格**是 section 的真子集。frozen 字段（包括 `id`、所有 `showXxx` 布尔开关）在 rewrite 输出里**物理上不存在输出位**——LLM 没办法"返回"它们。
+2. **`id` 是必带的唯一标识**：rewrite 输出按 `id` 与原 section 的 items 对齐，用于采纳时逐项合并。
+3. **空白即"不修改"**：rewrite 输出里**字段缺失 = 不修改该字段**。这给 LLM 一个清晰的语义："只列出你想改的字段，没列出的我不动"。
+4. **不增不删 items**：LLM 不能通过润色新增或删除 items。润色只改字段，不改结构。
+
+**为什么"教育/技能/校园/荣誉"都隐藏按钮**：
+
+- `education`：学校、日期、学历、专业都是事实，AI 改写无价值且容易出错。
+- `skills`：`note` 通常是"熟练/了解"两字短标签，AI 改写容易越界编造（"精通"→风险），不如用户手填准确。
+- `campus`：校园经历在 v1 数据稀疏（学生简历常为空），不值得为此做 LLM 投入。
+- `honours`：奖项名称是事实，**绝对不能改**——"校级一等奖学金"改成"国家一等奖学金"是事实造假。
+
+如果用户后续强烈要求，v2 可以加 skills 的 `note` 润色（用一个非常窄的 schema：只能改 "了解"→"熟悉"这种程度词，不能改技能名）。
+
+### RewriteOutput 详细定义
+
+#### `summary` 节改写输出
 
 ```typescript
-interface ProjectRewriteOutput {
+interface SummaryRewriteOutput {
+  markdown: string;  // 必填（summary 整节就是一段 markdown）
+}
+```
+
+**采纳逻辑**（最简，无 items 数组）：
+
+```typescript
+function applySummaryRewrite(original: SummarySection, rewrite: SummaryRewriteOutput): SummarySection {
+  return { ...original, content: { markdown: rewrite.markdown } };
+}
+```
+
+#### `work` / `internship` 节改写输出
+
+```typescript
+interface ExperienceRewriteOutput {
   items: Array<{
-    id: string;                          // 用于回填到原 section
-    introduction?: string;               // 可选改
-    achievements?: string;               // 可选改
-    highlightsMarkdown?: string;         // 可选改
+    id: string;                      // 必填，对应原 items
+    achievements?: string;           // 可选改
+    highlightsMarkdown?: string;     // 可选改
   }>;
 }
 ```
 
-service 端"采纳"时按 `id` 把改写结果合入原 section，未在 rewrite 输出里的字段原样保留。
+#### `project` 节改写输出
+
+```typescript
+interface ProjectRewriteOutput {
+  items: Array<{
+    id: string;                      // 必填，对应原 items
+    introduction?: string;           // 可选改
+    achievements?: string;           // 可选改
+    highlightsMarkdown?: string;     // 可选改
+  }>;
+}
+```
+
+### 采纳合并算法（详细版）
+
+**通用规则**（适用于 items 数组类 section）：
+
+```typescript
+function applyItemsRewrite<TOriginal extends { id: string }, TRewrite extends { id: string }>(
+  originalItems: TOriginal[],
+  rewriteItems: TRewrite[],
+  applyableFields: (keyof TRewrite)[],   // 显式列举可应用的字段（编译期保证）
+): TOriginal[] {
+  const rewriteByID = new Map(rewriteItems.map(item => [item.id, item]));
+
+  return originalItems.map(original => {
+    const rewrite = rewriteByID.get(original.id);
+    if (!rewrite) return original;  // ① AI 没列这条 → 整条原样保留
+
+    // ② 按 applyableFields 逐字段合并：AI 没在 rewrite 里给字段 = 保留原值
+    const merged = { ...original };
+    for (const field of applyableFields) {
+      const newValue = (rewrite as any)[field];
+      if (newValue !== undefined) {
+        (merged as any)[field] = newValue;
+      }
+    }
+    return merged;
+  });
+}
+```
+
+**对 `project` 的具体调用**：
+
+```typescript
+const mergedItems = applyItemsRewrite(
+  section.content.items,           // 原 ProjectItem[]
+  rewrite.items,                   // AI 返回的 items
+  ['introduction', 'achievements', 'highlightsMarkdown'],  // 显式可改字段
+);
+const newSection: ProjectSection = {
+  ...section,
+  content: { items: mergedItems },
+};
+```
+
+**对 `work` / `internship` 的具体调用**：把 `applyableFields` 换成 `['achievements', 'highlightsMarkdown']`。
+
+**对 `summary` 的具体调用**：直接 `applySummaryRewrite`，无 items。
+
+### 边界条件（spec 必须明确写清的）
+
+| 情况 | 行为 |
+| --- | --- |
+| LLM 在 rewrite 里返回了不存在的 `id`（原 section 没有这个 id） | 静默丢弃该 item，不报错（v1 简单处理）。v2 可考虑警告"该条目已被删除/不存在" |
+| LLM 没在 rewrite 里列某些原 items | 那些 items 原样保留 |
+| LLM 在 rewrite 里返回了 frozen 字段 | JSON schema 校验失败 → eino 重试 → 仍失败 → 422 |
+| LLM 在 rewrite 里返回了**额外的字段**（schema 里未定义） | eino 严格 schema 模式直接拒绝；非严格模式丢弃额外字段 |
+| LLM 在 rewrite 里给字段值为空字符串 `""` | 视为"用户希望清空该字段"，采纳时设为空字符串 |
+| 润色期间用户**新增/删除/编辑了原 section 的 items** | 采纳时以"采纳时刻的 document 状态"为基准，按 id 对齐——新加的 items 不在 rewrite 输出里，原样保留；删除的 items 的 rewrite 数据被丢弃 |
+| 用户在 A 简历的 items 上点了 AI 润色，AI 返回的 `id` 来自 B 简历 | 不可能：AI 拿不到其他简历的 items，输入只包含当前 section 的 items |
+| `summary` 节 `markdown` 为空 | 不允许润色（按钮 disabled） |
+| `work` / `project` 节 items 数组为空 | 不允许润色（按钮 disabled） |
+
+### 渲染逻辑（前端）
+
+```typescript
+// AiSuggestionPanel 收到 rewrite output 后的渲染逻辑（伪代码）
+function renderSuggestion(rewrite: ProjectRewriteOutput, originalSection: ProjectSection) {
+  const rewriteByID = new Map(rewrite.items.map(i => [i.id, i]));
+
+  return originalSection.content.items.map(originalItem => {
+    const rewrite = rewriteByID.get(originalItem.id);
+    return {
+      // 🔒 Frozen 组（永远原样展示，灰显 + 锁图标）
+      frozen: {
+        name: originalItem.name,
+        role: originalItem.role,
+        startDate: originalItem.startDate,
+        endDate: originalItem.endDate,
+        location: originalItem.location,
+        link: originalItem.link,
+      },
+      // ✏️ Rewriteable 组（AI 给了新值才高亮 diff，否则原样展示）
+      rewritten: {
+        introduction: showDiffIfChanged(originalItem.introduction, rewrite?.introduction),
+        achievements: showDiffIfChanged(originalItem.achievements, rewrite?.achievements),
+        highlightsMarkdown: showDiffIfChanged(originalItem.highlightsMarkdown, rewrite?.highlightsMarkdown),
+      },
+    };
+  });
+}
+```
+
+`showDiffIfChanged(oldVal, newVal)`：若 `newVal === undefined` → 原样 + 无 diff；若 `newVal !== oldVal` → 旧值红色删除线 + 新值绿色高亮 + 展开收起切换。
+
+### 回归测试（强制要求）
+
+每种提供润色的 section 类型（`summary` / `work` / `internship` / `project`）必须有以下测试：
+
+**1. schema 收紧测试**（`internal/ai/schemas/*_test.go`）：
+
+```go
+func TestRewriteSchemasExcludeFrozenFields(t *testing.T) {
+    cases := []struct {
+        name     string
+        schema   string  // 反射生成的 JSON schema
+        forbidden []string
+    }{
+        {"project", projectRewriteSchema, []string{
+            "name", "role", "startDate", "endDate", "location", "link",
+            "showLocation", "showLink", "showIntroduction", "showAchievements",
+        }},
+        {"work", workRewriteSchema, []string{
+            "company", "role", "startDate", "endDate", "location",
+            "showLocation", "showAchievements",
+        }},
+        // ... summary, internship
+    }
+    for _, tc := range cases {
+        t.Run(tc.name, func(t *testing.T) {
+            for _, field := range tc.forbidden {
+                assert.NotContains(t, tc.schema, fmt.Sprintf(`"%s"`, field),
+                    "rewrite schema for %s must not contain frozen field %q", tc.name, field)
+            }
+        })
+    }
+}
+```
+
+**2. 合并算法单元测试**（`internal/ai/merge_test.go`）：
+
+- LLM 返回部分 items → 未列出的原样保留
+- LLM 返回了空字段值 → 视为清空
+- LLM 返回额外字段 → 丢弃
+- LLM 返回了不存在的 id → 静默丢弃
+- 原 items 顺序 → 合并后顺序不变（按原数组顺序，rewrite 不改变顺序）
+
+**3. 集成测试**（`internal/httpapi/ai_handler_test.go`）：
+
+- 用户点"AI 润色" → 返回 SSE 流包含 `suggestion` 事件 → 用户点"采纳" → 走 `resumesvc.Service.Update` → 仓储里存储的 section 内容的 frozen 字段**未改变**，rewriteable 字段按 LLM 输出更新。
 
 ## 架构总览
 
@@ -454,7 +638,7 @@ func defaultHooks(logger *logrus.Logger) *Hooks {
 - `system_common.tmpl` — 角色 + 通用硬约束
 - `rewriting_strategy.tmpl` — 改写方向优先级
 - `system_generate.tmpl` — 从零生成专用（含 JD 拼接逻辑 + ResumeDocument 整体性约束）
-- `section_summary.tmpl` / `section_work.tmpl` / `section_project.tmpl` / `section_education.tmpl` / `section_skills.tmpl` / `section_campus.tmpl` / `section_honours.tmpl` — 七种 section 的字段说明 + 改写侧重
+- `section_summary.tmpl` / `section_work.tmpl` / `section_project.tmpl` — **仅 3 种**（润色可用 section）的字段说明 + 改写侧重。`section_internship.tmpl` 复用 `section_work.tmpl`（结构相同）。`education / skills / campus / honours` 不提供润色，**无需写模板**
 
 **v1 不做但记下**：few-shot examples（0-shot 起步）、多轮对话、针对 JD 的关键词强制对齐、用户反馈闭环。
 
@@ -606,8 +790,11 @@ data: {"code": "VALIDATION_FAILED", "message": "AI 输出的内容无法通过 s
 ### UX 细节
 
 - 按钮放在 section header，icon + tooltip，文案"AI 润色"
-- **education / honours 节不显示 AI 润色按钮**（无可改写字段）
-- 按钮 disabled 条件：section 为空 / 正在流式
+- **仅 `summary` / `work` / `internship` / `project` 四类 section 显示 AI 润色按钮**。`education` / `skills` / `campus` / `honours` **不显示按钮**——这四类无可改写字段，按钮藏起来比展示"无可改写"更干净
+- 按钮 disabled 条件：
+  - section 内容为空（`summary.markdown` 空字符串 / `work` / `project` items 数组为空）
+  - 正在流式（同一时刻一个 section 只能有一个 AI 调用）
+  - 全局 AI 路由被禁用（dev mode 无 `OPENAI_API_KEY`）
 - 面板打开时主内容区加 `aria-busy="true"`，键盘焦点 trap
 - 移动端：面板从底部抽屉上滑
 - 错误展示走现有 toast 风格
@@ -824,7 +1011,7 @@ data: {"code": "VALIDATION_FAILED", "message": "AI 输出的内容无法通过 s
 | `src/components/AiSuggestionPanel.test.tsx` | 流式状态机、**frozen/rewriteable 字段分组渲染**、diff 展示、采纳/拒绝回调 |
 | `src/components/AiGenerateModal.test.tsx` | 表单校验（含目标岗下拉）、流式渲染、提交 |
 | `src/components/TargetJobCard.test.tsx` | 绑定/更换/清除交互、JD 预览展开收起 |
-| `src/components/ResumeEditor.test.tsx` | 新增"AI 润色"按钮可访问、点击触发回调；**education/honours 节不显示 AI 润色按钮**（不改现有断言） |
+| `src/components/ResumeEditor.test.tsx` | 新增"AI 润色"按钮可访问、点击触发回调；**仅 `summary` / `work` / `internship` / `project` 四类 section 显示按钮**，`education` / `skills` / `campus` / `honours` 节**不显示按钮**（不改现有断言） |
 | `src/pages/TargetJobsPage.test.tsx` | 列表、新建、编辑、删除（带引用计数确认） |
 
 ### 冒烟（不进 CI）
@@ -839,8 +1026,8 @@ docs 中给出本地手动冒烟步骤：起 backend、设 `OPENAI_API_KEY`、�
 4. 写 `internal/httpapi/target_handler.go` + router 注册 + 单测
 5. **抽 `internal/resumesvc/` 独立包**：`service.go` + 单测；`resume_handler` 改薄调它；`validResumeContent` 放过 `targetJobId` 可选字段；service 内对 `targetJobId` 做租户归属校验
 6. 写 `internal/ai/observability.go`：hooks 结构 + 默认 logrus 实现 + 单测
-7. 写 `internal/ai/prompts/*.tmpl` + embed.FS（system_common / rewriting_strategy / system_generate + 7 个 section_*.tmpl + target_job_context.tmpl 单独段）
-8. 写 `internal/ai/schemas/*.go`：7 种 section 的 Go struct + ResumeDocument + JSON schema 反射生成 + **窄版 rewrite schema** + 单元测试（含 frozen 字段不出现回归）
+7. 写 `internal/ai/prompts/*.tmpl` + embed.FS（system_common / rewriting_strategy / system_generate + **3 个** section_*.tmpl：summary / work / project，internship 复用 work + target_job_context.tmpl 单独段）
+8. 写 `internal/ai/schemas/*.go`：4 种提供润色的 section 的 Go struct（summary / work / internship / project）+ ResumeDocument + JSON schema 反射生成 + **窄版 rewrite schema** + 单元测试（含 frozen 字段不出现回归）+ 合并算法单元测试（`merge.go` + `merge_test.go`）
 9. 写 `internal/ai/service.go`：拼 prompt（含 targetJob context 注入）、配 schema、调 eino、产 event 流、串 hooks
 10. 写 `internal/httpapi/ai_handler.go` + SSE writer（入口加 `// TODO(ai-ratelimit)` 标记；handler 加载 resume + targetJob context）
 11. router 注册 `/api/ai/...`
@@ -852,7 +1039,7 @@ docs 中给出本地手动冒烟步骤：起 backend、设 `OPENAI_API_KEY`、�
 17. 前端 `components/TargetJobPicker.tsx` + `TargetJobCard.tsx` + 单测
 18. 前端 `AiSuggestionPanel.tsx`（带 frozen/rewriteable 字段分组） + 单测
 19. 前端 `AiGenerateModal.tsx`（含目标岗下拉/新建/跳过） + 单测
-20. `ResumeEditor` 集成：顶部 `TargetJobCard` + section header 加 AI 润色按钮（education/honours 隐藏）
+20. `ResumeEditor` 集成：顶部 `TargetJobCard` + section header 加 AI 润色按钮（**仅 `summary` / `work` / `internship` / `project` 四类显示**，其他四类不渲染按钮）
 21. `TemplateGallery` 集成生成入口 + 「管理目标岗位」链接
 22. README 增加 env / 配置 / 限制 / 目标岗管理章节
 23. 跑全量测试 + 冒烟
@@ -869,7 +1056,7 @@ docs 中给出本地手动冒烟步骤：起 backend、设 `OPENAI_API_KEY`、�
 - 限流器实现（v1 留 `// TODO(ai-ratelimit)` 标记）
 - AI service 写库（保持纯 LLM 包装，副作用全在 `resumesvc.Service`）
 - 限流相关的 `AI_RATE_LIMIT_PER_MIN` 环境变量（v1 暂未注册）
-- education / honours 的 AI 润色（无可改写字段）
+- education / skills / campus / honours 的 AI 润色（无可改写字段或改写价值低）
 - 目标岗位版本历史/软删除（v1 硬删除 + 引用清空弹窗确认）
 
 **v1 必做**：
@@ -879,7 +1066,7 @@ docs 中给出本地手动冒烟步骤：起 backend、设 `OPENAI_API_KEY`、�
 - 新增 `internal/targetjob/` 独立包：model + Repository + CRUD
 - 四层分明：`internal/resume/`（store）/`internal/targetjob/`（store）/`internal/resumesvc/`（service）/`internal/ai/`（AI）/`internal/httpapi/`（router+handler），互不交叉 import
 - **rewrite schema 严格窄于原 schema**，frozen 字段不暴露给 LLM（带回归测试）
-- education / honours 节不显示 AI 润色按钮
+- education / skills / campus / honours 节不显示 AI 润色按钮
 - 目标岗位独立管理页 + 编辑器顶部绑定卡片 + 切换不清空已有建议但加提示
 - 至少 1 个真实 LLM 冒烟通过（手动，含目标岗 + 无目标岗两种场景）
 - 观测 hooks 落 logrus（结构化字段），未来接 metrics 零侵入
