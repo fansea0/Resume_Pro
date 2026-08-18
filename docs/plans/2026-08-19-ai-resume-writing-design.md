@@ -2,7 +2,7 @@
 
 > 日期：2026-08-19
 > 状态：设计待审
-> 影响范围：`backend/internal/{ai,llm,httpapi}/`、**新增 `backend/internal/resumesvc/`**、`backend/internal/resume/`（store 保持）、`backend/cmd/server/main.go`、`frontend/src/{api,components,types}/`
+> 影响范围：`backend/internal/{ai,llm,httpapi,targetjob,resumesvc}/`（新增 targetjob）、`backend/internal/resume/`（store + 新增 targetJobId 字段校验）、`backend/cmd/server/main.go`、**DB 新增 `target_jobs` 表**、`frontend/src/{api,components,pages,types}/`（新增 `/target-jobs` 页 + 编辑器顶部目标岗位卡片）
 
 ## 目标
 
@@ -13,10 +13,74 @@
 
 **核心设计原则（v1 确认）**：
 
-- AI 是**纯文本→结构化 JSON 的转换器**，**不读写数据库**。所有写库动作仍走现有 `POST/PUT /api/resumes/:id` 端点。
-- 租户安全由 `internal/resume` 仓储层（`WHERE tenant_id = ?`）统一保证，AI 层无需额外包一层闭包注入。
+- AI 是**纯文本→结构化 JSON 的转换器**，**不读写数据库**。所有写库动作仍走现有 `POST/PUT /api/resumes/:id` 端点。**目标岗位**上下文由 handler 在鉴权后从 DB 取出，注入到 AI service 的入参里——AI service 仍然零 DB 访问。
+- 租户安全由 `internal/resume` / `internal/targetjob` 仓储层（`WHERE tenant_id = ?`）统一保证，AI 层无需重复保证。
 - AI 输出用 eino 的**结构化输出**（JSON schema 约束）保证合法，无需抽象成"tool"。
-- v1 范围：纯文本输入（必填）+ JD（可选）。PDF/Word 解析推迟至 v2。
+- **节选润色 schema 必须窄于原 section schema**，只暴露"实质可改写"字段（业绩贡献、列表说明、summary markdown 等），让 LLM 物理上无法篡改事实字段（公司名、日期、职位、学校、奖项名）。
+- **目标岗位是 per-user 资产**，可维护多份；简历通过可选的 `targetJobId` 字段绑定到某份目标岗。
+- v1 范围：纯文本输入（必填）+ JD/目标岗位（可选）。PDF/Word 解析推迟至 v2。
+
+## 数据模型扩展
+
+### 新增 `target_jobs` 表（DB 迁移 v2）
+
+```sql
+CREATE TABLE target_jobs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id    INTEGER NOT NULL,
+    company      TEXT NOT NULL DEFAULT '',  -- 可空（投递未知公司 / 海投）
+    position     TEXT NOT NULL,              -- 必填
+    requirements TEXT NOT NULL DEFAULT '',   -- markdown / 纯文本均可
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_target_jobs_tenant ON target_jobs(tenant_id, updated_at DESC);
+```
+
+### `ResumeDocument` 扩展（仍 v2 schema，向后兼容）
+
+```typescript
+interface ResumeDocument {
+  schemaVersion: 2;
+  title: string;
+  templateId: TemplateId;
+  profile: ResumeProfile;
+  targetJobId?: number;        // ← 新增可选字段，老 v2 简历不存在视为 null
+  sections: ResumeSection[];
+}
+```
+
+`validResumeContent` 升级：放过 `targetJobId`（int 或缺失），其他校验不变。**老 v2 简历无需迁移**。
+
+### 字段级改写权限（核心设计）
+
+**铁律**：AI 改写 schema **只包含 rewriteable 字段 + 必带的 `id`**。LLM 在响应里**物理上没有输出位**给 frozen 字段，无法篡改。
+
+| Section Type | Frozen（AI 不能改） | Rewriteable（AI 可改） | v1 提供润色？ |
+| --- | --- | --- | --- |
+| `summary` | — | `markdown` | ✓ |
+| `work` / `internship` | `company, role, startDate, endDate, location` | `achievements, highlightsMarkdown` | ✓ |
+| `project` | `name, role, startDate, endDate, location, link` | `introduction, achievements, highlightsMarkdown` | ✓ |
+| `education` | 全部（学校、日期、学历、学院、专业） | — | ✗（隐藏按钮） |
+| `skills` | `id, name` | `note` | ✓ |
+| `campus` | `name, role` | `highlightsMarkdown` | ✓ |
+| `honours` | `name` | — | ✗（隐藏按钮） |
+
+例：`project` 改写的输出 schema（窄于输入）：
+
+```typescript
+interface ProjectRewriteOutput {
+  items: Array<{
+    id: string;                          // 用于回填到原 section
+    introduction?: string;               // 可选改
+    achievements?: string;               // 可选改
+    highlightsMarkdown?: string;         // 可选改
+  }>;
+}
+```
+
+service 端"采纳"时按 `id` 把改写结果合入原 section，未在 rewrite 输出里的字段原样保留。
 
 ## 架构总览
 
@@ -39,22 +103,30 @@
 │  Backend (Go + Gin)                                              │
 │  POST /api/ai/resumes/:id/section/rewrite   (SSE)                │
 │  POST /api/ai/resumes/generate              (SSE)                │
+│  GET/POST/PUT/DELETE /api/target-jobs                           │
 │                                                                  │
 │  ┌────────────────┐   ┌────────────────┐   ┌────────────────┐  │
 │  │ httpapi        │   │ ai             │   │ llm (eino)     │  │
 │  │ ai_handler.go  │──▶│ service.go     │──▶│ chatmodel.go   │  │
-│  │ (SSE 写, 鉴权) │   │ (拼 prompt,    │   │ (OpenAI 兼容   │  │
-│  │                │   │  调 eino, JSON │   │  client)       │  │
+│  │ (SSE 写, 鉴权, │   │ (拼 prompt,    │   │ (OpenAI 兼容   │  │
+│  │  加载 context) │   │  调 eino, JSON │   │  client)       │  │
 │  │                │   │  schema 约束)  │   │                │  │
 │  └────────────────┘   └────────┬───────┘   └────────────────┘  │
 │                                │                                 │
 │              纯 LLM 包装，零 DB 访问                              │
+│              context = { section, targetJob, instructions }     │
+│              全部由 handler 注入                                  │
 │                                                                  │
 │  ─────────────────────  独立业务边界  ─────────────────────       │
 │                                                                  │
 │  ┌────────────────┐   ┌──────────────────┐                       │
 │  │ httpapi        │──▶│ resumesvc        │──▶ resume.Repository  │
 │  │ resume_handler │   │ (独立包, 新建)   │    WHERE tenant_id = ? │
+│  └────────────────┘   └──────────────────┘                       │
+│                                                                  │
+│  ┌────────────────┐   ┌──────────────────┐                       │
+│  │ httpapi        │──▶│ targetjob        │──▶ targetjob.Repo     │
+│  │ target_handler │   │  (CRUD)          │    WHERE tenant_id = ? │
 │  └────────────────┘   └──────────────────┘                       │
 │                                                                  │
 │  采纳建议 → 走 resumesvc.Service.Create/Update → 仓储层兜底租户隔离 │
@@ -80,9 +152,11 @@
 | 包路径 | 职责 |
 | --- | --- |
 | `internal/llm` | eino ChatModel 工厂：读 env → 构造 OpenAI 兼容 client → 暴露 `ChatModel` 接口 |
-| `internal/ai` | AI 业务核心：prompt 模板、JSON schema 定义、service、**观测 hooks**。**不 import 任何 store/auth 包** |
-| `internal/httpapi/ai_handler.go` | SSE handler，鉴权后调 `ai.Service` 拿流，转发为 SSE |
-| `internal/resumesvc` | **新增独立包**：从 `resume_handler` 抽出 create/update 业务逻辑（avatar retain、validation、错误归一）。HTTP handler 调它，**不 import `internal/ai`**，纯业务层 |
+| `internal/ai` | AI 业务核心：prompt 模板、JSON schema 定义（含窄版 rewrite schema）、service、**观测 hooks**。**不 import 任何 store/auth/targetjob 包** |
+| `internal/httpapi/ai_handler.go` | SSE handler，鉴权后**加载上下文**（resume + targetJob）→ 调 `ai.Service` 拿流 → 转发 SSE |
+| `internal/httpapi/target_handler.go` | 目标岗位 CRUD handler |
+| `internal/targetjob` | **新增独立包**：model + Repository（`WHERE tenant_id = ?` 兜底租户隔离） |
+| `internal/resumesvc` | **新增独立包**：从 `resume_handler` 抽出 create/update 业务逻辑（avatar retain、validation、错误归一、targetJobId 校验）。HTTP handler 调它，**不 import `internal/ai` 或 `internal/targetjob`**，纯业务层 |
 
 ### 依赖变更
 
@@ -389,14 +463,73 @@ func defaultHooks(logger *logrus.Logger) *Hooks {
 在 `internal/httpapi/router.go` 中：
 
 ```go
-aiHandler := newAiHandler(aiService, hooks) // v1 不接 limiter，TODO 标记
+aiHandler := newAiHandler(aiService, hooks, resumeRepo, targetJobRepo) // v1 不接 limiter，TODO 标记
 protected := router.Group("/api/ai")
 protected.Use(requireAuthentication(service))
 protected.POST("/resumes/generate", aiHandler.generateResume)
 protected.POST("/resumes/:id/section/rewrite", aiHandler.rewriteSection)
+
+targetHandler := newTargetJobHandler(targetJobService)
+tj := router.Group("/api/target-jobs")
+tj.Use(requireAuthentication(service))
+tj.GET("", targetHandler.list)
+tj.POST("", targetHandler.create)
+tj.GET("/:id", targetHandler.get)
+tj.PUT("/:id", targetHandler.update)
+tj.DELETE("/:id", targetHandler.delete)
 ```
 
 `/api/ai` 路径前缀明确语义，且与 `/api/resumes` 写操作路径解耦。`/api/ai/resumes/:id` 里的 `id` 用来定位"原简历"——rewrite 时确认它属于当前租户、把它作为上下文传给 LLM，但 AI service 自己不读它。
+
+`/api/target-jobs` 是 per-user 目标岗位 CRUD，标准 RESTful。所有 handler 复用 `requireAuthentication` 中间件，仓储层按 `WHERE tenant_id = ?` 过滤。
+
+### AI handler 的上下文加载伪代码
+
+```go
+func (h *aiHandler) rewriteSection(ginCtx *gin.Context) {
+    principal, _ := auth.PrincipalFromContext(ginCtx)
+    resumeID, _ := strconv.ParseInt(ginCtx.Param("id"), 10, 64)
+
+    // 1. 加载 resume（含 targetJobId）
+    resume, err := h.resumeRepo.Get(ginCtx.Request.Context(), principal.TenantID, resumeID)
+    if !handleRepositoryError(ginCtx, err) { return }
+
+    // 2. 若绑定了目标岗，加载它
+    var targetJob *targetjob.TargetJob
+    if resume.Content.TargetJobID != nil {
+        tj, err := h.targetJobRepo.Get(ginCtx.Request.Context(), principal.TenantID, *resume.Content.TargetJobID)
+        if err != nil && !errors.Is(err, targetjob.ErrNotFound) {
+            writeError(ginCtx, http.StatusInternalServerError, "load target job failed")
+            return
+        }
+        targetJob = tj  // ErrNotFound 时视为"目标岗已删除"，继续但不传 context
+    }
+
+    // 3. 构造 context（不读 DB 的 service 拿到完整上下文）
+    sse := newSSEWriter(ginCtx)
+    ai.RunRewriteGraph(ginCtx.Request.Context(), ai.RewriteGraphInput{
+        Resume:           resume,
+        SectionType:      req.SectionType,
+        CurrentContent:   req.CurrentContent,
+        TargetJob:        targetJob,    // 可为 nil
+        Instructions:     req.Instructions,
+        Hooks:            h.hooks,
+    }, sse)
+}
+```
+
+`ai.Service` 接口签名变更为（**入参完整，但 service 本身不调任何 Repo**）：
+
+```go
+type RewriteGraphInput struct {
+    Resume         *resume.Resume
+    SectionType    string
+    CurrentContent json.RawMessage
+    TargetJob      *targetjob.TargetJob  // 可为 nil
+    Instructions   string
+    Hooks          *Hooks
+}
+```
 
 ### SSE 协议
 
@@ -440,24 +573,167 @@ data: {"code": "VALIDATION_FAILED", "message": "AI 输出的内容无法通过 s
 | 路径 | 职责 |
 | --- | --- |
 | `src/api/ai.ts` | SSE client 封装（基于 `fetch` + `ReadableStream`） |
-| `src/components/AiSuggestionPanel.tsx` | 通用侧边/底部面板：流式展示 + diff 高亮 + 采纳/拒绝 |
-| `src/components/AiGenerateModal.tsx` | 从零生成入口（textarea + JD textarea + 模板下拉） |
-| `src/types/ai.ts` | AI 相关 TS 类型：Suggestion、SSEEvent、SectionRewriteRequest 等 |
+| `src/api/targetJobs.ts` | 目标岗位 CRUD 客户端 |
+| `src/components/AiSuggestionPanel.tsx` | 通用侧边/底部面板：流式展示 + **frozen/rewriteable 字段分组** + diff 高亮 + 采纳/拒绝 |
+| `src/components/AiGenerateModal.tsx` | 从零生成入口（textarea + 目标岗位下拉/新建 + 模板下拉） |
+| `src/components/TargetJobCard.tsx` | 编辑器顶部目标岗位绑定卡片 |
+| `src/components/TargetJobPicker.tsx` | 目标岗位选择器（弹模态：选已有 / 新建） |
+| `src/pages/TargetJobsPage.tsx` | 目标岗位管理独立页 `/target-jobs` |
+| `src/types/ai.ts` | AI 相关 TS 类型：Suggestion、SSEEvent、SectionRewriteRequest |
+| `src/types/targetJob.ts` | TargetJob TS 类型 |
+
+### 路由变化
+
+```
+新增路由：
+- /target-jobs          目标岗位管理页（独立页）
+```
+
+`TemplateGallery` 顶部加按钮「AI 快速生成」保持原状；新增「管理目标岗位」入口跳 `/target-jobs`。
 
 ### 状态管理
 
-- `AiSuggestionPanel` 接收 `document` + `onAccept(newSectionContent)` 回调
-- `ResumeEditor` 维护 `suggestions: Record<sectionId, Suggestion>` 状态
-- "采纳" → `onAccept` → `ResumeEditor` 更新 `document` → 现有 autosave 触发 `PUT /api/resumes/:id`（走 `resumesvc.Service.Update`）
-- "拒绝" → 清掉 suggestion，文档不变
+- `AiSuggestionPanel` 接收 `document` + `sectionType` + `onAccept(rewriteOutput)` 回调
+  - `rewriteOutput` 是窄版 schema（只含 rewriteable 字段 + id），前端按 `id` 合入原 section
+- `ResumeEditor` 维护：
+  - `document: ResumeDocument`（含 `targetJobId`）
+  - `targetJob?: TargetJob`（已加载的目标岗详情，用于顶部卡片显示）
+  - `suggestions: Record<sectionId, Suggestion>`
+- 切换目标岗时，**不清空已有 suggestions**（避免"一切换就清空"），但**在 suggestion 面板顶部加黄条**："目标岗位已变更，当前建议基于 [旧公司/旧岗位]，是否重新润色？"
+- "采纳" → 按 `id` 合入 document → autosave 触发 `PUT /api/resumes/:id`（走 `resumesvc.Service.Update`）
+- "拒绝" → 清掉对应 suggestion，文档不变
 
 ### UX 细节
 
 - 按钮放在 section header，icon + tooltip，文案"AI 润色"
+- **education / honours 节不显示 AI 润色按钮**（无可改写字段）
 - 按钮 disabled 条件：section 为空 / 正在流式
 - 面板打开时主内容区加 `aria-busy="true"`，键盘焦点 trap
 - 移动端：面板从底部抽屉上滑
 - 错误展示走现有 toast 风格
+
+### 目标岗位管理页（`/target-jobs`）
+
+- 列表按 `updated_at DESC`，每张卡片：company（或"未指定公司"）· position · JD 预览 50 字 · [编辑] [删除]
+- 「+ 新建」按钮 → 弹表单模态：company（可选）、position（必填）、requirements（textarea，markdown 提示）
+- 编辑：相同表单，预填值
+- 删除：confirm 对话框；删除前查询"被多少简历引用"：
+  - 0 引用 → 直接删
+  - N 引用 → 弹窗"这份目标岗位被 N 份简历引用，是否同时清空这些简历的引用？"（提供勾选）
+
+### 编辑器顶部目标岗位卡片
+
+位置：`ResumeEditor` 顶部，`profile` 节之后、`sections` 之前。
+
+```
+┌─────────────────────────────────────────────┐
+│  🎯 目标岗位                                  │
+│  ──────────────────────────────────────────  │
+│  当前：字节跳动 · 高级后端工程师    [更换]   │
+│                                              │
+│  JD 预览（展开/收起）：                      │
+│  > 负责 ToB 营销中台后端架构设计...           │
+│  > 推动 AI 能力在营销场景的落地...            │
+│                                              │
+│  [清除绑定]                                  │
+└─────────────────────────────────────────────┘
+```
+
+行为：
+- 未绑定：显示「+ 选择目标岗位」按钮 → 弹 `TargetJobPicker`
+- 已绑定：显示 JD 预览 + 「更换」「清除绑定」操作
+- 绑定后保存到 `document.targetJobId`，跟着 autosave 走
+- 更换 / 清除：弹确认（避免误操作）→ 触发 `PUT /api/resumes/:id`
+
+### AI 润色触发流程
+
+```
+点 "AI 润色" 按钮
+  ↓
+[A] 未选择目标岗位
+  ├─ 弹确认："未选择目标岗位，AI 润色将基于通用标准。继续？"
+  │   ├─ 取消 → return
+  │   └─ 继续 → 走流程 (B)
+[B] 面板打开，状态: loading
+  ├─ 前端 POST /api/ai/resumes/:id/section/rewrite
+  │   body: { sectionType, instructions? }  // targetJob 由后端按 resumeId 取
+  ├─ 后端 handler:
+  │   1. principalFromContext
+  │   2. resumeRepo.Get(tenant, id)
+  │   3. 若 resume.targetJobId != nil → targetJobRepo.Get(tenant, id)
+  │   4. 构造 context = { resume, section, targetJob, instructions }
+  │   5. ai.Service.RewriteSection(ctx, context)  // 纯 LLM 包装
+  │   6. SSE 流回前端
+[C] 面板状态: streaming
+  ├─ 逐字显示 thinking
+  └─ 到达最终 JSON → 校验 → 状态: ready
+[D] 面板状态: ready，展示 diff
+  ├─ 字段分两组：
+  │   ├─ 🔒 Frozen（原样保留，灰显 + 锁图标）: company, role, dates ...
+  │   └─ ✏️  Rewriteable（diff 高亮）: achievements, highlightsMarkdown ...
+  ├─ 按钮：[采纳] [拒绝] [重新生成]
+  └- 采纳 → 按 id 合入 document → 触发 autosave → 走 PUT /api/resumes/:id
+            （PUT 由 resumesvc.Service.Update 处理，租户隔离自动兜底）
+```
+
+### 从零生成模态（升级版）
+
+```
+┌─────────────────────────────────────────────┐
+│  AI 快速生成                                 │
+│  ──────────────────────────────────────────  │
+│  自我介绍（必填，≥ 30 字）                   │
+│  ┌─────────────────────────────────────────┐│
+│  │ 我叫张三，2020 年复旦毕业后在字节做后端... ││
+│  └─────────────────────────────────────────┘│
+│                                              │
+│  目标岗位（可选）                            │
+│  [▼ 已有目标岗位] [+ 新建目标岗位] [跳过]   │
+│                                              │
+│  模板（必填）                                │
+│  [▼ minimal  ▼]                            │
+│                                              │
+│              [取消]           [开始生成]    │
+└─────────────────────────────────────────────┘
+```
+
+- 「目标岗位」下拉选已有，或新建
+- 选中的目标岗 JD 作为 prompt 上下文喂给 LLM
+- 「跳过」= "无目标岗的纯生成"（保留原行为）
+- 模板选定后只决定占位结构，不影响内容字段
+
+### AI 建议面板视觉（带字段分组）
+
+```
+┌─────────────────────────────────────────────┐
+│  AI 润色建议                          [×]  │
+│  ──────────────────────────────────────────  │
+│  思路: 我注意到项目 highlightsMarkdown 偏    │
+│  流水账，已按 STAR 重写并补量化。            │
+│                                              │
+│  ── 项目经历 #sample-project-copilot ──     │
+│                                              │
+│  🔒 不可改字段（保留）                       │
+│  • 名称: AI 创作副驾                          │
+│  • 角色: 产品负责人                           │
+│  • 时间: 2024.03 - 2024.09                   │
+│                                              │
+│  ✏️  AI 改写                                  │
+│  introduction (改):                          │
+│    - 面向内容创作者的 AI 灵感生成与改写工具  │
+│    + 面向内容创作者的 AI 灵感生成、改写与    │
+│      排版工具，覆盖选题/提纲/初稿三大场景   │
+│                                              │
+│  achievements (改):                          │
+│    - 工具周使用频次提升 26%                  │
+│    + 工具周使用频次由 1.2 次提升至 1.5 次     │
+│      （+26%），满意度 4.7/5                  │
+│                                              │
+│  highlightsMarkdown (改):  ...               │
+│                                              │
+│  [拒绝]              [重新生成]    [采纳]   │
+└─────────────────────────────────────────────┘
+```
 
 ### 从零生成 UX
 
@@ -474,24 +750,34 @@ data: {"code": "VALIDATION_FAILED", "message": "AI 输出的内容无法通过 s
 ### 节选润色
 
 1. 用户在 `ResumeEditor` 选中一个 section，点「AI 润色」
-2. `AiSuggestionPanel` 打开，状态 `loading`
-3. 前端 POST `/api/ai/resumes/:id/section/rewrite`，body 含 `sectionType / currentContent / instructions?`
-4. 后端 handler 鉴权后调 `ai.Service.RewriteSection`
-5. `ai.Service` 拼 prompt、配 JSON schema、调 eino、产 `RewriteEvent` 流
-6. handler 把流翻译成 SSE 帧
-7. 前端逐 event 更新面板；最终展示 diff
-8. 用户点「采纳」→ `onAccept(newContent)` → `ResumeEditor` 更新 `document` → autosave 触发 `PUT /api/resumes/:id` → `resumesvc.Service.Update` → 仓储层兜底租户隔离
-9. 用户点「拒绝」→ 关闭面板，文档不变
+2. 若未绑定目标岗 → 弹确认（"未选择目标岗位，AI 润色将基于通用标准"）→ 用户确认后继续
+3. `AiSuggestionPanel` 打开，状态 `loading`
+4. 前端 POST `/api/ai/resumes/:id/section/rewrite`，body 含 `sectionType / instructions?`（targetJob 由后端按 resumeId 取，前端不传）
+5. 后端 handler 鉴权后：
+   - 加载 resume（`resumeRepo.Get`）
+   - 若 `resume.content.targetJobId != nil` → 加载 targetJob（`targetJobRepo.Get`）
+   - 构造 context = { resume, section, targetJob, instructions }
+   - 调 `ai.Service.RewriteSection(ctx, context)`
+6. `ai.Service`（零 DB 访问）：
+   - 选窄版 rewrite schema（按 sectionType）
+   - 拼 prompt（system + 通用硬约束 + 改写策略 + 字段说明 + targetJob JD + user_instructions）
+   - 调 eino、产 `RewriteEvent` 流
+7. handler 把流翻译成 SSE 帧
+8. 前端逐 event 更新面板；最终展示 diff（frozen 灰显 + rewriteable 高亮）
+9. 用户点「采纳」→ `onAccept(rewriteOutput)` → 前端按 id 合入 document → autosave 触发 `PUT /api/resumes/:id` → `resumesvc.Service.Update` → 仓储层兜底租户隔离
+10. 用户点「拒绝」→ 关闭面板，文档不变
 
 ### 从零生成
 
 1. `TemplateGallery` 点「AI 快速生成」→ 打开 `AiGenerateModal`
-2. 用户填表提交
-3. POST `/api/ai/resumes/generate`
-4. 后端 handler 鉴权后调 `ai.Service.GenerateResume`
-5. `ai.Service` 拼 prompt（含 JD）、配 `ResumeDocument` schema、调 eino、产 `RewriteEvent` 流
+2. 用户填表（含目标岗下拉/新建/跳过）
+3. POST `/api/ai/resumes/generate`，body 含 `rawText, targetJobId?, jobDescription?, templateId`
+4. 后端 handler 鉴权后：
+   - 若 `targetJobId != nil` → 加载 targetJob
+   - 调 `ai.Service.GenerateResume(ctx, context)`（context 含 rawText + targetJob + jobDescription）
+5. `ai.Service` 拼 prompt、配 `ResumeDocument` schema、调 eino、产 `RewriteEvent` 流
 6. SSE 推回前端，模态实时展示生成中的字段
-7. 完成 → 「应用到新建简历」→ `POST /api/resumes` → `resumesvc.Service.Create` → 跳到编辑器
+7. 完成 → 「应用到新建简历」→ `POST /api/resumes`（body 含 `targetJobId`）→ `resumesvc.Service.Create`（校验 targetJobId 属于该租户）→ 跳到编辑器
 
 ## 错误处理
 
@@ -503,6 +789,8 @@ data: {"code": "VALIDATION_FAILED", "message": "AI 输出的内容无法通过 s
 | 限流 | v1 暂未实现，留 `// TODO(ai-ratelimit)` 标记 |
 | `OPENAI_API_KEY` 未配置 | HTTP 503 + `{"error":"AI features disabled"}`（仅 dev mode；prod 启动 fail-fast） |
 | 网络抖动 / 上游 5xx | SSE `error` 事件 + HTTP 502 |
+| 简历里 `targetJobId` 引用了不存在 / 别人的目标岗 | handler 视为"目标岗已删除"，继续走润色（不带 targetJob context），前端不感知；如选择严格模式可返回 404 |
+| 创建/更新简历时 `targetJobId` 越权 | `resumesvc.Service` 校验 targetJob 属于 principal.TenantID，否则 400 |
 
 前端错误展示：复用现有 error 风格，面板不消失，用户可点"重试"按钮重发请求。
 
@@ -513,48 +801,61 @@ data: {"code": "VALIDATION_FAILED", "message": "AI 输出的内容无法通过 s
 | 层 | 文件 | 重点 |
 | --- | --- | --- |
 | 单元 | `internal/ai/prompts/*_test.go` | 模板渲染、占位符、XML 包裹正确性 |
-| 单元 | `internal/ai/schemas/*_test.go` | JSON schema 反射生成正确、覆盖每种 section type |
+| 单元 | `internal/ai/schemas/*_test.go` | JSON schema 反射生成正确、覆盖每种 section type；**重点：rewrite schema 字段集严格窄于原 schema**（frozen 字段不得出现） |
 | 单元 | `internal/ai/observability_test.go` | hooks 触发、结构化字段完整 |
 | 单元 | `internal/llm/client_test.go` | env 解析、缺 key 行为 |
-| 集成 | `internal/httpapi/ai_handler_test.go` | SSE 顺序、错误事件、auth 中间件 |
-| 集成 | `internal/httpapi/router_test.go` | `/api/ai/...` 路由注册、`APP_ENV=production` 缺 key 启动 fail |
-| 新增 | `internal/resumesvc/service_test.go` | service 层 create/update 业务逻辑（avatar retain、错误归一） |
-| 现有 | 全部保持通过 | 现有 182 个测试 file 全绿，**不修改 `validResumeContent` 等核心校验** |
+| 单元 | `internal/targetjob/repository_test.go` | CRUD + tenant 隔离（WHERE tenant_id 过滤） |
+| 集成 | `internal/httpapi/ai_handler_test.go` | SSE 顺序、错误事件、auth 中间件、context 加载（resume + targetJob）、targetJobId 不存在的容错 |
+| 集成 | `internal/httpapi/target_handler_test.go` | CRUD 路径、租户隔离、未授权 |
+| 集成 | `internal/httpapi/router_test.go` | `/api/ai/...` + `/api/target-jobs/...` 路由注册、`APP_ENV=production` 缺 key 启动 fail |
+| 新增 | `internal/resumesvc/service_test.go` | service 层 create/update 业务逻辑（avatar retain、错误归一、**targetJobId 越权校验**） |
+| 现有 | 全部保持通过 | 现有 182 个测试 file 全绿，**不修改 `validResumeContent` 等核心校验**（仅放过新增的 `targetJobId` 可选字段） |
 
 **LLM mock**：`internal/llm/testing/` 写一个 `FakeChatModel`（实现 eino `model.ChatModel` 接口），按录制脚本返回 JSON 字符串。前述所有测试**不连真实 LLM**。
+
+**rewrite schema 收紧测试**（关键）：每个 section type 一个测试用例，断言 `internal/ai/schemas/rewrite_{type}.go` 生成的 JSON schema 中**不包含** frozen 字段名（`name, role, startDate, endDate, company, school, location, link, degree, major, college`）。这是防止未来误把 frozen 字段加进 rewrite schema 的回归测试。
 
 ### 前端
 
 | 文件 | 重点 |
 | --- | --- |
 | `src/api/ai.test.ts` | SSE 解析、error 事件、重连 |
-| `src/components/AiSuggestionPanel.test.tsx` | 流式状态机、diff 展示、采纳/拒绝回调 |
-| `src/components/AiGenerateModal.test.tsx` | 表单校验、流式渲染、提交 |
-| `src/components/ResumeEditor.test.tsx` | 新增"AI 润色"按钮可访问、点击触发回调（不改现有断言） |
+| `src/api/targetJobs.test.ts` | CRUD 错误处理 |
+| `src/components/AiSuggestionPanel.test.tsx` | 流式状态机、**frozen/rewriteable 字段分组渲染**、diff 展示、采纳/拒绝回调 |
+| `src/components/AiGenerateModal.test.tsx` | 表单校验（含目标岗下拉）、流式渲染、提交 |
+| `src/components/TargetJobCard.test.tsx` | 绑定/更换/清除交互、JD 预览展开收起 |
+| `src/components/ResumeEditor.test.tsx` | 新增"AI 润色"按钮可访问、点击触发回调；**education/honours 节不显示 AI 润色按钮**（不改现有断言） |
+| `src/pages/TargetJobsPage.test.tsx` | 列表、新建、编辑、删除（带引用计数确认） |
 
 ### 冒烟（不进 CI）
 
-docs 中给出本地手动冒烟步骤：起 backend、设 `OPENAI_API_KEY`、用 `dev/login` 登录、走两次「润色」+ 一次「生成」，确认 SSE 顺序和落库内容。
+docs 中给出本地手动冒烟步骤：起 backend、设 `OPENAI_API_KEY`、用 `dev/login` 登录、走两次「润色」+ 一次「生成」+ 一次「目标岗管理」全流程，确认 SSE 顺序和落库内容。
 
 ## 实施步骤（高层，详细 plan 由 writing-plans 产出）
 
 1. 加 eino 依赖，写 `internal/llm` 工厂 + `FakeChatModel` 测试替身
-2. **抽 `internal/resumesvc/` 独立包**：`service.go` + 单测；`resume_handler` 改薄调它
-3. 写 `internal/ai/observability.go`：hooks 结构 + 默认 logrus 实现 + 单测
-4. 写 `internal/ai/prompts/*.tmpl` + embed.FS（system_common / rewriting_strategy / system_generate + 7 个 section_*.tmpl）
-5. 写 `internal/ai/schemas/*.go`：7 种 section 的 Go struct + ResumeDocument + JSON schema 反射生成
-6. 写 `internal/ai/service.go`：拼 prompt、配 schema、调 eino、产 event 流、串 hooks
-7. 写 `internal/httpapi/ai_handler.go` + SSE writer（入口加 `// TODO(ai-ratelimit)` 标记）
-8. router 注册 `/api/ai/...`
-9. `cmd/server/main.go` 注入 LLM config + AI service + hooks；prod 缺 key fail-fast
-10. 前端 `api/ai.ts`（SSE client）
-11. 前端 `types/ai.ts`
-12. 前端 `AiSuggestionPanel.tsx` + 单测
-13. 前端 `AiGenerateModal.tsx` + 单测
-14. `ResumeEditor` 集成润色按钮
-15. `TemplateGallery` 集成生成入口
-16. README 增加 env / 配置 / 限制章节
-17. 跑全量测试 + 冒烟
+2. **DB 迁移 v2**：新增 `target_jobs` 表 + 索引
+3. 写 `internal/targetjob/` 独立包：model + Repository + 单测
+4. 写 `internal/httpapi/target_handler.go` + router 注册 + 单测
+5. **抽 `internal/resumesvc/` 独立包**：`service.go` + 单测；`resume_handler` 改薄调它；`validResumeContent` 放过 `targetJobId` 可选字段；service 内对 `targetJobId` 做租户归属校验
+6. 写 `internal/ai/observability.go`：hooks 结构 + 默认 logrus 实现 + 单测
+7. 写 `internal/ai/prompts/*.tmpl` + embed.FS（system_common / rewriting_strategy / system_generate + 7 个 section_*.tmpl + target_job_context.tmpl 单独段）
+8. 写 `internal/ai/schemas/*.go`：7 种 section 的 Go struct + ResumeDocument + JSON schema 反射生成 + **窄版 rewrite schema** + 单元测试（含 frozen 字段不出现回归）
+9. 写 `internal/ai/service.go`：拼 prompt（含 targetJob context 注入）、配 schema、调 eino、产 event 流、串 hooks
+10. 写 `internal/httpapi/ai_handler.go` + SSE writer（入口加 `// TODO(ai-ratelimit)` 标记；handler 加载 resume + targetJob context）
+11. router 注册 `/api/ai/...`
+12. `cmd/server/main.go` 注入 LLM config + AI service + targetJobRepo + hooks；prod 缺 key fail-fast
+13. 前端 `api/ai.ts`（SSE client）
+14. 前端 `api/targetJobs.ts` + 单测
+15. 前端 `types/ai.ts` + `types/targetJob.ts`
+16. 前端 `pages/TargetJobsPage.tsx` + 路由 + 单测
+17. 前端 `components/TargetJobPicker.tsx` + `TargetJobCard.tsx` + 单测
+18. 前端 `AiSuggestionPanel.tsx`（带 frozen/rewriteable 字段分组） + 单测
+19. 前端 `AiGenerateModal.tsx`（含目标岗下拉/新建/跳过） + 单测
+20. `ResumeEditor` 集成：顶部 `TargetJobCard` + section header 加 AI 润色按钮（education/honours 隐藏）
+21. `TemplateGallery` 集成生成入口 + 「管理目标岗位」链接
+22. README 增加 env / 配置 / 限制 / 目标岗管理章节
+23. 跑全量测试 + 冒烟
 
 ## 范围边界
 
@@ -568,11 +869,17 @@ docs 中给出本地手动冒烟步骤：起 backend、设 `OPENAI_API_KEY`、�
 - 限流器实现（v1 留 `// TODO(ai-ratelimit)` 标记）
 - AI service 写库（保持纯 LLM 包装，副作用全在 `resumesvc.Service`）
 - 限流相关的 `AI_RATE_LIMIT_PER_MIN` 环境变量（v1 暂未注册）
+- education / honours 的 AI 润色（无可改写字段）
+- 目标岗位版本历史/软删除（v1 硬删除 + 引用清空弹窗确认）
 
 **v1 必做**：
-- v2 `ResumeDocument` schema 不动
+- v2 `ResumeDocument` schema 不动（仅扩展可选 `targetJobId` 字段）
 - 现有 182 个测试 file 全绿
 - 抽 `internal/resumesvc/` 作为唯一简历创建/更新入口（独立于 `internal/resume` store 和 `internal/ai` AI 层）
-- 三层分明：`internal/resume/`（store）/`internal/resumesvc/`（service）/`internal/httpapi/`（router+handler），互不交叉 import
-- 至少 1 个真实 LLM 冒烟通过（手动）
+- 新增 `internal/targetjob/` 独立包：model + Repository + CRUD
+- 四层分明：`internal/resume/`（store）/`internal/targetjob/`（store）/`internal/resumesvc/`（service）/`internal/ai/`（AI）/`internal/httpapi/`（router+handler），互不交叉 import
+- **rewrite schema 严格窄于原 schema**，frozen 字段不暴露给 LLM（带回归测试）
+- education / honours 节不显示 AI 润色按钮
+- 目标岗位独立管理页 + 编辑器顶部绑定卡片 + 切换不清空已有建议但加提示
+- 至少 1 个真实 LLM 冒烟通过（手动，含目标岗 + 无目标岗两种场景）
 - 观测 hooks 落 logrus（结构化字段），未来接 metrics 零侵入
