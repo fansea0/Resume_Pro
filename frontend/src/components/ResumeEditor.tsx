@@ -1,5 +1,11 @@
-import { useId, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import { getTargetJob } from '../api/targetJobs';
 import { uploadResumeAvatar } from '../api/uploads';
+import type {
+  ExperienceRewriteContent,
+  ProjectRewriteContent,
+  SummaryRewriteContent,
+} from '../types/ai';
 import type {
   CampusItem,
   EducationItem,
@@ -12,6 +18,7 @@ import type {
   ResumeSectionType,
   SkillItem,
 } from '../types/resume';
+import type { TargetJob } from '../types/targetJob';
 import {
   createCampusSection,
   createEducationSection,
@@ -22,6 +29,8 @@ import {
   createSummarySection,
   createWorkSection,
 } from '../types/resume';
+import { AiSuggestionPanel } from './AiSuggestionPanel';
+import { TargetJobCard } from './TargetJobCard';
 
 interface ResumeEditorProps {
   document: ResumeDocument;
@@ -145,7 +154,92 @@ const sectionLabels: Record<ResumeSectionType, string> = {
   education: '教育经历', skills: '专业技能', campus: '校园经历', honours: '荣誉奖项',
 };
 
+type RewriteableResumeSection = Extract<ResumeSection, { type: 'summary' | 'work' | 'internship' | 'project' }>;
+type RewriteContent = SummaryRewriteContent | ExperienceRewriteContent | ProjectRewriteContent;
+
+function isRewriteableSection(section: ResumeSection): section is RewriteableResumeSection {
+  return section.type === 'summary'
+    || section.type === 'work'
+    || section.type === 'internship'
+    || section.type === 'project';
+}
+
+function hasRewriteableContent(section: RewriteableResumeSection) {
+  return section.type === 'summary'
+    ? section.content.markdown.trim() !== ''
+    : section.content.items.length > 0;
+}
+
+function mergeExperienceRewrite(
+  section: Extract<RewriteableResumeSection, { type: 'work' | 'internship' }>,
+  rewrite: ExperienceRewriteContent,
+): ResumeSection {
+  const rewriteById = new Map(rewrite.items.map((item) => [item.id, item]));
+  return {
+    ...section,
+    content: {
+      items: section.content.items.map((item) => {
+        const rewritten = rewriteById.get(item.id);
+        if (!rewritten) return item;
+        return {
+          ...item,
+          ...(rewritten.achievements === undefined ? {} : { achievements: rewritten.achievements }),
+          ...(rewritten.highlightsMarkdown === undefined ? {} : { highlightsMarkdown: rewritten.highlightsMarkdown }),
+        };
+      }),
+    },
+  };
+}
+
+function mergeProjectRewrite(
+  section: Extract<RewriteableResumeSection, { type: 'project' }>,
+  rewrite: ProjectRewriteContent,
+): ResumeSection {
+  const rewriteById = new Map(rewrite.items.map((item) => [item.id, item]));
+  return {
+    ...section,
+    content: {
+      items: section.content.items.map((item) => {
+        const rewritten = rewriteById.get(item.id);
+        if (!rewritten) return item;
+        return {
+          ...item,
+          ...(rewritten.introduction === undefined ? {} : { introduction: rewritten.introduction }),
+          ...(rewritten.achievements === undefined ? {} : { achievements: rewritten.achievements }),
+          ...(rewritten.highlightsMarkdown === undefined ? {} : { highlightsMarkdown: rewritten.highlightsMarkdown }),
+        };
+      }),
+    },
+  };
+}
+
+function mergeRewrite(section: RewriteableResumeSection, rewrite: RewriteContent): ResumeSection {
+  if (section.type === 'summary') {
+    return { ...section, content: { markdown: (rewrite as SummaryRewriteContent).markdown } };
+  }
+  if (section.type === 'project') {
+    return mergeProjectRewrite(section, rewrite as ProjectRewriteContent);
+  }
+  return mergeExperienceRewrite(section, rewrite as ExperienceRewriteContent);
+}
+
 export function ResumeEditor({ document, resumeId, onChange }: ResumeEditorProps) {
+  const [targetJob, setTargetJob] = useState<TargetJob>();
+  const [activeAiSection, setActiveAiSection] = useState<RewriteableResumeSection>();
+
+  useEffect(() => {
+    let current = true;
+    setTargetJob(undefined);
+    if (document.targetJobId === undefined) return () => { current = false; };
+    void getTargetJob(document.targetJobId).then((item) => {
+      if (current) setTargetJob(item);
+    }).catch(() => {
+      // The document remains the source of truth. A later id change retries the
+      // detail load while autosave keeps the persisted binding untouched.
+    });
+    return () => { current = false; };
+  }, [document.targetJobId]);
+
   const updateProfile = (field: keyof ResumeProfile, value: string) => onChange({ ...document, profile: { ...document.profile, [field]: value } });
   const updateSection = (id: string, update: (section: ResumeSection) => ResumeSection) => onChange({ ...document, sections: document.sections.map((section) => section.id === id ? update(section) : section) });
   const addSection = (type: ResumeSectionType) => onChange({ ...document, sections: [...document.sections, sectionFactories[type](nextId())] });
@@ -157,6 +251,10 @@ export function ResumeEditor({ document, resumeId, onChange }: ResumeEditorProps
     onChange({ ...document, sections });
   };
   const removeSection = (id: string) => onChange({ ...document, sections: document.sections.filter((section) => section.id !== id) });
+  const acceptRewrite = (sectionId: string, rewrite: RewriteContent) => {
+    updateSection(sectionId, (section) => isRewriteableSection(section) ? mergeRewrite(section, rewrite) : section);
+    setActiveAiSection(undefined);
+  };
 
   return (
     <form className="resume-editor" onSubmit={(event) => event.preventDefault()}>
@@ -172,30 +270,68 @@ export function ResumeEditor({ document, resumeId, onChange }: ResumeEditorProps
         </div>
       </DetailsSection>
 
+      <TargetJobCard
+        onChange={(id) => onChange({ ...document, targetJobId: id ?? undefined })}
+        targetJob={targetJob}
+      />
+
       {document.sections.map((section, index) => <SectionCard
         index={index}
         key={section.id}
         sectionCount={document.sections.length}
         section={section}
         onMove={moveSection}
+        onPolish={isRewriteableSection(section) ? () => setActiveAiSection(section) : undefined}
         onRemove={removeSection}
         onUpdate={updateSection}
+        polishDisabled={isRewriteableSection(section) && (!resumeId || !hasRewriteableContent(section))}
       />)}
 
       <DetailsSection title="添加区块">
         <div className="editor-add-section-grid">{(Object.keys(sectionLabels) as ResumeSectionType[]).map((type) => <AddSectionButton key={type} label={sectionLabels[type]} onClick={() => addSection(type)} />)}</div>
       </DetailsSection>
+
+      {resumeId && activeAiSection?.type === 'summary' ? <AiSuggestionPanel
+        onAccept={(rewrite) => acceptRewrite(activeAiSection.id, rewrite)}
+        onClose={() => setActiveAiSection(undefined)}
+        originalSection={activeAiSection}
+        resumeId={resumeId}
+        sectionType="summary"
+      /> : null}
+      {resumeId && activeAiSection?.type === 'work' ? <AiSuggestionPanel
+        onAccept={(rewrite) => acceptRewrite(activeAiSection.id, rewrite)}
+        onClose={() => setActiveAiSection(undefined)}
+        originalSection={activeAiSection}
+        resumeId={resumeId}
+        sectionType="work"
+      /> : null}
+      {resumeId && activeAiSection?.type === 'internship' ? <AiSuggestionPanel
+        onAccept={(rewrite) => acceptRewrite(activeAiSection.id, rewrite)}
+        onClose={() => setActiveAiSection(undefined)}
+        originalSection={activeAiSection}
+        resumeId={resumeId}
+        sectionType="internship"
+      /> : null}
+      {resumeId && activeAiSection?.type === 'project' ? <AiSuggestionPanel
+        onAccept={(rewrite) => acceptRewrite(activeAiSection.id, rewrite)}
+        onClose={() => setActiveAiSection(undefined)}
+        originalSection={activeAiSection}
+        resumeId={resumeId}
+        sectionType="project"
+      /> : null}
     </form>
   );
 }
 
-function SectionCard({ section, index, sectionCount, onUpdate, onMove, onRemove }: {
+function SectionCard({ section, index, sectionCount, onUpdate, onMove, onPolish, onRemove, polishDisabled }: {
   section: ResumeSection;
   index: number;
   sectionCount: number;
   onUpdate: (id: string, update: (section: ResumeSection) => ResumeSection) => void;
   onMove: (index: number, offset: number) => void;
+  onPolish?: () => void;
   onRemove: (id: string) => void;
+  polishDisabled?: boolean;
 }) {
   const update = (updateSection: (section: ResumeSection) => ResumeSection) => onUpdate(section.id, updateSection);
   const label = section.title;
@@ -203,6 +339,7 @@ function SectionCard({ section, index, sectionCount, onUpdate, onMove, onRemove 
     <div className="editor-card__heading">
       <Field label={`区块标题 ${index + 1}`} value={section.title} onChange={(title) => update((current) => ({ ...current, title }))} />
       <div className="editor-section__actions">
+        {onPolish ? <button aria-label={`AI 润色 ${label}`} disabled={polishDisabled} onClick={onPolish} title={`AI 润色 ${label}`} type="button"><span aria-hidden="true">✦</span> AI 润色</button> : null}
         <IconButton disabled={index === 0} icon="moveUp" label={`上移 ${label}`} onClick={() => onMove(index, -1)} />
         <IconButton disabled={index === sectionCount - 1} icon="moveDown" label={`下移 ${label}`} onClick={() => onMove(index, 1)} />
         <IconButton icon={section.visible ? 'eyeOff' : 'eye'} label={`${section.visible ? '隐藏' : '显示'} ${label}`} onClick={() => update((current) => ({ ...current, visible: !current.visible }))} />
