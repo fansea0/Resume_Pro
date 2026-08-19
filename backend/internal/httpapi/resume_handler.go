@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -264,6 +265,12 @@ func validResumeContent(raw json.RawMessage, title, templateID string) bool {
 	profile, ok := document["profile"].(map[string]any)
 	if !ok || !hasStringFields(profile, "fullName", "headline", "email", "phone", "location", "website", "avatarUrl", "avatarStorageKey") || !validAvatarStorageKey(profile["avatarStorageKey"].(string)) {
 		return false
+	}
+	if targetJobID, ok := document["targetJobId"]; ok {
+		value, ok := targetJobID.(float64)
+		if !ok || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 || math.Trunc(value) != value {
+			return false
+		}
 	}
 	sections, ok := document["sections"].([]any)
 	if !ok || len(sections) > maxResumeSections {

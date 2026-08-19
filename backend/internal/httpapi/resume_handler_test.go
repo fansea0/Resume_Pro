@@ -248,6 +248,38 @@ func TestResumeCreateAndUpdateRequireCompleteV2Content(t *testing.T) {
 	}
 }
 
+func TestValidResumeContentAllowsOnlyPositiveIntegralTargetJobID(t *testing.T) {
+	withTargetJobID := func(value string) json.RawMessage {
+		content := strings.TrimSuffix(validV2ResumeContent("Valid", "minimal"), "}") + `,"targetJobId":` + value + `}`
+		return json.RawMessage(content)
+	}
+
+	cases := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "omitted", value: "", want: true},
+		{name: "positive integer", value: "42", want: true},
+		{name: "zero", value: "0", want: false},
+		{name: "negative integer", value: "-1", want: false},
+		{name: "fraction", value: "1.5", want: false},
+		{name: "string", value: `"42"`, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			content := json.RawMessage(validV2ResumeContent("Valid", "minimal"))
+			if tc.value != "" {
+				content = withTargetJobID(tc.value)
+			}
+			if got := validResumeContent(content, "Valid", "minimal"); got != tc.want {
+				t.Fatalf("validResumeContent(targetJobId=%s) = %t, want %t", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestResumeCreateAndUpdateRequireMatchingMetadataAndBoundedContent(t *testing.T) {
 	router, session := testRouter(t)
 	created := requestJSON(t, router, http.MethodPost, "/api/resumes", validResumeRequest("Valid", "minimal"), session)
