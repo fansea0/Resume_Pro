@@ -15,6 +15,7 @@ import (
 
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/resume"
+	"resumepro/backend/internal/resumesvc"
 	"resumepro/backend/internal/store"
 	"resumepro/backend/internal/targetjob"
 	"resumepro/backend/internal/templates"
@@ -48,9 +49,11 @@ func TestNewRouterRegistersTargetJobRoutes(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	require.NoError(t, store.Migrate(context.Background(), db))
 
-	router := NewRouter(auth.NewRepository(db), resume.NewRepository(db), templates.NewRepository(db), RouterConfig{
+	resumeRepository := resume.NewRepository(db)
+	router := NewRouter(auth.NewRepository(db), resumeRepository, templates.NewRepository(db), RouterConfig{
 		JWTSecret:        "test-secret-32-chars-minimum-len-padding",
 		TargetJobService: targetjob.NewService(targetjob.NewRepository(db)),
+		ResumesvcService: resumesvc.NewService(resumeRepository, nil, targetjob.NewService(targetjob.NewRepository(db))),
 	})
 
 	routes := make(map[string]bool)

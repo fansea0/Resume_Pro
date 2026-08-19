@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,10 +15,12 @@ import (
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/resume"
+	"resumepro/backend/internal/resumesvc"
 )
 
 type resumeHandler struct {
 	repository *resume.Repository
+	service    *resumesvc.Service
 	storage    files.FileStorage
 }
 
@@ -36,8 +37,8 @@ const (
 	maxResumeStringLength     = 20_000
 )
 
-func newResumeHandler(repository *resume.Repository, storage files.FileStorage) *resumeHandler {
-	return &resumeHandler{repository: repository, storage: storage}
+func newResumeHandler(service *resumesvc.Service, repository *resume.Repository, storage files.FileStorage) *resumeHandler {
+	return &resumeHandler{service: service, repository: repository, storage: storage}
 }
 
 func (h *resumeHandler) list(context *gin.Context) {
@@ -54,35 +55,43 @@ func (h *resumeHandler) list(context *gin.Context) {
 	writeJSON(context, http.StatusOK, items)
 }
 
-func (h *resumeHandler) create(context *gin.Context) {
-	input, ok := decodeInput(context)
+func (h *resumeHandler) create(ginCtx *gin.Context) {
+	input, ok := decodeInput(ginCtx)
 	if !ok {
 		return
 	}
-	principal, ok := principalFromContext(context)
+	principal, ok := principalFromContext(ginCtx)
 	if !ok {
-		writeError(context, http.StatusUnauthorized, "authentication required")
+		writeError(ginCtx, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	if !validAvatarBinding(input.Content, principal, h.storage) {
-		writeError(context, http.StatusBadRequest, "avatar URL and storage key must be a valid matching pair")
+		writeError(ginCtx, http.StatusBadRequest, "avatar URL and storage key must be a valid matching pair")
 		return
 	}
-	if err := h.retainAvatar(context.Request.Context(), principal, input.Content); err != nil {
-		writeError(context, http.StatusInternalServerError, "could not retain avatar image")
-		return
-	}
-	item, err := h.repository.Create(context.Request.Context(), resume.CreateInput{TenantID: principal.TenantID, AvatarOwner: avatarOwner(principal), Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
+	item, err := h.service.Create(ginCtx.Request.Context(), resumesvc.CreateInput{
+		Principal:  principal,
+		Title:      input.Title,
+		TemplateID: input.TemplateID,
+		Content:    input.Content,
+	})
 	if err != nil {
-		if errors.Is(err, resume.ErrAvatarKeyInUse) || errors.Is(err, resume.ErrAvatarKeyReserved) {
-			writeError(context, http.StatusConflict, "avatar image is already used by another resume")
+		if strings.Contains(err.Error(), "target job") {
+			writeError(ginCtx, http.StatusBadRequest, err.Error())
 			return
 		}
-		h.releaseAvatar(context.Request.Context(), principal, input.Content)
-		writeError(context, http.StatusInternalServerError, "could not create resume")
+		if errors.Is(err, resumesvc.ErrAvatarRetention) {
+			writeError(ginCtx, http.StatusInternalServerError, "could not retain avatar image")
+			return
+		}
+		if errors.Is(err, resume.ErrAvatarKeyInUse) || errors.Is(err, resume.ErrAvatarKeyReserved) {
+			writeError(ginCtx, http.StatusConflict, "avatar image is already used by another resume")
+			return
+		}
+		writeError(ginCtx, http.StatusInternalServerError, "could not create resume")
 		return
 	}
-	writeJSON(context, http.StatusCreated, item)
+	writeJSON(ginCtx, http.StatusCreated, item)
 }
 
 func (h *resumeHandler) get(context *gin.Context) {
@@ -102,49 +111,42 @@ func (h *resumeHandler) get(context *gin.Context) {
 	writeJSON(context, http.StatusOK, item)
 }
 
-func (h *resumeHandler) update(context *gin.Context) {
-	id, ok := routeID(context)
+func (h *resumeHandler) update(ginCtx *gin.Context) {
+	id, ok := routeID(ginCtx)
 	if !ok {
 		return
 	}
-	input, ok := decodeInput(context)
+	input, ok := decodeInput(ginCtx)
 	if !ok {
 		return
 	}
-	principal, ok := principalFromContext(context)
+	principal, ok := principalFromContext(ginCtx)
 	if !ok {
-		writeError(context, http.StatusUnauthorized, "authentication required")
+		writeError(ginCtx, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	if !validAvatarBinding(input.Content, principal, h.storage) {
-		writeError(context, http.StatusBadRequest, "avatar URL and storage key must be a valid matching pair")
+		writeError(ginCtx, http.StatusBadRequest, "avatar URL and storage key must be a valid matching pair")
 		return
 	}
-	previous, err := h.repository.Get(context.Request.Context(), principal.TenantID, id)
-	if !handleRepositoryError(context, err) {
+	item, err := h.service.Update(ginCtx.Request.Context(), principal.TenantID, id, resumesvc.UpdateInput{
+		Principal:  principal,
+		Title:      input.Title,
+		TemplateID: input.TemplateID,
+		Content:    input.Content,
+	})
+	if err != nil && strings.Contains(err.Error(), "target job") {
+		writeError(ginCtx, http.StatusBadRequest, err.Error())
 		return
 	}
-	oldKey, newKey := avatarStorageKey(json.RawMessage(previous.Content)), avatarStorageKey(input.Content)
-	retainedNew := h.storage != nil && newKey != "" && newKey != oldKey
-	if retainedNew {
-		if err := h.retainAvatar(context.Request.Context(), principal, input.Content); err != nil {
-			writeError(context, http.StatusInternalServerError, "could not retain avatar image")
-			return
-		}
-	}
-	item, err := h.repository.Update(context.Request.Context(), principal.TenantID, id, resume.UpdateInput{AvatarOwner: avatarOwner(principal), Title: input.Title, TemplateID: input.TemplateID, Content: string(input.Content)})
-	if !handleRepositoryError(context, err) {
-		if retainedNew {
-			if !errors.Is(err, resume.ErrAvatarKeyInUse) && !errors.Is(err, resume.ErrAvatarKeyReserved) {
-				h.releaseAvatar(context.Request.Context(), principal, input.Content)
-			}
-		}
+	if errors.Is(err, resumesvc.ErrAvatarRetention) {
+		writeError(ginCtx, http.StatusInternalServerError, "could not retain avatar image")
 		return
 	}
-	if h.storage != nil && oldKey != "" && oldKey != newKey {
-		_ = h.storage.Release(context.Request.Context(), avatarOwner(principal), oldKey)
+	if !handleRepositoryError(ginCtx, err) {
+		return
 	}
-	writeJSON(context, http.StatusOK, item)
+	writeJSON(ginCtx, http.StatusOK, item)
 }
 
 func validAvatarBinding(raw json.RawMessage, principal auth.Principal, storage files.FileStorage) bool {
@@ -164,61 +166,24 @@ func validAvatarBinding(raw json.RawMessage, principal auth.Principal, storage f
 	return !hasURL || storage == nil || document.Profile.AvatarURL == storage.PublicURL(avatarOwner(principal), document.Profile.AvatarStorageKey)
 }
 
-func (h *resumeHandler) delete(context *gin.Context) {
-	id, ok := routeID(context)
+func (h *resumeHandler) delete(ginCtx *gin.Context) {
+	id, ok := routeID(ginCtx)
 	if !ok {
 		return
 	}
-	principal, ok := principalFromContext(context)
+	principal, ok := principalFromContext(ginCtx)
 	if !ok {
-		writeError(context, http.StatusUnauthorized, "authentication required")
+		writeError(ginCtx, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	previous, err := h.repository.Get(context.Request.Context(), principal.TenantID, id)
-	if !handleRepositoryError(context, err) {
+	if !handleRepositoryError(ginCtx, h.service.Delete(ginCtx.Request.Context(), principal, id)) {
 		return
 	}
-	if !handleRepositoryError(context, h.repository.Delete(context.Request.Context(), principal.TenantID, id)) {
-		return
-	}
-	if oldKey := avatarStorageKey(json.RawMessage(previous.Content)); oldKey != "" && h.storage != nil {
-		_ = h.storage.Release(context.Request.Context(), avatarOwner(principal), oldKey)
-	}
-	context.Status(http.StatusNoContent)
-}
-
-func (h *resumeHandler) releaseAvatar(ctx context.Context, principal auth.Principal, content json.RawMessage) {
-	if h.storage != nil {
-		if key := avatarStorageKey(content); key != "" {
-			_ = h.storage.Release(ctx, avatarOwner(principal), key)
-		}
-	}
-}
-
-func (h *resumeHandler) retainAvatar(ctx context.Context, principal auth.Principal, content json.RawMessage) error {
-	if h.storage == nil {
-		return nil
-	}
-	if key := avatarStorageKey(content); key != "" {
-		return h.storage.Retain(ctx, avatarOwner(principal), key)
-	}
-	return nil
+	ginCtx.Status(http.StatusNoContent)
 }
 
 func avatarOwner(principal auth.Principal) string {
 	return "user-" + strconv.FormatInt(principal.UserID, 10)
-}
-
-func avatarStorageKey(raw json.RawMessage) string {
-	var document struct {
-		Profile struct {
-			AvatarStorageKey string `json:"avatarStorageKey"`
-		} `json:"profile"`
-	}
-	if json.Unmarshal(raw, &document) != nil {
-		return ""
-	}
-	return document.Profile.AvatarStorageKey
 }
 
 func decodeInput(context *gin.Context) (resumeInput, bool) {

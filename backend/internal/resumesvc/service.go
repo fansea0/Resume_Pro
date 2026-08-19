@@ -18,6 +18,8 @@ type Service struct {
 	targetSvc *targetjob.Service
 }
 
+var ErrAvatarRetention = errors.New("avatar retention failed")
+
 func NewService(repo *resume.Repository, storage files.FileStorage, targetSvc *targetjob.Service) *Service {
 	return &Service{repo: repo, storage: storage, targetSvc: targetSvc}
 }
@@ -37,7 +39,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*resume.Resume, e
 	key := avatarStorageKey(in.Content)
 	if s.storage != nil && key != "" {
 		if err := s.storage.Retain(ctx, avatarOwner(in.Principal), key); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", ErrAvatarRetention, err)
 		}
 	}
 
@@ -82,7 +84,7 @@ func (s *Service) Update(ctx context.Context, explicitTenantID, id int64, in Upd
 	retainedNew := s.storage != nil && newKey != "" && newKey != oldKey
 	if retainedNew {
 		if err := s.storage.Retain(ctx, avatarOwner(in.Principal), newKey); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", ErrAvatarRetention, err)
 		}
 	}
 

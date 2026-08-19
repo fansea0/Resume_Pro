@@ -11,6 +11,7 @@ import (
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/resume"
+	"resumepro/backend/internal/resumesvc"
 	"resumepro/backend/internal/targetjob"
 	"resumepro/backend/internal/templates"
 )
@@ -27,6 +28,8 @@ type RouterConfig struct {
 	AvatarDirectory string
 	// TargetJobService is optional until target-job management is enabled.
 	TargetJobService *targetjob.Service
+	// ResumesvcService owns resume mutation business logic.
+	ResumesvcService *resumesvc.Service
 }
 
 var avatarFilenamePattern = regexp.MustCompile(`^[a-f0-9]{64}-[a-f0-9]{64}\.avatar$`)
@@ -61,7 +64,7 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 		router.POST("/api/uploads/avatar", requireAuthentication(service), uploadHandler.avatar)
 	}
 
-	resumeHandler := newResumeHandler(resumeRepository, config.FileStorage)
+	resumeHandler := newResumeHandler(config.ResumesvcService, resumeRepository, config.FileStorage)
 	protected := router.Group("/api/resumes")
 	protected.Use(requireAuthentication(service))
 	protected.GET("", resumeHandler.list)
