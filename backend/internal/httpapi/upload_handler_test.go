@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -112,6 +113,23 @@ func TestAvatarUploadMapsStorageQuotaToTooManyRequests(t *testing.T) {
 	}
 }
 
+func TestAvatarUploadIncludesStorageErrorForDebugging(t *testing.T) {
+	storage := &recordingFileStorage{storeError: errors.New("JPEG uploads are blocked by the storage provider")}
+	router, session := newAvatarUploadTestRouter(t, storage)
+
+	response := multipartUploadRequest(t, router, "avatar.jpg", "image/jpeg", encodedJPEG(t), session)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body map[string]string
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["server_err"] != "JPEG uploads are blocked by the storage provider" {
+		t.Fatalf("server_err = %q", body["server_err"])
+	}
+}
+
 func TestAvatarUploadRejectsBodiesOverFiveMiB(t *testing.T) {
 	storage := &recordingFileStorage{}
 	router, session := newAvatarUploadTestRouter(t, storage)
@@ -163,16 +181,20 @@ func TestConfiguredUploadsAreServedStatically(t *testing.T) {
 	}
 }
 
-func TestAvatarUploadRejectsImagesOverFourMillionPixels(t *testing.T) {
+func TestAvatarUploadCompressesImagesOverFourMillionPixels(t *testing.T) {
 	storage := &recordingFileStorage{}
 	router, session := newAvatarUploadTestRouter(t, storage)
 
 	response := multipartUploadRequest(t, router, "large.png", "image/png", encodedPNGWithDimensions(t, 2001, 2000), session)
-	if response.Code != http.StatusBadRequest {
+	if response.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if storage.calls != 0 {
-		t.Fatal("storage was called for an image over the pixel limit")
+	config, format, err := image.DecodeConfig(bytes.NewReader(storage.content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if format != "jpeg" || int64(config.Width)*int64(config.Height) > maxStoredAvatarPixels || storage.file.Name != "avatar.jpg" {
+		t.Fatalf("stored image = %s %dx%d named %q", format, config.Width, config.Height, storage.file.Name)
 	}
 }
 

@@ -11,9 +11,36 @@ import { TemplateAdmin } from './components/TemplateAdmin';
 import { documentFromStored, type StoredResume } from './api/resumes';
 import { getTemplateStatus } from './api/templates';
 import { templateRegistry } from './templates/registry';
-import { createSampleResumeDocument } from './types/resume';
+import { createSampleResumeDocument, type TemplateId } from './types/resume';
 
 export default function App() {
+  // Dev/preview mode: `?preview=<template-id>` renders a single template with
+  // the fixed sample document so headless browsers can snapshot the cover PNG
+  // for `frontend/public/template-previews/`. No auth, no network, no user data.
+  // Expose the registry to headless preview scripts (see
+  // `frontend/scripts/generate-template-previews.mjs`) so they can iterate ids
+  // without rendering each template. Set once per page load.
+  if (typeof window !== 'undefined') {
+    (window as unknown as { __TEMPLATE_IDS__?: string[] }).__TEMPLATE_IDS__ = templateRegistry.map((t) => t.id);
+  }
+
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    const previewId = params.get('preview') as TemplateId | null;
+    if (previewId) {
+      const template = templateRegistry.find((entry) => entry.id === previewId);
+      if (template) {
+        const sample = { ...createSampleResumeDocument(), templateId: previewId };
+        const Renderer = template.Renderer;
+        return (
+          <main className="app-shell app-shell--preview">
+            <Renderer document={sample} />
+          </main>
+        );
+      }
+    }
+  }
+
   const [resume, setResume] = useState(createSampleResumeDocument);
   const [view, setView] = useState<'gallery' | 'drafts' | 'editor' | 'admin'>('gallery');
   const [selectedResumeId, setSelectedResumeId] = useState<number | null>(null);

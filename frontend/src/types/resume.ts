@@ -6,7 +6,10 @@ export type TemplateId =
   | 'editorial'
   | 'redline'
   | 'violet'
-  | 'azure-chronicle';
+  | 'azure-chronicle'
+  | 'mint-canvas'
+  | 'scholarly-serif'
+  | 'blue-sidebar';
 
 export interface ResumeProfile {
   fullName: string;
@@ -17,6 +20,7 @@ export interface ResumeProfile {
   website: string;
   avatarUrl: string;
   avatarStorageKey: string;
+  showAvatar: boolean;
 }
 
 export type ResumeSectionType =
@@ -191,6 +195,7 @@ export function createEmptyResumeDocument(): ResumeDocument {
       website: '',
       avatarUrl: '',
       avatarStorageKey: '',
+      showAvatar: true,
     },
     sections: [],
   };
@@ -303,6 +308,7 @@ export function createSampleResumeDocument(): ResumeDocument {
       website: 'zhixia-lin.dev',
       avatarUrl: '',
       avatarStorageKey: '',
+      showAvatar: true,
     },
     sections: [summary, work, internship, project, education, skills, campus, honours],
   };

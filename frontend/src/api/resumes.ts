@@ -166,6 +166,7 @@ function upgradeV2AvatarFields(value: unknown): unknown {
       ...value.profile,
       ...(hasAvatarURL ? {} : { avatarUrl: '' }),
       ...(hasAvatarStorageKey ? {} : { avatarStorageKey: '' }),
+      ...(Object.prototype.hasOwnProperty.call(value.profile, 'showAvatar') ? {} : { showAvatar: true }),
     },
   };
 }
@@ -267,6 +268,7 @@ function migrateLegacyDocument(value: unknown): ResumeDocument | null {
       website: value.profile.website as string,
       avatarUrl: '',
       avatarStorageKey: '',
+      showAvatar: true,
     },
     sections: [summary, work, project, education, skills],
   };

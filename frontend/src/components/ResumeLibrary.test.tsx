@@ -71,6 +71,7 @@ describe('ResumeLibrary', () => {
 
     await waitFor(() => expect(createResume).toHaveBeenCalledWith(document));
     expect(await screen.findByText('已保存的前端工程师简历')).toBeInTheDocument();
+    expect(screen.getByText('极简专业')).toBeInTheDocument();
   });
 
   it('updates and enables deletion for an initially selected saved resume', async () => {

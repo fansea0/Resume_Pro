@@ -4,6 +4,15 @@ import { describe, expect, it } from 'vitest';
 const stylesheet = readFileSync('src/styles/global.css', 'utf8');
 
 describe('drafts workbench styles', () => {
+  it('hides the application header when printing a resume', () => {
+    expect(stylesheet).toMatch(/@media print\s*\{[\s\S]*?\.app-header\s*\{[\s\S]*?display:\s*none\s*!important/);
+  });
+
+  it('adds a top margin to continuation pages without shifting the first page', () => {
+    expect(stylesheet).toMatch(/@page\s*\{\s*size:\s*A4;\s*margin:\s*12mm 0 0;/);
+    expect(stylesheet).toMatch(/@page :first\s*\{\s*margin-top:\s*0;/);
+  });
+
   it('keeps saved-draft cards scoped away from empty-state guide steps', () => {
     expect(stylesheet).toMatch(/\.resume-drafts__item\s*\{[\s\S]*?background:/);
     expect(stylesheet).toMatch(/\.resume-drafts__steps\s+li\s*\{[\s\S]*?background:\s*transparent/);

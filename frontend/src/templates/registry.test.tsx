@@ -17,6 +17,7 @@ const sampleResume: ResumeDocument = {
     website: 'https://example.com',
     avatarUrl: '/uploads/avatars/test.webp',
     avatarStorageKey: '123e4567-e89b-42d3-a456-426614174000',
+    showAvatar: true,
   },
   // Deliberately non-standard: every template must honor this stored order.
   sections: [
@@ -34,7 +35,7 @@ const sampleResume: ResumeDocument = {
 afterEach(cleanup);
 
 describe('templateRegistry', () => {
-  it('registers the minimal, business, creative, tech, editorial, redline, violet, and azure chronicle templates', () => {
+  it('registers the minimal, business, creative, tech, editorial, redline, violet, azure chronicle, mint canvas, scholarly serif, and blue sidebar templates', () => {
     expect(templateRegistry.map((template) => template.id)).toEqual([
       'minimal',
       'business',
@@ -44,7 +45,41 @@ describe('templateRegistry', () => {
       'redline',
       'violet',
       'azure-chronicle',
+      'mint-canvas',
+      'scholarly-serif',
+      'blue-sidebar',
     ]);
+  });
+
+  it('renders the blue sidebar identity landmark and resume content', () => {
+    const template = templateRegistry.find(({ id }) => id === 'blue-sidebar');
+
+    expect(template).toBeDefined();
+    const Renderer = template!.Renderer;
+    const { container } = render(<Renderer document={sampleResume} />);
+
+    expect(container.querySelector('.template-blue-sidebar__sidebar')).toBeInTheDocument();
+    expect(screen.getByText('林晓')).toBeInTheDocument();
+    expect(screen.getByText('星云科技')).toBeInTheDocument();
+  });
+
+  it('renders the scholarly serif identity landmark, all-caps section title, and resume content', () => {
+    const template = templateRegistry.find(({ id }) => id === 'scholarly-serif');
+
+    expect(template).toBeDefined();
+    const Renderer = template!.Renderer;
+    const { container } = render(<Renderer document={sampleResume} />);
+
+    const root = container.querySelector('.template-scholarly-serif');
+    expect(root).toBeInTheDocument();
+    // The full name renders inside a centered italic serif header.
+    expect(container.querySelector('.template-scholarly-serif__name')?.textContent).toBe('林晓');
+    // All-caps underlined section title is the visual landmark of the template.
+    const honoursTitle = container.querySelector('[data-resume-section="honours"] .template-scholarly-serif__section-title');
+    expect(honoursTitle?.textContent?.trim()).toBe('荣誉奖项');
+    // Standard persisted content still flows through the template.
+    expect(screen.getByText('星云科技')).toBeInTheDocument();
+    expect(screen.getByText('年度创新奖')).toBeInTheDocument();
   });
 
   it.each(templateRegistry)('defines a static preview cover for $id', (template) => {

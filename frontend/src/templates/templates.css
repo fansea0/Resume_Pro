@@ -114,12 +114,12 @@
 .template-editorial__role { color: #657053; font-weight: 700; }
 
 .template-redline { background: #fffdfb; color: #151515; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; font-size: .9rem; line-height: 1.58; padding: 15mm 14mm 16mm; }
-.template-redline__header { align-items: flex-start; border-bottom: 0; display: flex; justify-content: space-between; min-height: 29mm; padding-bottom: 5mm; }
+.template-redline__header { align-items: flex-start; border-bottom: 0; display: flex; justify-content: space-between; padding-bottom: 0; }
 .template-redline__header h1 { font-size: 1.72rem; letter-spacing: -.04em; margin: 0 0 .4rem; }
 .template-redline__contact { font-size: .82rem; margin-bottom: .28rem; }
 .template-redline__headline { color: #292929; font-size: .9rem; margin-bottom: 0; }
-.template-redline__avatar { align-items: center; background: linear-gradient(145deg, #f2e4df, #fff); border: 1px solid #dec6bd; color: #a93831; display: flex; flex: 0 0 auto; font-family: Georgia, "Songti SC", serif; font-size: 1.6rem; font-weight: 700; height: 35mm; justify-content: center; width: 25mm; }
-.template-redline__section-title { border-bottom: 1px solid #bb433b; color: #b43c34; font-size: 1rem; font-weight: 800; letter-spacing: -.02em; margin: 4.5mm 0 3mm; padding-bottom: 1.2mm; text-transform: none; }
+.template-redline__avatar { align-items: center; aspect-ratio: 5 / 7; background: linear-gradient(145deg, #f2e4df, #fff); border: 1px solid #dec6bd; color: #a93831; display: flex; flex: 0 0 auto; font-family: Georgia, "Songti SC", serif; font-size: 1.15rem; font-weight: 700; justify-content: center; width: 18mm; }
+.template-redline__section-title { border-bottom: 1px solid #bb433b; color: #b43c34; font-size: 1rem; font-weight: 800; letter-spacing: -.02em; margin: 0 0 3mm; padding-bottom: 1.2mm; text-transform: none; }
 .template-redline__summary { margin-bottom: 0; }
 .template-redline__entry { break-inside: avoid; margin: 3mm 0 4mm; }
 .template-redline__entry-heading { align-items: baseline; display: flex; gap: 1rem; justify-content: space-between; }
@@ -178,6 +178,500 @@
 .template-azure-chronicle__skills dt { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; font-size: .8rem; font-weight: 650; min-width: 0; }
 .template-azure-chronicle__skills dd { color: #2767d9; flex: 0 0 auto; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; font-size: .68rem; font-weight: 600; margin: 0 0 0 auto; white-space: nowrap; }
 
+/* Mint Canvas — mint green block header, rounded card body, badge section
+   titles and inline keyword chips. Fresh graduate / technical style. */
+.template-mint-canvas {
+  --mint-primary: #3cb371;
+  --mint-primary-deep: #2f9260;
+  --mint-bg: #e8f5ec;
+  --mint-bg-soft: #f1faf3;
+  --mint-border: #bfe4cc;
+  --mint-rule: #cfe9d7;
+  --mint-ink: #1b3b2a;
+  --mint-text: #2f4d3e;
+  --mint-muted: #6a8576;
+  background: #fff;
+  border: 2.4mm solid var(--mint-primary);
+  border-radius: 4mm;
+  color: var(--mint-ink);
+  font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+  font-size: .9rem;
+  line-height: 1.58;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+}
+.template-mint-canvas__header {
+  align-items: center;
+  background: linear-gradient(135deg, var(--mint-primary) 0%, #4cc285 60%, #5fcd92 100%);
+  color: #fff;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 7mm 8mm 6mm;
+  position: relative;
+}
+.template-mint-canvas__identity { flex: 1 1 auto; min-width: 0; }
+.template-mint-canvas__identity h1 { color: #fff; font-size: 2.05rem; letter-spacing: -.02em; line-height: 1.1; margin: 0 0 .5rem; }
+.template-mint-canvas__contact { color: rgba(255, 255, 255, .9); font-size: .82rem; margin: 0 0 .2rem; overflow-wrap: anywhere; }
+.template-mint-canvas__headline { color: rgba(255, 255, 255, .92); font-size: .88rem; margin: 0; }
+.template-mint-canvas__avatar {
+  align-items: center;
+  background: rgba(255, 255, 255, .25);
+  border: 2px solid rgba(255, 255, 255, .85);
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 1.4rem;
+  font-weight: 700;
+  height: 26mm;
+  justify-content: center;
+  overflow: hidden;
+  width: 26mm;
+}
+.template-mint-canvas__body { padding: 5mm 7mm 7mm; }
+.template-mint-canvas__section { break-inside: auto; margin: 0 0 4mm; }
+.template-mint-canvas__section > h2 { break-after: avoid; }
+.template-mint-canvas__section-title {
+  align-items: center;
+  color: var(--mint-primary-deep);
+  display: flex;
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 1.02rem;
+  font-weight: 700;
+  gap: 2.4mm;
+  letter-spacing: 0;
+  margin: 0 0 3mm;
+  text-transform: none;
+}
+.template-mint-canvas__badge {
+  align-items: center;
+  background: var(--mint-primary);
+  border-radius: 50%;
+  color: #fff;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 5.6mm;
+  justify-content: center;
+  width: 5.6mm;
+}
+.template-mint-canvas__badge svg { fill: none; height: 4mm; stroke: #fff; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; width: 4mm; }
+.template-mint-canvas__title-text { white-space: nowrap; }
+.template-mint-canvas__section-title::after {
+  background: var(--mint-rule);
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  margin-left: 1.5mm;
+}
+.template-mint-canvas__summary {
+  background: var(--mint-bg-soft);
+  border-left: 3px solid var(--mint-primary);
+  color: var(--mint-text);
+  font-size: .9rem;
+  margin: 0 0 4mm;
+  padding: 2.4mm 3.4mm;
+}
+.template-mint-canvas__entry { break-inside: avoid; margin: 0 0 4mm; }
+.template-mint-canvas__entry-heading {
+  align-items: baseline;
+  color: var(--mint-ink);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+}
+.template-mint-canvas__entry-heading h3 { color: var(--mint-ink); font-size: 1rem; margin: 0 0 .2rem; }
+.template-mint-canvas__entry-date { color: var(--mint-muted); flex: 0 0 auto; font-size: .78rem; white-space: nowrap; }
+.template-mint-canvas__entry-sub { color: var(--mint-muted); font-size: .84rem; margin: 0 0 .35rem; }
+.template-mint-canvas__role { color: var(--mint-muted); font-size: .84rem; margin: 0 0 .25rem; }
+.template-mint-canvas__achievement {
+  background: var(--mint-bg);
+  border-radius: 1.4mm;
+  color: var(--mint-primary-deep);
+  font-size: .82rem;
+  font-weight: 600;
+  margin: 0 0 1.4mm;
+  padding: 1.2mm 2.4mm;
+}
+.template-mint-canvas__markdown { color: var(--mint-text); font-size: .88rem; }
+.template-mint-canvas__markdown p { margin: 0 0 1.2mm; }
+.template-mint-canvas__gap { height: 1.2mm; }
+.template-mint-canvas__list { margin: 0 0 1.2mm; padding-left: 1.15rem; }
+.template-mint-canvas__list li { margin: .6mm 0; padding-left: .12rem; }
+.template-mint-canvas__list--bullet { list-style: disc; }
+.template-mint-canvas__list--ordered { list-style: decimal; }
+.template-mint-canvas__chip {
+  background: var(--mint-bg);
+  border: 1px solid var(--mint-border);
+  border-radius: 1.4mm;
+  color: var(--mint-primary-deep);
+  display: inline-block;
+  font-size: .78rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin-right: 1mm;
+  padding: .4mm 1.6mm;
+  vertical-align: 1px;
+}
+.template-mint-canvas__chip-sep { color: var(--mint-muted); margin-right: 1.4mm; }
+.template-mint-canvas__skills { display: flex; flex-wrap: wrap; gap: 1.4mm 2mm; }
+.template-mint-canvas__skill {
+  background: #fff;
+  border: 1px solid var(--mint-border);
+  border-radius: 1.4mm;
+  color: var(--mint-text);
+  font-size: .82rem;
+  padding: .9mm 2.4mm;
+}
+.template-mint-canvas__skill small { color: var(--mint-primary-deep); font-size: .72rem; margin-left: 1.2mm; }
+.template-mint-canvas__honours { display: flex; flex-wrap: wrap; gap: 1.4mm 2mm; }
+.template-mint-canvas__honour {
+  background: var(--mint-bg);
+  border-radius: 1.4mm;
+  color: var(--mint-primary-deep);
+  font-size: .82rem;
+  font-weight: 600;
+  list-style: none;
+  padding: .8mm 2.4mm;
+}
+
+/* Scholarly Serif — Times family, single column, all-caps underlined section titles. */
+.template-scholarly-serif {
+  --scholarly-ink: #000;
+  --scholarly-rule: #000;
+  --scholarly-muted: #1a1a1a;
+  background: #fff;
+  color: var(--scholarly-ink);
+  font-family: "Times New Roman", "Liberation Serif", "Nimbus Roman", "Source Serif Pro", "Songti SC", "STSong", serif;
+  font-size: 10.5pt;
+  line-height: 1.45;
+  max-width: 210mm;
+  padding: 18mm 20mm;
+}
+.template-scholarly-serif__header {
+  margin: 0 0 1.1rem;
+  position: relative;
+  text-align: center;
+}
+.template-scholarly-serif__avatar {
+  align-items: center;
+  background: #f4f4f4;
+  border: 1px solid #1a1a1a;
+  color: #1a1a1a;
+  display: flex;
+  font-family: "Times New Roman", "Liberation Serif", serif;
+  font-size: 1rem;
+  font-style: italic;
+  font-weight: 700;
+  height: 22mm;
+  justify-content: center;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 16mm;
+}
+.template-scholarly-serif__name {
+  font-family: inherit;
+  font-size: 1.55rem;
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: .01em;
+  margin: 0 0 .15rem;
+  text-transform: none;
+}
+.template-scholarly-serif__contact {
+  font-size: .82rem;
+  margin: 0;
+  text-align: center;
+}
+.template-scholarly-serif__contact-item { white-space: nowrap; }
+.template-scholarly-serif__contact-item strong { font-weight: 700; }
+.template-scholarly-serif__contact-sep { color: #555; }
+.template-scholarly-serif__headline {
+  color: var(--scholarly-muted);
+  font-size: .9rem;
+  font-style: italic;
+  margin: .25rem 0 0;
+}
+.template-scholarly-serif__section { margin: 0 0 1rem; }
+.template-scholarly-serif__section-title {
+  border-bottom: 1.5px solid var(--scholarly-rule);
+  font-family: inherit;
+  font-size: .82rem;
+  font-weight: 700;
+  letter-spacing: .15em;
+  margin: 1.05rem 0 .55rem;
+  padding-bottom: .18rem;
+  text-transform: uppercase;
+}
+.template-scholarly-serif__section-title .template-scholarly-serif__title-text { display: inline-block; }
+.template-scholarly-serif__entry {
+  break-inside: avoid;
+  margin: 0 0 .65rem;
+  page-break-inside: avoid;
+}
+.template-scholarly-serif__entry-heading {
+  align-items: baseline;
+  display: flex;
+  gap: .5rem;
+  justify-content: space-between;
+}
+.template-scholarly-serif__entry-title {
+  font-family: inherit;
+  font-size: .98rem;
+  font-weight: 700;
+  margin: 0;
+}
+.template-scholarly-serif__date {
+  color: #1a1a1a;
+  font-size: .82rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.template-scholarly-serif__role {
+  font-family: inherit;
+  font-size: .9rem;
+  font-style: italic;
+  margin: 0 0 .15rem;
+}
+.template-scholarly-serif__meta { color: #333; font-size: .82rem; margin: 0 0 .15rem; }
+.template-scholarly-serif__location { color: #333; font-size: .82rem; margin: 0 0 .15rem; }
+.template-scholarly-serif__introduction,
+.template-scholarly-serif__achievements {
+  font-size: .9rem;
+  margin: .15rem 0;
+}
+.template-scholarly-serif__markdown { font-size: .9rem; }
+.template-scholarly-serif__markdown p { margin: .1rem 0; }
+.template-scholarly-serif__markdown ul {
+  list-style: disc;
+  margin: .25rem 0 .4rem;
+  padding-left: 1.4rem;
+}
+.template-scholarly-serif__markdown ol { margin: .25rem 0 .4rem; padding-left: 1.4rem; }
+.template-scholarly-serif__markdown li { margin: .1rem 0; }
+.template-scholarly-serif__markdown li::marker { color: #000; }
+.template-scholarly-serif__markdown a { color: #000; text-decoration: underline; }
+.template-scholarly-serif__summary {
+  font-size: .92rem;
+  margin: 0 0 .5rem;
+  text-align: justify;
+}
+.template-scholarly-serif__summary p { margin: 0; }
+.template-scholarly-serif__skills {
+  display: block;
+  font-size: .9rem;
+  list-style: disc;
+  margin: .1rem 0 .4rem;
+  padding-left: 1.4rem;
+}
+.template-scholarly-serif__skill { margin: .05rem 0; }
+.template-scholarly-serif__skill-name { font-weight: 700; }
+.template-scholarly-serif__skill-note { color: #333; font-style: italic; }
+.template-scholarly-serif__honours {
+  font-size: .9rem;
+  list-style: disc;
+  margin: .1rem 0 .4rem;
+  padding-left: 1.4rem;
+}
+.template-scholarly-serif__honour { margin: .05rem 0; }
+
+/* Blue Sidebar — single-column, ATS-clean Chinese resume. White background,
+   bold black section titles, vivid blue accent used for inline links and the
+   left-rule "sidebar" callout that highlights summary / core-highlight blocks. */
+.template-blue-sidebar {
+  --bsb-accent: #2563eb;
+  --bsb-accent-deep: #1d4ed8;
+  --bsb-ink: #111827;
+  --bsb-muted: #4b5563;
+  --bsb-rule: #d1d5db;
+  --bsb-rule-soft: #e5e7eb;
+  --bsb-side-bg: #eff6ff;
+  background: #fff;
+  color: var(--bsb-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.62;
+  max-width: 210mm;
+  padding: 14mm 16mm 16mm;
+}
+.template-blue-sidebar a { color: var(--bsb-accent); text-decoration: none; }
+.template-blue-sidebar a:hover { text-decoration: underline; }
+
+/* Header — clean, ATS-friendly single-row layout. No background fill, no
+   left rule; the name carries the visual weight. */
+.template-blue-sidebar__header {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--bsb-rule-soft);
+  display: flex;
+  gap: 5mm;
+  justify-content: space-between;
+  margin: 0 0 4.5mm;
+  padding: 0 0 3mm;
+}
+.template-blue-sidebar__identity { flex: 1 1 auto; min-width: 0; }
+.template-blue-sidebar__name {
+  color: var(--bsb-ink);
+  font-size: 1.7rem;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  line-height: 1.1;
+  margin: 0 0 1mm;
+}
+.template-blue-sidebar__headline {
+  align-items: baseline;
+  color: var(--bsb-ink);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: .9rem;
+  gap: 1.2mm;
+  margin: 0 0 1mm;
+}
+.template-blue-sidebar__headline-label {
+  color: var(--bsb-accent);
+  font-weight: 700;
+}
+.template-blue-sidebar__headline-sep { color: var(--bsb-rule); }
+.template-blue-sidebar__headline-value { color: var(--bsb-ink); }
+.template-blue-sidebar__contact {
+  color: var(--bsb-muted);
+  font-size: .85rem;
+  margin: 0;
+}
+.template-blue-sidebar__contact-item { white-space: nowrap; }
+.template-blue-sidebar__contact-value { color: var(--bsb-accent); }
+.template-blue-sidebar__contact-sep {
+  color: var(--bsb-rule);
+  margin: 0 2mm;
+}
+.template-blue-sidebar__avatar {
+  align-items: center;
+  background: #f3f4f6;
+  border: 1px solid var(--bsb-rule);
+  color: var(--bsb-muted);
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 1.1rem;
+  font-weight: 700;
+  height: 22mm;
+  justify-content: center;
+  overflow: hidden;
+  width: 18mm;
+}
+
+/* Section titles — bold black, sized larger than the body, with a 1px rule
+   that only extends as wide as the heading text. */
+.template-blue-sidebar__section { margin: 0 0 3.6mm; }
+.template-blue-sidebar__section-title {
+  border-bottom: 1px solid var(--bsb-rule-soft);
+  color: var(--bsb-ink);
+  font-size: 1.08rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: 5mm 0 2.4mm;
+  padding-bottom: 1mm;
+  text-transform: none;
+}
+.template-blue-sidebar__section-title .template-blue-sidebar__title-text {
+  display: inline-block;
+  padding-bottom: 1mm;
+}
+
+/* Summary block — subtle left rule, no fill, so the prose flows as body text. */
+.template-blue-sidebar__summary {
+  border-left: 2px solid var(--bsb-accent);
+  color: var(--bsb-ink);
+  font-size: .92rem;
+  line-height: 1.72;
+  margin: 0 0 3.5mm;
+  padding: 0 0 0 3.2mm;
+  text-align: justify;
+}
+.template-blue-sidebar__summary p { margin: 0; }
+
+/* Experience / project entries — breakable-friendly, compact. */
+.template-blue-sidebar__entry {
+  break-inside: avoid;
+  margin: 0 0 3.4mm;
+  page-break-inside: avoid;
+}
+.template-blue-sidebar__entry-heading {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+  justify-content: space-between;
+}
+.template-blue-sidebar__entry-title {
+  color: var(--bsb-ink);
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0 0 .3rem;
+}
+.template-blue-sidebar__entry-role-inline { color: var(--bsb-muted); font-weight: 500; }
+.template-blue-sidebar__date {
+  color: var(--bsb-muted);
+  flex: 0 0 auto;
+  font-size: .82rem;
+  white-space: nowrap;
+}
+.template-blue-sidebar__role { color: var(--bsb-muted); font-size: .88rem; margin: 0 0 .4rem; }
+.template-blue-sidebar__role-inline { color: var(--bsb-muted); font-size: .88rem; }
+.template-blue-sidebar__location {
+  color: var(--bsb-muted);
+  font-size: .85rem;
+  margin: 0 0 .35rem;
+}
+.template-blue-sidebar__introduction {
+  color: var(--bsb-ink);
+  font-size: .9rem;
+  margin: 0 0 .4rem;
+}
+.template-blue-sidebar__achievements {
+  color: var(--bsb-ink);
+  font-size: .9rem;
+  margin: 0 0 .5rem;
+}
+.template-blue-sidebar__achievements strong { color: var(--bsb-ink); font-weight: 700; }
+.template-blue-sidebar__markdown { color: var(--bsb-ink); font-size: .9rem; }
+.template-blue-sidebar__markdown p { margin: 0 0 .6mm; }
+.template-blue-sidebar__markdown ul,
+.template-blue-sidebar__markdown ol { margin: .5mm 0 1mm; padding-left: 1.4rem; }
+.template-blue-sidebar__markdown li { margin: .2mm 0; }
+.template-blue-sidebar__markdown a { color: var(--bsb-accent); }
+.template-blue-sidebar__markdown li::marker { color: var(--bsb-muted); }
+
+/* Sidebar "callout" highlight — re-used on header and on per-entry core
+   highlights. Visually a left blue rule with a soft tint. */
+.template-blue-sidebar__sidebar {
+  background: var(--bsb-side-bg);
+  border-left: 3px solid var(--bsb-accent);
+  color: var(--bsb-ink);
+  display: inline-block;
+  padding: .6mm 1.6mm;
+}
+
+/* Skills — bullet list with bolded "X：" prefix support via inline strong. */
+.template-blue-sidebar__skills {
+  font-size: .9rem;
+  list-style: disc;
+  margin: 0 0 .8rem;
+  padding-left: 1.4rem;
+}
+.template-blue-sidebar__skill { line-height: 1.72; margin: 0 0 .3mm; }
+.template-blue-sidebar__skill-label { color: var(--bsb-ink); font-weight: 700; }
+
+/* Honours / campus — plain lists that respect A4 break rules. */
+.template-blue-sidebar__honours {
+  font-size: .9rem;
+  list-style: disc;
+  margin: 0 0 .4rem;
+  padding-left: 1.4rem;
+}
+.template-blue-sidebar__honour { margin: .25mm 0; }
+
 @media (max-width: 640px) {
   .resume-template { min-height: auto; padding: 1.5rem; }
   .template-business__header { align-items: start; flex-direction: column; gap: .75rem; }
@@ -201,4 +695,20 @@
   .template-azure-chronicle__entry-heading { align-items: flex-start; flex-direction: column; gap: 0; }
   .template-azure-chronicle__entry-meta { align-items: flex-start; flex-direction: row; gap: .35rem; text-align: left; }
   .template-azure-chronicle__skills { grid-template-columns: 1fr; }
+  .template-mint-canvas { border-width: 1.5mm; border-radius: 3mm; }
+  .template-mint-canvas__header { flex-direction: column; align-items: flex-start; padding: 1.5rem; }
+  .template-mint-canvas__identity h1 { font-size: 1.6rem; }
+  .template-mint-canvas__avatar { height: 5.5rem; width: 5.5rem; }
+  .template-mint-canvas__body { padding: 1.2rem 1.5rem 1.5rem; }
+  .template-mint-canvas__entry-heading { flex-direction: column; gap: .15rem; }
+  .template-mint-canvas__section-title::after { display: none; }
+  .template-scholarly-serif { font-size: 10pt; padding: 1.2rem 1.4rem; }
+  .template-scholarly-serif__entry-heading { align-items: flex-start; flex-direction: column; gap: 0; }
+  .template-scholarly-serif__date { white-space: normal; }
+  .template-blue-sidebar { padding: 1.2rem 1.4rem 1.5rem; }
+  .template-blue-sidebar__header { flex-direction: column; gap: .8rem; }
+  .template-blue-sidebar__avatar { height: 4.2rem; width: 3.4rem; }
+  .template-blue-sidebar__name { font-size: 1.45rem; }
+  .template-blue-sidebar__entry-heading { align-items: flex-start; flex-direction: column; gap: 0; }
+  .template-blue-sidebar__date { white-space: normal; }
 }

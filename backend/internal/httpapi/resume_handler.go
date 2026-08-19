@@ -413,6 +413,10 @@ func writeJSON(context *gin.Context, status int, value any) {
 	_ = json.NewEncoder(context.Writer).Encode(value)
 }
 
-func writeError(context *gin.Context, status int, message string) {
-	writeJSON(context, status, map[string]string{"error": message})
+func writeError(context *gin.Context, status int, message string, serverErrors ...error) {
+	payload := map[string]string{"error": message}
+	if len(serverErrors) > 0 && serverErrors[0] != nil {
+		payload["server_err"] = serverErrors[0].Error()
+	}
+	writeJSON(context, status, payload)
 }

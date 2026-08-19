@@ -77,7 +77,7 @@ function ResumePhotoField({ profile, resumeId, onChange }: { profile: ResumeProf
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type)) {
       setError('请选择 JPG、PNG 或 WebP 格式的证件照。');
       return;
     }
@@ -98,7 +98,7 @@ function ResumePhotoField({ profile, resumeId, onChange }: { profile: ResumeProf
     <div className="editor-photo-field__preview" aria-label="简历证件照预览">
       {profile.avatarUrl ? <img alt="简历证件照预览" src={profile.avatarUrl} /> : <span aria-hidden="true">{initial}</span>}
     </div>
-    <div className="editor-photo-field__content"><div><span className="editor-photo-field__label">简历证件照</span><p>建议使用清晰正面照，按 25 × 35 比例裁切展示。</p></div><button className="editor-photo-field__trigger" disabled={isUploading} onClick={() => inputRef.current?.click()} type="button">{isUploading ? '上传中…' : profile.avatarUrl ? '更换照片' : '上传照片'}</button><input accept="image/png,image/jpeg,image/webp" aria-label="上传简历证件照" className="editor-photo-field__input" onChange={handleFile} ref={inputRef} type="file" />{error ? <p className="editor-photo-field__error" role="alert">{error}</p> : null}</div>
+    <div className="editor-photo-field__content"><div><span className="editor-photo-field__label">简历证件照</span><p>建议使用清晰正面照，按 25 × 35 比例裁切展示。</p></div><button className="editor-photo-field__trigger" disabled={isUploading} onClick={() => inputRef.current?.click()} type="button">{isUploading ? '上传中…' : profile.avatarUrl ? '更换照片' : '上传照片'}</button>{profile.avatarUrl ? <IconButton icon={profile.showAvatar ? 'eyeOff' : 'eye'} label={profile.showAvatar ? '隐藏简历照片' : '显示简历照片'} onClick={() => onChange({ ...profile, showAvatar: !profile.showAvatar })} /> : null}<input accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/jpg,image/png,image/webp" aria-label="上传简历证件照" className="editor-photo-field__input" onChange={handleFile} ref={inputRef} type="file" />{error ? <p className="editor-photo-field__error" role="alert">{error}</p> : null}</div>
   </div>;
 }
 
@@ -172,10 +172,6 @@ export function ResumeEditor({ document, resumeId, onChange }: ResumeEditorProps
         </div>
       </DetailsSection>
 
-      <DetailsSection title="添加区块">
-        <div className="editor-add-section-grid">{(Object.keys(sectionLabels) as ResumeSectionType[]).map((type) => <AddSectionButton key={type} label={sectionLabels[type]} onClick={() => addSection(type)} />)}</div>
-      </DetailsSection>
-
       {document.sections.map((section, index) => <SectionCard
         index={index}
         key={section.id}
@@ -185,6 +181,10 @@ export function ResumeEditor({ document, resumeId, onChange }: ResumeEditorProps
         onRemove={removeSection}
         onUpdate={updateSection}
       />)}
+
+      <DetailsSection title="添加区块">
+        <div className="editor-add-section-grid">{(Object.keys(sectionLabels) as ResumeSectionType[]).map((type) => <AddSectionButton key={type} label={sectionLabels[type]} onClick={() => addSection(type)} />)}</div>
+      </DetailsSection>
     </form>
   );
 }

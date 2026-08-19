@@ -7,7 +7,7 @@ const document: ResumeDocument = {
   schemaVersion: 2,
   title: '达钦海｜Go 后端开发',
   templateId: 'azure-chronicle',
-  profile: { fullName: '达钦海', headline: 'Go 后端开发', email: '', phone: '', location: '', website: '', avatarUrl: '', avatarStorageKey: '' },
+  profile: { fullName: '达钦海', headline: 'Go 后端开发', email: '', phone: '', location: '', website: '', avatarUrl: '', avatarStorageKey: '', showAvatar: true },
   sections: [{ id: 'skills', type: 'skills', title: '专业技能', visible: true, content: { items: [
     { id: 'go', name: 'Go 后端开发', note: '有实际工作经验' },
     { id: 'java', name: 'Java / Spring Boot', note: '熟悉' },

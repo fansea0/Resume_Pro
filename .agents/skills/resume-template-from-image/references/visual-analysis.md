@@ -37,9 +37,9 @@ If a decorative area has no source field, omit it or use a neutral generated vis
 
 ## Static gallery cover
 
-Create `frontend/public/template-previews/<template-id>.svg` for every generated template.
+The cover preview is a real rendering of the template, not a hand-drawn SVG. Step 7 of `SKILL.md` and `references/preview-snapshot.md` cover the full recipe; keep these constraints in mind when planning the visual brief so the renderer can produce a clean A4 snapshot.
 
-- Use an A4-like SVG canvas: `viewBox="0 0 210 297"`.
-- Reproduce the template's complete visual hierarchy using a fixed fictional sample: identity, summary, two work entries, one project, education, and skills. Do not reduce the cover to placeholder lines only.
-- Use the template palette and layout; never use live user data or source-image names, contact details, or portraits.
-- Register `/template-previews/<template-id>.svg` as `previewImage` so the gallery loads a static asset without rendering the user's document.
+- The brief must end at a state that fits one A4 page with the fixed `createSampleResumeDocument` sample — usually identity, summary, two experience entries, one project, education, and skills.
+- Use the template palette and layout exactly as it will appear in the live export, so the snapshot script and the user's `exportResumePng` output look the same.
+- Never include live user data or the source-image candidate's personal data. The committed sample is the only data source.
+- The committed PNG (not SVG) becomes `previewImage` in the registry; the gallery only loads static assets and never renders a candidate's live document.

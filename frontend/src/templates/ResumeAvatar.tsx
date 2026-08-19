@@ -6,6 +6,7 @@ interface ResumeAvatarProps {
 }
 
 export function ResumeAvatar({ profile, className }: ResumeAvatarProps) {
+  if (profile.showAvatar === false) return null;
   const initial = profile.fullName.trim().slice(0, 1) || '简';
   if (profile.avatarUrl) {
     return <img alt={`${profile.fullName || '候选人'}的简历照片`} className={`${className} template-resume-photo`} src={profile.avatarUrl} />;
