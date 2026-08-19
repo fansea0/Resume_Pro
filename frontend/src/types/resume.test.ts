@@ -6,6 +6,7 @@ import {
   createSampleResumeDocument,
   createWorkSection,
   type InternshipSection,
+  type ResumeDocument,
   type WorkSection,
 } from './resume';
 
@@ -78,5 +79,14 @@ describe('createSampleResumeDocument', () => {
     expect(internship.type).toBe('internship');
     expectTypeOf(work).toEqualTypeOf<WorkSection>();
     expectTypeOf(internship).toEqualTypeOf<InternshipSection>();
+  });
+
+  it('allows a document to reference an optional target job', () => {
+    const document: ResumeDocument = {
+      ...createEmptyResumeDocument(),
+      targetJobId: 7,
+    };
+
+    expect(document.targetJobId).toBe(7);
   });
 });

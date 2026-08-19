@@ -137,6 +137,7 @@ export interface ResumeDocument {
   schemaVersion: 2;
   title: string;
   templateId: TemplateId;
+  targetJobId?: number;
   profile: ResumeProfile;
   sections: ResumeSection[];
 }
