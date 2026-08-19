@@ -64,7 +64,11 @@ type UpdateInput struct {
 	Content    json.RawMessage
 }
 
-func (s *Service) Update(ctx context.Context, tenantID, id int64, in UpdateInput) (*resume.Resume, error) {
+func (s *Service) Update(ctx context.Context, explicitTenantID, id int64, in UpdateInput) (*resume.Resume, error) {
+	if explicitTenantID != in.Principal.TenantID {
+		return nil, resume.ErrNotFound
+	}
+	tenantID := in.Principal.TenantID
 	if err := s.validateTargetJobID(ctx, in.Principal, in.Content); err != nil {
 		return nil, err
 	}

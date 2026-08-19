@@ -70,6 +70,28 @@ func TestServiceUpdateValidatesTargetJobOwnershipAndScopesResumeByTenant(t *test
 	assert.Equal(t, "Test resume", unchanged.Title)
 }
 
+func TestServiceUpdateRejectsMismatchedExplicitAndPrincipalTenants(t *testing.T) {
+	svc, repo, targetSvc, _ := setupService(t, nil)
+	ctx := context.Background()
+	created, err := svc.Create(ctx, createInput(principal(1, 1), resumeContent(0, "")))
+	require.NoError(t, err)
+	tenantTwoTarget, err := targetSvc.Create(ctx, 2, targetjob.CreateInput{Requirements: "Lead tenant two platform delivery"})
+	require.NoError(t, err)
+
+	_, err = svc.Update(ctx, 1, created.ID, resumesvc.UpdateInput{
+		Principal:  principal(2, 2),
+		Title:      "Cross-tenant rewrite",
+		TemplateID: "business",
+		Content:    resumeContent(tenantTwoTarget.ID, ""),
+	})
+
+	require.ErrorIs(t, err, resume.ErrNotFound)
+	unchanged, getErr := repo.Get(ctx, 1, created.ID)
+	require.NoError(t, getErr)
+	assert.Equal(t, "Test resume", unchanged.Title)
+	assert.JSONEq(t, string(resumeContent(0, "")), unchanged.Content)
+}
+
 func TestServicePreservesAvatarLifecycle(t *testing.T) {
 	storage := newRecordingStorage()
 	svc, _, _, _ := setupService(t, storage)
