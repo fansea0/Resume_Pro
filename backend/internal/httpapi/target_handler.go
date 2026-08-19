@@ -58,6 +58,9 @@ func (h *targetHandler) list(context *gin.Context) {
 		writeError(context, http.StatusInternalServerError, "could not list target jobs")
 		return
 	}
+	if list == nil {
+		list = []targetjob.TargetJob{}
+	}
 	writeJSON(context, http.StatusOK, list)
 }
 

@@ -166,6 +166,8 @@ func TestTargetJobTenantIsolation(t *testing.T) {
 	require.Equal(t, http.StatusOK, listResponse.Code, listResponse.Body.String())
 	var list []targetjob.TargetJob
 	require.NoError(t, json.Unmarshal(listResponse.Body.Bytes(), &list))
+	assert.JSONEq(t, "[]", listResponse.Body.String())
+	assert.NotNil(t, list)
 	assert.Empty(t, list)
 }
 
