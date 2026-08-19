@@ -41,12 +41,12 @@ func LoadConfigFromEnv() (Config, error) {
 		Timeout:   defaultTimeout,
 	}
 	if value := os.Getenv("AI_MAX_TOKENS"); value != "" {
-		if maxTokens, err := strconv.Atoi(value); err == nil {
+		if maxTokens, err := strconv.Atoi(value); err == nil && maxTokens > 0 {
 			cfg.MaxTokens = maxTokens
 		}
 	}
 	if value := os.Getenv("AI_REQUEST_TIMEOUT"); value != "" {
-		if timeout, err := time.ParseDuration(value); err == nil {
+		if timeout, err := time.ParseDuration(value); err == nil && timeout > 0 {
 			cfg.Timeout = timeout
 		}
 	}

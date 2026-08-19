@@ -52,6 +52,32 @@ func TestLoadConfigFromEnv_OverridesDefaults(t *testing.T) {
 	assert.Equal(t, 45*time.Second, cfg.Timeout)
 }
 
+func TestLoadConfigFromEnv_IgnoresNonPositiveOrMalformedTuningValues(t *testing.T) {
+	testCases := []struct {
+		name      string
+		maxTokens string
+		timeout   string
+	}{
+		{name: "malformed", maxTokens: "not-a-number", timeout: "not-a-duration"},
+		{name: "zero", maxTokens: "0", timeout: "0s"},
+		{name: "negative", maxTokens: "-1", timeout: "-1s"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("OPENAI_API_KEY", "test-key")
+			t.Setenv("AI_MAX_TOKENS", testCase.maxTokens)
+			t.Setenv("AI_REQUEST_TIMEOUT", testCase.timeout)
+
+			cfg, err := llm.LoadConfigFromEnv()
+
+			require.NoError(t, err)
+			assert.Equal(t, 2048, cfg.MaxTokens)
+			assert.Equal(t, 30*time.Second, cfg.Timeout)
+		})
+	}
+}
+
 func TestNewChatModel_ConstructsWithoutCallingProvider(t *testing.T) {
 	cfg := llm.Config{
 		APIKey:    "test-key",
