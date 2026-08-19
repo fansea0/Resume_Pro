@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SSEEvent } from '../types/ai';
-import { streamRewrite } from './ai';
+import { streamGenerate, streamRewrite } from './ai';
 
 const encoder = new TextEncoder();
 
@@ -174,5 +174,52 @@ describe('streamRewrite', () => {
       vi.fn(),
     )).rejects.toThrow('AI response did not include an event stream');
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe('streamGenerate', () => {
+  it('posts generation inputs once and parses a streamed resume document', async () => {
+    const generated = {
+      schemaVersion: 2,
+      title: '张三｜后端工程师',
+      templateId: 'minimal',
+      profile: {
+        fullName: '张三', headline: '后端工程师', email: '', phone: '', location: '', website: '',
+        avatarUrl: '', avatarStorageKey: '', showAvatar: true,
+      },
+      sections: [],
+    };
+    const source = [
+      'event: thinking\n',
+      'data: {"text":"正在梳理经历"}\n\n',
+      'event: suggestion\n',
+      `data: ${JSON.stringify({ newContent: generated })}\n\n`,
+      'event: done\n',
+      'data: {}\n\n',
+    ].join('');
+    const fetchMock = vi.fn().mockResolvedValue(streamedResponse(source, [23, source.length - 4]));
+    vi.stubGlobal('fetch', fetchMock);
+    const onEvent = vi.fn();
+    const request = {
+      rawText: '我有五年 Go 后端经验，负责过支付平台与稳定性治理。',
+      targetJobId: 7,
+      templateId: 'minimal' as const,
+    };
+
+    await streamGenerate(request, onEvent);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith('/api/ai/resumes/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+      credentials: 'include',
+      signal: undefined,
+    });
+    expect(onEvent.mock.calls.map(([event]) => event)).toEqual([
+      { kind: 'thinking', text: '正在梳理经历' },
+      { kind: 'suggestion', newContent: generated },
+      { kind: 'done' },
+    ]);
   });
 });

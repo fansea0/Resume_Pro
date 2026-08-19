@@ -147,4 +147,12 @@ describe('documentFromStored', () => {
     const document = createSampleResumeDocument();
     expect(() => documentFromStored({ ...stored(document), templateId: 'unknown' as 'business' })).toThrow();
   });
+
+  it.each(['mint-canvas', 'scholarly-serif', 'blue-sidebar'] as const)(
+    'accepts the selectable %s template when validating generated content',
+    (templateId) => {
+      const document = { ...createSampleResumeDocument(), templateId };
+      expect(documentFromStored(stored(document, document.title, templateId))).toMatchObject({ templateId });
+    },
+  );
 });

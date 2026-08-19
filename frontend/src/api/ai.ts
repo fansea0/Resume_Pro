@@ -1,4 +1,9 @@
-import type { RewriteRequest, SSEEvent } from '../types/ai';
+import type {
+  GenerateRequest,
+  GenerateSSEEvent,
+  RewriteRequest,
+  SSEEvent,
+} from '../types/ai';
 import { ApiError } from './client';
 
 type SSEEventKind = SSEEvent['kind'];
@@ -51,6 +56,46 @@ export async function streamRewrite(
   }
 }
 
+export async function streamGenerate(
+  request: GenerateRequest,
+  onEvent: (event: GenerateSSEEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  // Generation is also a non-idempotent POST. A retry is always initiated by
+  // an explicit user action in the modal.
+  const response = await fetch('/api/ai/resumes/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    credentials: 'include',
+    signal,
+  });
+
+  if (!response.ok) {
+    throw await responseError(response);
+  }
+  if (!response.body) {
+    throw new Error('AI response did not include an event stream');
+  }
+
+  const reader = response.body.getReader();
+  const textDecoder = new TextDecoder();
+  const eventDecoder = new SSEDecoder(onEvent);
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        eventDecoder.push(textDecoder.decode(), true);
+        return;
+      }
+      eventDecoder.push(textDecoder.decode(value, { stream: true }));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function responseError(response: Response): Promise<ApiError> {
   let message = `AI request failed: ${response.status}`;
   try {
@@ -71,12 +116,12 @@ async function responseError(response: Response): Promise<ApiError> {
   return new ApiError(message, response.status);
 }
 
-class SSEDecoder {
+class SSEDecoder<TEvent extends { kind: SSEEventKind }> {
   private buffer = '';
   private eventName = '';
   private dataLines: string[] = [];
 
-  constructor(private readonly onEvent: (event: SSEEvent) => void) {}
+  constructor(private readonly onEvent: (event: TEvent) => void) {}
 
   push(chunk: string, endOfStream = false): void {
     this.buffer += chunk;
@@ -130,7 +175,7 @@ class SSEDecoder {
       if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
         throw new TypeError('SSE data must be a JSON object');
       }
-      this.onEvent({ ...payload, kind: eventName } as SSEEvent);
+      this.onEvent({ ...payload, kind: eventName } as TEvent);
     } catch (error) {
       console.error('Failed to parse SSE data:', data, error);
     }
