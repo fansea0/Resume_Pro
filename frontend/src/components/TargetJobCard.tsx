@@ -5,7 +5,10 @@ import { TargetJobPicker } from './TargetJobPicker';
 
 export interface TargetJobCardProps {
   targetJob?: TargetJob;
+  targetJobId?: number;
+  targetJobStatus?: 'loading' | 'ready' | 'error';
   onChange: (targetJobId: number | null) => void;
+  onRetry?: () => void;
 }
 
 interface ConfirmationDialogProps {
@@ -108,7 +111,7 @@ function collapsedRequirements(requirements: string) {
   return normalized.length > 80 ? `${normalized.slice(0, 80)}…` : normalized;
 }
 
-export function TargetJobCard({ targetJob, onChange }: TargetJobCardProps) {
+export function TargetJobCard({ targetJob, targetJobId, targetJobStatus, onChange, onRetry }: TargetJobCardProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [confirmation, setConfirmation] = useState<'change' | 'clear' | null>(null);
@@ -116,10 +119,14 @@ export function TargetJobCard({ targetJob, onChange }: TargetJobCardProps) {
   const headingId = useId();
   const requirementsId = useId();
 
-  useEffect(() => setExpanded(false), [targetJob?.id]);
+  const boundId = targetJob?.id ?? targetJobId;
+  const bound = boundId !== undefined;
+  const detailStatus = targetJob ? 'ready' : targetJobStatus ?? (bound ? 'loading' : undefined);
+
+  useEffect(() => setExpanded(false), [boundId]);
 
   const selectTargetJob = (id: number) => {
-    if (id !== targetJob?.id) onChange(id);
+    if (id !== boundId) onChange(id);
   };
 
   const confirmChange = () => {
@@ -142,16 +149,16 @@ export function TargetJobCard({ targetJob, onChange }: TargetJobCardProps) {
         </div>
       </div>
 
-      {targetJob ? (
+      {bound ? (
         <div className="target-job-card__bound">
           <div className="target-job-card__current-row">
-            <strong>当前：{targetJobName(targetJob)}</strong>
+            <strong>当前：{targetJob ? targetJobName(targetJob) : `目标岗位 #${boundId}`}</strong>
             <button onClick={() => setConfirmation('change')} ref={primaryActionRef} type="button">更换目标岗位</button>
           </div>
           <div className="target-job-card__requirements">
             <div className="target-job-card__requirements-heading">
               <span>JD 预览</span>
-              <button
+              {detailStatus === 'ready' && targetJob ? <button
                 aria-controls={requirementsId}
                 aria-expanded={expanded}
                 aria-label={expanded ? '收起岗位要求' : '展开岗位要求'}
@@ -160,9 +167,12 @@ export function TargetJobCard({ targetJob, onChange }: TargetJobCardProps) {
                 type="button"
               >
                 {expanded ? '收起' : '展开'}
-              </button>
+              </button> : null}
+              {detailStatus === 'error' && onRetry ? <button aria-label="重新加载目标岗位详情" onClick={onRetry} type="button">重试</button> : null}
             </div>
-            <p id={requirementsId}>{expanded ? targetJob.requirements.trim() : collapsedRequirements(targetJob.requirements)}</p>
+            {detailStatus === 'ready' && targetJob ? <p id={requirementsId}>{expanded ? targetJob.requirements.trim() : collapsedRequirements(targetJob.requirements)}</p> : null}
+            {detailStatus === 'loading' ? <p aria-live="polite" className="target-jobs__status" role="status">正在加载目标岗位详情…</p> : null}
+            {detailStatus === 'error' ? <p className="target-jobs__error" role="alert">无法加载目标岗位详情，当前绑定仍会保留。</p> : null}
           </div>
           <button className="target-job-card__clear" onClick={() => setConfirmation('clear')} type="button">清除目标岗位绑定</button>
         </div>
@@ -178,7 +188,7 @@ export function TargetJobCard({ targetJob, onChange }: TargetJobCardProps) {
         onSelect={selectTargetJob}
         open={pickerOpen}
         returnFocusRef={primaryActionRef}
-        selectedId={targetJob?.id}
+        selectedId={boundId}
       />
 
       {confirmation === 'change' && (

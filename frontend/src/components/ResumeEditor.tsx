@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { getTargetJob } from '../api/targetJobs';
 import { uploadResumeAvatar } from '../api/uploads';
 import type {
@@ -35,6 +35,7 @@ import { TargetJobCard } from './TargetJobCard';
 interface ResumeEditorProps {
   document: ResumeDocument;
   resumeId?: number;
+  onBeforeAiRewrite?: (snapshot: ResumeDocument) => Promise<boolean>;
   onChange: (document: ResumeDocument) => void;
 }
 
@@ -156,6 +157,17 @@ const sectionLabels: Record<ResumeSectionType, string> = {
 
 type RewriteableResumeSection = Extract<ResumeSection, { type: 'summary' | 'work' | 'internship' | 'project' }>;
 type RewriteContent = SummaryRewriteContent | ExperienceRewriteContent | ProjectRewriteContent;
+type TargetJobDetailState =
+  | { status: 'unbound' }
+  | { status: 'loading' | 'error'; id: number }
+  | { status: 'ready'; id: number; targetJob: TargetJob };
+
+interface ActiveAiSection {
+  id: string;
+  index: number;
+  section: RewriteableResumeSection;
+  type: RewriteableResumeSection['type'];
+}
 
 function isRewriteableSection(section: ResumeSection): section is RewriteableResumeSection {
   return section.type === 'summary'
@@ -223,22 +235,40 @@ function mergeRewrite(section: RewriteableResumeSection, rewrite: RewriteContent
   return mergeExperienceRewrite(section, rewrite as ExperienceRewriteContent);
 }
 
-export function ResumeEditor({ document, resumeId, onChange }: ResumeEditorProps) {
-  const [targetJob, setTargetJob] = useState<TargetJob>();
-  const [activeAiSection, setActiveAiSection] = useState<RewriteableResumeSection>();
+export function ResumeEditor({ document, resumeId, onBeforeAiRewrite, onChange }: ResumeEditorProps) {
+  const [targetJobState, setTargetJobState] = useState<TargetJobDetailState>(
+    document.targetJobId === undefined ? { status: 'unbound' } : { status: 'loading', id: document.targetJobId },
+  );
+  const [activeAiSection, setActiveAiSection] = useState<ActiveAiSection>();
+  const [preparingAi, setPreparingAi] = useState(false);
+  const [aiPreparationError, setAiPreparationError] = useState('');
+  const targetJobRequestVersion = useRef(0);
+  const aiPreparationVersion = useRef(0);
+  const documentRef = useRef(document);
+  documentRef.current = document;
+
+  const loadTargetJob = useCallback((id: number) => {
+    const requestVersion = ++targetJobRequestVersion.current;
+    setTargetJobState({ status: 'loading', id });
+    void getTargetJob(id).then((targetJob) => {
+      if (requestVersion === targetJobRequestVersion.current) {
+        setTargetJobState({ status: 'ready', id, targetJob });
+      }
+    }).catch(() => {
+      if (requestVersion === targetJobRequestVersion.current) {
+        setTargetJobState({ status: 'error', id });
+      }
+    });
+  }, []);
 
   useEffect(() => {
-    let current = true;
-    setTargetJob(undefined);
-    if (document.targetJobId === undefined) return () => { current = false; };
-    void getTargetJob(document.targetJobId).then((item) => {
-      if (current) setTargetJob(item);
-    }).catch(() => {
-      // The document remains the source of truth. A later id change retries the
-      // detail load while autosave keeps the persisted binding untouched.
-    });
-    return () => { current = false; };
-  }, [document.targetJobId]);
+    if (document.targetJobId === undefined) {
+      targetJobRequestVersion.current += 1;
+      setTargetJobState({ status: 'unbound' });
+      return;
+    }
+    loadTargetJob(document.targetJobId);
+  }, [document.targetJobId, loadTargetJob]);
 
   const updateProfile = (field: keyof ResumeProfile, value: string) => onChange({ ...document, profile: { ...document.profile, [field]: value } });
   const updateSection = (id: string, update: (section: ResumeSection) => ResumeSection) => onChange({ ...document, sections: document.sections.map((section) => section.id === id ? update(section) : section) });
@@ -251,13 +281,72 @@ export function ResumeEditor({ document, resumeId, onChange }: ResumeEditorProps
     onChange({ ...document, sections });
   };
   const removeSection = (id: string) => onChange({ ...document, sections: document.sections.filter((section) => section.id !== id) });
-  const acceptRewrite = (sectionId: string, rewrite: RewriteContent) => {
-    updateSection(sectionId, (section) => isRewriteableSection(section) ? mergeRewrite(section, rewrite) : section);
+  const prepareAiRewrite = async (section: RewriteableResumeSection, index: number) => {
+    if (preparingAi || !onBeforeAiRewrite) return;
+    if (document.sections.filter((candidate) => candidate.id === section.id).length !== 1) {
+      setAiPreparationError('区块标识重复，无法安全应用 AI 建议。请删除重复区块后重试。');
+      return;
+    }
+    const snapshot = document;
+    const requestVersion = ++aiPreparationVersion.current;
+    setAiPreparationError('');
+    setPreparingAi(true);
+    let saved = false;
+    try {
+      saved = await onBeforeAiRewrite(snapshot);
+    } catch {
+      saved = false;
+    }
+    if (requestVersion !== aiPreparationVersion.current) return;
+    setPreparingAi(false);
+    if (!saved) {
+      setAiPreparationError('保存最新内容后才能使用 AI 润色，请重试。');
+      return;
+    }
+    if (documentRef.current !== snapshot) {
+      setAiPreparationError('保存期间简历内容已变化，请重新点击 AI 润色。');
+      return;
+    }
+    setActiveAiSection({ id: section.id, index, section, type: section.type });
+  };
+  const acceptRewrite = (active: ActiveAiSection, rewrite: RewriteContent) => {
+    const matchingIndexes = document.sections.reduce<number[]>((indexes, section, index) => (
+      section.id === active.id ? [...indexes, index] : indexes
+    ), []);
+    const current = document.sections[active.index];
+    if (
+      matchingIndexes.length !== 1
+      || matchingIndexes[0] !== active.index
+      || !current
+      || current.type !== active.type
+      || !isRewriteableSection(current)
+    ) {
+      setActiveAiSection(undefined);
+      setAiPreparationError('当前区块已变化，未应用 AI 建议。请重新润色。');
+      return;
+    }
+    const sections = [...document.sections];
+    sections[active.index] = mergeRewrite(current, rewrite);
+    onChange({ ...document, sections });
     setActiveAiSection(undefined);
   };
 
+  const targetJob = targetJobState.status === 'ready'
+    && targetJobState.id === document.targetJobId
+    ? targetJobState.targetJob
+    : undefined;
+  const targetJobStatus = document.targetJobId === undefined
+    ? undefined
+    : targetJobState.status !== 'unbound' && targetJobState.id === document.targetJobId
+      ? targetJobState.status
+      : 'loading';
+
   return (
-    <form className="resume-editor" onSubmit={(event) => event.preventDefault()}>
+    <form
+      {...(preparingAi ? { 'aria-busy': true, inert: '' } : {})}
+      className="resume-editor"
+      onSubmit={(event) => event.preventDefault()}
+    >
       <DetailsSection open title="基本信息">
         <ResumePhotoField profile={document.profile} resumeId={resumeId} onChange={(profile) => onChange({ ...document, profile })} />
         <div className="editor-fields editor-fields--two">
@@ -272,50 +361,58 @@ export function ResumeEditor({ document, resumeId, onChange }: ResumeEditorProps
 
       <TargetJobCard
         onChange={(id) => onChange({ ...document, targetJobId: id ?? undefined })}
+        onRetry={document.targetJobId === undefined ? undefined : () => loadTargetJob(document.targetJobId!)}
         targetJob={targetJob}
+        targetJobId={document.targetJobId}
+        targetJobStatus={targetJobStatus}
       />
+
+      {preparingAi ? <p aria-live="polite" className="resume-library__status" role="status">正在保存最新简历内容…</p> : null}
+      {aiPreparationError ? <p className="resume-library__error" role="alert">{aiPreparationError}</p> : null}
 
       {document.sections.map((section, index) => <SectionCard
         index={index}
-        key={section.id}
+        key={`${section.id}-${index}`}
         sectionCount={document.sections.length}
         section={section}
         onMove={moveSection}
-        onPolish={isRewriteableSection(section) ? () => setActiveAiSection(section) : undefined}
+        onPolish={isRewriteableSection(section) ? () => void prepareAiRewrite(section, index) : undefined}
         onRemove={removeSection}
         onUpdate={updateSection}
-        polishDisabled={isRewriteableSection(section) && (!resumeId || !hasRewriteableContent(section))}
+        polishDisabled={isRewriteableSection(section) && (
+          preparingAi || !onBeforeAiRewrite || !resumeId || !hasRewriteableContent(section)
+        )}
       />)}
 
       <DetailsSection title="添加区块">
         <div className="editor-add-section-grid">{(Object.keys(sectionLabels) as ResumeSectionType[]).map((type) => <AddSectionButton key={type} label={sectionLabels[type]} onClick={() => addSection(type)} />)}</div>
       </DetailsSection>
 
-      {resumeId && activeAiSection?.type === 'summary' ? <AiSuggestionPanel
-        onAccept={(rewrite) => acceptRewrite(activeAiSection.id, rewrite)}
+      {resumeId && activeAiSection?.section.type === 'summary' ? <AiSuggestionPanel
+        onAccept={(rewrite) => acceptRewrite(activeAiSection, rewrite)}
         onClose={() => setActiveAiSection(undefined)}
-        originalSection={activeAiSection}
+        originalSection={activeAiSection.section}
         resumeId={resumeId}
         sectionType="summary"
       /> : null}
-      {resumeId && activeAiSection?.type === 'work' ? <AiSuggestionPanel
-        onAccept={(rewrite) => acceptRewrite(activeAiSection.id, rewrite)}
+      {resumeId && activeAiSection?.section.type === 'work' ? <AiSuggestionPanel
+        onAccept={(rewrite) => acceptRewrite(activeAiSection, rewrite)}
         onClose={() => setActiveAiSection(undefined)}
-        originalSection={activeAiSection}
+        originalSection={activeAiSection.section}
         resumeId={resumeId}
         sectionType="work"
       /> : null}
-      {resumeId && activeAiSection?.type === 'internship' ? <AiSuggestionPanel
-        onAccept={(rewrite) => acceptRewrite(activeAiSection.id, rewrite)}
+      {resumeId && activeAiSection?.section.type === 'internship' ? <AiSuggestionPanel
+        onAccept={(rewrite) => acceptRewrite(activeAiSection, rewrite)}
         onClose={() => setActiveAiSection(undefined)}
-        originalSection={activeAiSection}
+        originalSection={activeAiSection.section}
         resumeId={resumeId}
         sectionType="internship"
       /> : null}
-      {resumeId && activeAiSection?.type === 'project' ? <AiSuggestionPanel
-        onAccept={(rewrite) => acceptRewrite(activeAiSection.id, rewrite)}
+      {resumeId && activeAiSection?.section.type === 'project' ? <AiSuggestionPanel
+        onAccept={(rewrite) => acceptRewrite(activeAiSection, rewrite)}
         onClose={() => setActiveAiSection(undefined)}
-        originalSection={activeAiSection}
+        originalSection={activeAiSection.section}
         resumeId={resumeId}
         sectionType="project"
       /> : null}

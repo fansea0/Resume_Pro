@@ -4,6 +4,10 @@ import type { ResumeDocument } from '../types/resume';
 
 export type ResumeAutosaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 
+export interface ResumeAutosaveHandle {
+  flush: (snapshot: ResumeDocument) => Promise<boolean>;
+}
+
 interface UseResumeAutosaveOptions {
   document: ResumeDocument;
   selectedId: number | null;
@@ -24,6 +28,7 @@ export function useResumeAutosave({ document, selectedId, onSaved, enabled = tru
   const inFlight = useRef(false);
   const queuedAfterFlight = useRef(false);
   const queuedImmediately = useRef(false);
+  const idleWaiters = useRef<Array<() => void>>([]);
   const skipNextDocumentChange = useRef(false);
   const onSavedRef = useRef(onSaved);
 
@@ -32,17 +37,21 @@ export function useResumeAutosave({ document, selectedId, onSaved, enabled = tru
 
   useEffect(() => { idRef.current = selectedId; }, [selectedId]);
 
-  const save = useCallback(async (immediate = false, forceNew = false) => {
-    if (!enabled) return;
+  const save = useCallback(async (
+    immediate = false,
+    forceNew = false,
+    exactDocument?: ResumeDocument,
+  ): Promise<boolean> => {
+    if (!enabled) return false;
     if (inFlight.current) {
       queuedAfterFlight.current = true;
       queuedImmediately.current ||= immediate;
-      return;
+      return false;
     }
     inFlight.current = true;
     const requestVersion = version.current;
     const requestSelectionEpoch = selectionEpoch.current;
-    const requestDocument = documentRef.current;
+    const requestDocument = exactDocument ?? documentRef.current;
     const currentId = forceNew ? null : idRef.current;
     if (mounted.current) { setStatus('saving'); setError(null); }
     try {
@@ -54,11 +63,13 @@ export function useResumeAutosave({ document, selectedId, onSaved, enabled = tru
         onSavedRef.current(saved.id, saved);
         setStatus('saved');
       }
+      return true;
     } catch {
       if (mounted.current && requestVersion === version.current) {
         setStatus('error');
         setError('保存失败，请稍后重试。');
       }
+      return false;
     } finally {
       inFlight.current = false;
       if (queuedAfterFlight.current && mounted.current) {
@@ -67,6 +78,7 @@ export function useResumeAutosave({ document, selectedId, onSaved, enabled = tru
         queuedImmediately.current = false;
         void save(runImmediately);
       }
+      if (!inFlight.current) idleWaiters.current.splice(0).forEach((resolve) => resolve());
     }
   }, [enabled]);
 
@@ -108,6 +120,18 @@ export function useResumeAutosave({ document, selectedId, onSaved, enabled = tru
     await save(true, newDraft);
   }, [save]);
 
+  const flush = useCallback(async (snapshot: ResumeDocument): Promise<boolean> => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    queuedAfterFlight.current = false;
+    queuedImmediately.current = false;
+    const flushEpoch = selectionEpoch.current;
+    while (inFlight.current) {
+      await new Promise<void>((resolve) => idleWaiters.current.push(resolve));
+    }
+    if (!mounted.current || flushEpoch !== selectionEpoch.current) return false;
+    return save(true, false, snapshot);
+  }, [save]);
+
   const cancel = useCallback(({ skipNextDocument = false }: { skipNextDocument?: boolean } = {}) => {
     version.current += 1;
     selectionEpoch.current += 1;
@@ -118,5 +142,5 @@ export function useResumeAutosave({ document, selectedId, onSaved, enabled = tru
     if (mounted.current) { setStatus('idle'); setError(null); }
   }, []);
 
-  return { status, error, saveNow, cancel };
+  return { status, error, saveNow, flush, cancel };
 }

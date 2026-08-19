@@ -9,6 +9,7 @@ import { ResumePreview } from './components/ResumePreview';
 import { TemplateGallery } from './components/TemplateGallery';
 import { TemplateAdmin } from './components/TemplateAdmin';
 import { TargetJobsPage } from './pages/TargetJobsPage';
+import type { ResumeAutosaveHandle } from './hooks/useResumeAutosave';
 import { documentFromStored, type StoredResume } from './api/resumes';
 import { getTemplateStatus } from './api/templates';
 import { templateRegistry } from './templates/registry';
@@ -70,6 +71,7 @@ export default function App() {
   const [disabledTemplateIds, setDisabledTemplateIds] = useState<typeof resume.templateId[]>([]);
   const [targetJobsModalOpen, setTargetJobsModalOpen] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
+  const resumeAutosaveRef = useRef<ResumeAutosaveHandle | null>(null);
   const isMounted = useRef(false);
   const sessionEpoch = useRef(0);
   const templateStatusRequestVersion = useRef(0);
@@ -239,8 +241,8 @@ export default function App() {
               </div>
               <span>当前模板：{currentTemplate?.name ?? resume.templateId}</span>
             </div>
-            <ResumeLibrary document={resume} selectedId={selectedResumeId} onSelectedIdChange={changeSelectedResumeForSession} onChange={changeResumeForSession} onRestoreSample={() => changeResumeForSession(createSampleResumeDocument())} onSelect={changeResumeForSession} previewRef={previewRef} />
-            <ResumeEditor document={resume} resumeId={selectedResumeId ?? undefined} onChange={changeResumeForSession} />
+            <ResumeLibrary autosaveHandleRef={resumeAutosaveRef} document={resume} selectedId={selectedResumeId} onSelectedIdChange={changeSelectedResumeForSession} onChange={changeResumeForSession} onRestoreSample={() => changeResumeForSession(createSampleResumeDocument())} onSelect={changeResumeForSession} previewRef={previewRef} />
+            <ResumeEditor document={resume} resumeId={selectedResumeId ?? undefined} onBeforeAiRewrite={(snapshot) => resumeAutosaveRef.current?.flush(snapshot) ?? Promise.resolve(false)} onChange={changeResumeForSession} />
           </aside>
           <ResumePreview document={resume} ref={previewRef} />
         </div>

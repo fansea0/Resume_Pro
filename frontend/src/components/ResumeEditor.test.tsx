@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ResumeEditor } from './ResumeEditor';
@@ -48,9 +48,14 @@ function latestDocument(onChange: ReturnType<typeof vi.fn>) {
   return onChange.mock.calls[onChange.mock.calls.length - 1]?.[0];
 }
 
-function StatefulEditor({ document, onChange, resumeId }: { document: ReturnType<typeof createEmptyResumeDocument>; onChange: ReturnType<typeof vi.fn>; resumeId?: number }) {
+function StatefulEditor({ document, onBeforeAiRewrite = async () => true, onChange, resumeId }: {
+  document: ReturnType<typeof createEmptyResumeDocument>;
+  onBeforeAiRewrite?: (snapshot: ReturnType<typeof createEmptyResumeDocument>) => Promise<boolean>;
+  onChange: ReturnType<typeof vi.fn>;
+  resumeId?: number;
+}) {
   const [current, setCurrent] = useState(document);
-  return <ResumeEditor document={current} onChange={(next) => { setCurrent(next); onChange(next); }} resumeId={resumeId} />;
+  return <ResumeEditor document={current} onBeforeAiRewrite={onBeforeAiRewrite} onChange={(next) => { setCurrent(next); onChange(next); }} resumeId={resumeId} />;
 }
 
 describe('ResumeEditor', () => {
@@ -244,7 +249,7 @@ describe('ResumeEditor', () => {
   });
 
   it('opens the AI suggestion panel from a supported section header', async () => {
-    render(<ResumeEditor document={createSampleResumeDocument()} onChange={vi.fn()} resumeId={42} />);
+    render(<ResumeEditor document={createSampleResumeDocument()} onBeforeAiRewrite={async () => true} onChange={vi.fn()} resumeId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'AI 润色 个人总结' }));
 
@@ -255,6 +260,151 @@ describe('ResumeEditor', () => {
       expect.any(Function),
       expect.any(AbortSignal),
     );
+  });
+
+  it('waits for the exact current document to save before starting AI rewrite', async () => {
+    const current = createSampleResumeDocument();
+    current.targetJobId = 7;
+    current.sections[0] = {
+      ...current.sections[0],
+      content: { markdown: '刚刚编辑、尚未自动保存的总结' },
+    } as typeof current.sections[0];
+    let finishSave!: (saved: boolean) => void;
+    const onBeforeAiRewrite = vi.fn(() => new Promise<boolean>((resolve) => { finishSave = resolve; }));
+    render(<ResumeEditor
+      document={current}
+      onBeforeAiRewrite={onBeforeAiRewrite}
+      onChange={vi.fn()}
+      resumeId={42}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI 润色 个人总结' }));
+
+    expect(onBeforeAiRewrite).toHaveBeenCalledWith(current);
+    expect(screen.getByRole('button', { name: 'AI 润色 个人总结' })).toBeDisabled();
+    expect(screen.getByText('正在保存最新简历内容…')).toHaveAttribute('role', 'status');
+    expect(streamRewriteMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'AI 润色建议' })).not.toBeInTheDocument();
+
+    await act(async () => { finishSave(true); });
+
+    expect(await screen.findByRole('dialog', { name: 'AI 润色建议' })).toBeInTheDocument();
+    expect(streamRewriteMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps AI rewrite closed and usable after the latest snapshot fails to save', async () => {
+    const onBeforeAiRewrite = vi.fn().mockResolvedValue(false);
+    render(<ResumeEditor
+      document={createSampleResumeDocument()}
+      onBeforeAiRewrite={onBeforeAiRewrite}
+      onChange={vi.fn()}
+      resumeId={42}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI 润色 个人总结' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('保存最新内容后才能使用 AI 润色');
+    expect(screen.getByRole('button', { name: 'AI 润色 个人总结' })).toBeEnabled();
+    expect(streamRewriteMock).not.toHaveBeenCalled();
+  });
+
+  it('retains a failed target binding with retry and clear controls', async () => {
+    getTargetJobMock.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(targetJob);
+    const onChange = vi.fn();
+    render(<StatefulEditor
+      document={{ ...createEmptyResumeDocument(), targetJobId: 7 }}
+      onChange={onChange}
+      resumeId={42}
+    />);
+
+    expect(await screen.findByText('当前：目标岗位 #7')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('无法加载目标岗位详情');
+    expect(screen.getByRole('button', { name: '更换目标岗位' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '清除目标岗位绑定' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '重新加载目标岗位详情' }));
+    expect(await screen.findByText('当前：字节跳动 · 高级后端工程师')).toBeInTheDocument();
+    expect(getTargetJobMock).toHaveBeenCalledTimes(2);
+    expect(getTargetJobMock).toHaveBeenNthCalledWith(2, 7);
+
+    fireEvent.click(screen.getByRole('button', { name: '清除目标岗位绑定' }));
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '清除绑定' }));
+    expect(latestDocument(onChange).targetJobId).toBeUndefined();
+  });
+
+  it('rejects ambiguous duplicate section ids before saving or starting AI', async () => {
+    const first = createProjectSection('duplicate-project');
+    first.title = '重复项目甲';
+    first.content.items = [{
+      id: 'first', name: '甲', role: '', startDate: '', endDate: '', location: '', link: '',
+      introduction: '甲介绍', achievements: '', highlightsMarkdown: '', showLocation: true,
+      showLink: true, showIntroduction: true, showAchievements: true,
+    }];
+    const second = createProjectSection('duplicate-project');
+    second.title = '重复项目乙';
+    second.content.items = [{
+      id: 'second', name: '乙', role: '', startDate: '', endDate: '', location: '', link: '',
+      introduction: '乙介绍', achievements: '', highlightsMarkdown: '', showLocation: true,
+      showLink: true, showIntroduction: true, showAchievements: true,
+    }];
+    const onBeforeAiRewrite = vi.fn().mockResolvedValue(true);
+    render(<ResumeEditor
+      document={{ ...createEmptyResumeDocument(), sections: [first, second] }}
+      onBeforeAiRewrite={onBeforeAiRewrite}
+      onChange={vi.fn()}
+      resumeId={42}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI 润色 重复项目乙' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('区块标识重复，无法安全应用 AI 建议');
+    expect(onBeforeAiRewrite).not.toHaveBeenCalled();
+    expect(streamRewriteMock).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a rewrite after the selected section changes type', async () => {
+    const initial = createSampleResumeDocument();
+    const replacement = createProjectSection(initial.sections[0].id);
+    replacement.content.items = [{
+      id: 'replacement', name: '替换后的项目', role: '', startDate: '', endDate: '', location: '', link: '',
+      introduction: '项目内容', achievements: '', highlightsMarkdown: '', showLocation: true,
+      showLink: true, showIntroduction: true, showAchievements: true,
+    }];
+    let emit!: (event: SSEEvent) => void;
+    streamRewriteMock.mockImplementation((_resumeId, _request, onEvent) => {
+      emit = onEvent;
+      return new Promise<void>(() => undefined);
+    });
+    const onChange = vi.fn();
+    const beforeRewrite = vi.fn().mockResolvedValue(true);
+    const { rerender } = render(<ResumeEditor
+      document={initial}
+      onBeforeAiRewrite={beforeRewrite}
+      onChange={onChange}
+      resumeId={42}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: 'AI 润色 个人总结' }));
+    await screen.findByRole('dialog', { name: 'AI 润色建议' });
+
+    rerender(<ResumeEditor
+      document={{ ...initial, sections: [replacement, ...initial.sections.slice(1)] }}
+      onBeforeAiRewrite={beforeRewrite}
+      onChange={onChange}
+      resumeId={42}
+    />);
+    act(() => {
+      emit({
+        kind: 'suggestion',
+        sectionId: initial.sections[0].id,
+        sectionType: 'summary',
+        newContent: { markdown: '不应应用' },
+      });
+      emit({ kind: 'done' });
+    });
+    fireEvent.click(await screen.findByRole('button', { name: '采纳' }));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alert')).toHaveTextContent('当前区块已变化，未应用 AI 建议');
   });
 
   it('merges accepted rewrites by section and item id without changing frozen fields', async () => {

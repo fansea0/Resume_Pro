@@ -104,6 +104,57 @@ describe('useResumeAutosave', () => {
     expect(updateResume).toHaveBeenCalledWith(21, second);
   });
 
+  it('flushes the exact requested snapshot only after an older save finishes', async () => {
+    vi.useFakeTimers();
+    const first = createEmptyResumeDocument();
+    const older = { ...first, title: '旧快照' };
+    const exact = { ...first, title: 'AI 请求前快照', targetJobId: 7 };
+    let resolveOlder!: (value: StoredResume) => void;
+    vi.mocked(updateResume)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOlder = resolve; }))
+      .mockResolvedValueOnce(stored(71, exact.title));
+    const { rerender, result } = renderHook(
+      ({ document }) => useResumeAutosave({ document, selectedId: 71, onSaved: vi.fn() }),
+      { initialProps: { document: first } },
+    );
+    rerender({ document: older });
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+
+    const flush = (result.current as unknown as {
+      flush?: (snapshot: typeof exact) => Promise<boolean>;
+    }).flush;
+    expect(flush).toBeTypeOf('function');
+    let flushResult: boolean | undefined;
+    let flushing!: Promise<boolean | undefined>;
+    act(() => { flushing = flush?.(exact) ?? Promise.resolve(undefined); });
+    await act(async () => undefined);
+    expect(updateResume).toHaveBeenCalledTimes(1);
+
+    resolveOlder(stored(71, older.title));
+    await act(async () => { flushResult = await flushing; });
+
+    expect(vi.mocked(updateResume).mock.calls).toEqual([
+      [71, older],
+      [71, exact],
+    ]);
+    expect(flushResult).toBe(true);
+  });
+
+  it('reports a failed exact flush to its caller', async () => {
+    const document = createEmptyResumeDocument();
+    vi.mocked(updateResume).mockRejectedValueOnce(new Error('offline'));
+    const { result } = renderHook(() => useResumeAutosave({ document, selectedId: 7, onSaved: vi.fn() }));
+    const flush = (result.current as unknown as {
+      flush?: (snapshot: typeof document) => Promise<boolean>;
+    }).flush;
+
+    expect(flush).toBeTypeOf('function');
+    let flushed: boolean | undefined;
+    await act(async () => { flushed = await flush?.(document); });
+    expect(flushed).toBe(false);
+    expect(result.current.error).toBe('保存失败，请稍后重试。');
+  });
+
   it('invalidates pending and in-flight autosaves when a selected draft is deleted', async () => {
     vi.useFakeTimers();
     const document = createEmptyResumeDocument();
