@@ -208,6 +208,7 @@ func validInput(input resumeInput) bool {
 var validTemplateIDs = map[string]struct{}{
 	"minimal": {}, "business": {}, "creative": {}, "tech": {},
 	"editorial": {}, "redline": {}, "violet": {}, "azure-chronicle": {},
+	"mint-canvas": {}, "scholarly-serif": {}, "blue-sidebar": {},
 }
 
 // validResumeContent mirrors the v2 ResumeDocument contract used by the editor.

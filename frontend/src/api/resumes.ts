@@ -285,8 +285,8 @@ export function listResumes() {
   return apiFetch<StoredResume[]>('/api/resumes');
 }
 
-export function createResume(document: ResumeDocument) {
-  return apiFetch<StoredResume>('/api/resumes', { method: 'POST', body: JSON.stringify(payload(document)) });
+export function createResume(document: ResumeDocument, signal?: AbortSignal) {
+  return apiFetch<StoredResume>('/api/resumes', { method: 'POST', body: JSON.stringify(payload(document)), signal });
 }
 
 export function updateResume(id: number, document: ResumeDocument) {

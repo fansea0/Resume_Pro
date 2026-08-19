@@ -54,24 +54,36 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  document.querySelectorAll('[data-ai-generate-test-background]').forEach((element) => element.remove());
+  vi.useRealTimers();
 });
 
 describe('AiGenerateModal', () => {
-  it('renders only while open and validates trimmed raw text and template selection', async () => {
+  it('renders only while open and keeps validation errors linked until each field is corrected', async () => {
     const { rerender } = render(<AiGenerateModal onClose={vi.fn()} onCreated={vi.fn()} open={false} />);
     expect(screen.queryByRole('dialog', { name: 'AI 快速生成' })).not.toBeInTheDocument();
 
     rerender(<AiGenerateModal onClose={vi.fn()} onCreated={vi.fn()} open />);
     const dialog = screen.getByRole('dialog', { name: 'AI 快速生成' });
-    fireEvent.change(within(dialog).getByLabelText('你的经历与优势'), { target: { value: '   字数太少   ' } });
+    const rawTextInput = within(dialog).getByLabelText('你的经历与优势');
+    const templateSelect = within(dialog).getByLabelText('简历模板');
+    fireEvent.change(rawTextInput, { target: { value: '   字数太少   ' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '开始生成' }));
 
-    expect(within(dialog).getByRole('alert')).toHaveTextContent('至少 30 个字符');
+    const rawTextError = within(dialog).getByText('你的经历与优势至少 30 个字符。');
+    const templateError = within(dialog).getByText('请选择简历模板。');
+    expect(rawTextInput).toHaveAttribute('aria-invalid', 'true');
+    expect(rawTextInput.getAttribute('aria-describedby')).toContain(rawTextError.id);
+    expect(templateSelect).toHaveAttribute('aria-invalid', 'true');
+    expect(templateSelect.getAttribute('aria-describedby')).toContain(templateError.id);
     expect(streamGenerateMock).not.toHaveBeenCalled();
 
-    fireEvent.change(within(dialog).getByLabelText('你的经历与优势'), { target: { value: rawText } });
-    fireEvent.click(within(dialog).getByRole('button', { name: '开始生成' }));
-    expect(within(dialog).getByRole('alert')).toHaveTextContent('请选择简历模板');
+    fireEvent.change(rawTextInput, { target: { value: rawText } });
+    expect(within(dialog).queryByText('你的经历与优势至少 30 个字符。')).not.toBeInTheDocument();
+    expect(within(dialog).getByText('请选择简历模板。')).toBeInTheDocument();
+
+    fireEvent.change(templateSelect, { target: { value: 'business' } });
+    expect(within(dialog).queryByText('请选择简历模板。')).not.toBeInTheDocument();
     expect(streamGenerateMock).not.toHaveBeenCalled();
   });
 
@@ -152,7 +164,7 @@ describe('AiGenerateModal', () => {
       ...generated,
       templateId: 'business',
       targetJobId: 7,
-    });
+    }, expect.any(AbortSignal));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(42));
     expect(onCreated).toHaveBeenCalledOnce();
     expect(onClose).toHaveBeenCalledOnce();
@@ -187,5 +199,98 @@ describe('AiGenerateModal', () => {
       emit?.({ kind: 'done' });
     });
     expect(screen.queryByText('张三｜高级后端工程师')).not.toBeInTheDocument();
+  });
+
+  it('hides and inerts app-level background content, then restores its previous state', () => {
+    const appBackground = document.createElement('main');
+    appBackground.dataset.aiGenerateTestBackground = '';
+    appBackground.setAttribute('aria-hidden', 'false');
+    document.body.appendChild(appBackground);
+
+    const { unmount } = render(<AiGenerateModal onClose={vi.fn()} onCreated={vi.fn()} open />);
+
+    expect(appBackground).toHaveAttribute('aria-hidden', 'true');
+    expect(appBackground).toHaveAttribute('inert');
+    unmount();
+    expect(appBackground).toHaveAttribute('aria-hidden', 'false');
+    expect(appBackground).not.toHaveAttribute('inert');
+    appBackground.remove();
+  });
+
+  it('moves focus to the completed draft and announces that it is ready', async () => {
+    const generated = generatedDocument();
+    streamGenerateMock.mockImplementation(async (_request, onEvent) => {
+      onEvent({ kind: 'suggestion', newContent: generated });
+      onEvent({ kind: 'done' });
+    });
+    render(<AiGenerateModal onClose={vi.fn()} onCreated={vi.fn()} open />);
+    fillRequiredFields();
+
+    fireEvent.click(screen.getByRole('button', { name: '开始生成' }));
+
+    const heading = await screen.findByRole('heading', { name: generated.title });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(screen.getByRole('status')).toHaveTextContent('简历初稿已生成，可以应用到新建简历');
+  });
+
+  it('keeps cancel and close focusable while saving and aborts without stale callbacks', async () => {
+    const generated = generatedDocument();
+    streamGenerateMock.mockImplementation(async (_request, onEvent) => {
+      onEvent({ kind: 'suggestion', newContent: generated });
+      onEvent({ kind: 'done' });
+    });
+    let saveSignal: AbortSignal | undefined;
+    createResumeMock.mockImplementation((_document, signal) => {
+      saveSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+      });
+    });
+    const onClose = vi.fn();
+    const onCreated = vi.fn();
+    render(<AiGenerateModal onClose={onClose} onCreated={onCreated} open />);
+    fillRequiredFields();
+    fireEvent.click(screen.getByRole('button', { name: '开始生成' }));
+    fireEvent.click(await screen.findByRole('button', { name: '应用到新建简历' }));
+
+    expect(screen.getByRole('button', { name: '取消' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '关闭 AI 快速生成' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+
+    expect(saveSignal?.aborted).toBe(true);
+    expect(onClose).toHaveBeenCalledOnce();
+    await act(async () => Promise.resolve());
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(createResumeMock).toHaveBeenCalledOnce();
+  });
+
+  it('aborts a timed-out create and returns to a retryable ready state', async () => {
+    const generated = generatedDocument();
+    streamGenerateMock.mockImplementation(async (_request, onEvent) => {
+      onEvent({ kind: 'suggestion', newContent: generated });
+      onEvent({ kind: 'done' });
+    });
+    let saveSignal: AbortSignal | undefined;
+    createResumeMock.mockImplementation((_document, signal) => {
+      saveSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+      });
+    });
+    render(<AiGenerateModal onClose={vi.fn()} onCreated={vi.fn()} open />);
+    fillRequiredFields();
+    fireEvent.click(screen.getByRole('button', { name: '开始生成' }));
+    const apply = await screen.findByRole('button', { name: '应用到新建简历' });
+    vi.useFakeTimers();
+    fireEvent.click(apply);
+
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+    });
+
+    expect(saveSignal?.aborted).toBe(true);
+    expect(screen.getByRole('alert')).toHaveTextContent('保存超时');
+    expect(screen.getByRole('button', { name: '应用到新建简历' })).toBeEnabled();
   });
 });

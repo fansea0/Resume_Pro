@@ -10,12 +10,13 @@ import {
 import { createPortal } from 'react-dom';
 
 import { streamGenerate } from '../api/ai';
-import { createResume, documentFromStored } from '../api/resumes';
+import { createResume } from '../api/resumes';
 import { getTargetJob } from '../api/targetJobs';
 import { templateRegistry } from '../templates/registry';
 import type { GenerateSSEEvent } from '../types/ai';
 import type { ResumeDocument, TemplateId } from '../types/resume';
 import type { TargetJob } from '../types/targetJob';
+import { sanitizeGeneratedResumeDocument } from '../utils/sanitizeGeneratedResume';
 import { TargetJobPicker } from './TargetJobPicker';
 
 type ModalPhase = 'form' | 'generating' | 'ready' | 'error' | 'saving';
@@ -34,8 +35,14 @@ interface ModalState {
   streamedTitle?: string;
 }
 
+interface ValidationErrors {
+  rawText?: string;
+  templateId?: string;
+}
+
 const initialState: ModalState = { phase: 'form', thinking: '' };
 const focusableSelector = 'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
+const SAVE_TIMEOUT_MS = 15_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -56,43 +63,6 @@ function requestError(error: unknown) {
     : 'AI 生成失败，请稍后重试。';
 }
 
-function normalizeGeneratedDocument(
-  value: unknown,
-  templateId: TemplateId,
-  targetJobId?: number,
-): ResumeDocument | undefined {
-  if (!isRecord(value) || !isRecord(value.profile)) return undefined;
-  const { targetJobId: _untrustedTargetJobId, ...withoutTargetJob } = value;
-  const title = typeof value.title === 'string' && value.title.trim() !== ''
-    ? value.title.trim()
-    : 'AI 生成简历';
-  const candidate = {
-    ...withoutTargetJob,
-    title,
-    templateId,
-    ...(targetJobId === undefined ? {} : { targetJobId }),
-    profile: {
-      ...value.profile,
-      // A generated document must never claim an existing uploaded asset.
-      avatarUrl: '',
-      avatarStorageKey: '',
-    },
-  };
-
-  try {
-    return documentFromStored({
-      id: 0,
-      title,
-      templateId,
-      content: JSON.stringify(candidate),
-      createdAt: '',
-      updatedAt: '',
-    });
-  } catch {
-    return undefined;
-  }
-}
-
 export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalProps) {
   const [rawText, setRawText] = useState('');
   const [templateId, setTemplateId] = useState<TemplateId | ''>('');
@@ -101,23 +71,31 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
   const [targetLoading, setTargetLoading] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [state, setState] = useState<ModalState>(initialState);
+  const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
   const titleId = useId();
   const descriptionId = useId();
   const rawTextHintId = useId();
+  const rawTextErrorId = useId();
+  const templateErrorId = useId();
+  const backdropRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const targetButtonRef = useRef<HTMLButtonElement>(null);
+  const progressRef = useRef<HTMLElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const readyHeadingRef = useRef<HTMLHeadingElement>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const abortRef = useRef<AbortController>();
+  const saveAbortRef = useRef<AbortController>();
+  const saveTimeoutRef = useRef<number>();
   const requestVersionRef = useRef(0);
   const targetVersionRef = useRef(0);
   const applyLockRef = useRef(false);
   const pickerOpenRef = useRef(pickerOpen);
-  const phaseRef = useRef(state.phase);
   const onCloseRef = useRef(onClose);
   const onCreatedRef = useRef(onCreated);
   pickerOpenRef.current = pickerOpen;
-  phaseRef.current = state.phase;
   onCloseRef.current = onClose;
   onCreatedRef.current = onCreated;
 
@@ -127,16 +105,24 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
     abortRef.current = undefined;
   }, []);
 
+  const cancelSave = useCallback(() => {
+    if (saveTimeoutRef.current !== undefined) window.clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = undefined;
+    saveAbortRef.current?.abort();
+    saveAbortRef.current = undefined;
+  }, []);
+
   const closeModal = useCallback(() => {
-    if (phaseRef.current === 'saving') return;
     cancelGeneration();
+    cancelSave();
     setPickerOpen(false);
     onCloseRef.current();
-  }, [cancelGeneration]);
+  }, [cancelGeneration, cancelSave]);
 
   useEffect(() => {
     if (!open) {
       cancelGeneration();
+      cancelSave();
       targetVersionRef.current += 1;
       return;
     }
@@ -147,19 +133,34 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
     setTargetLoading(false);
     setPickerOpen(false);
     setState(initialState);
+    setValidationErrors({});
     applyLockRef.current = false;
-  }, [cancelGeneration, open]);
+  }, [cancelGeneration, cancelSave, open]);
 
   useEffect(() => () => {
     cancelGeneration();
+    cancelSave();
     targetVersionRef.current += 1;
-  }, [cancelGeneration]);
+  }, [cancelGeneration, cancelSave]);
 
   useLayoutEffect(() => {
     if (!open) return;
     const dialog = dialogRef.current;
-    if (!dialog) return;
+    const backdrop = backdropRef.current;
+    if (!dialog || !backdrop) return;
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const backgroundElements = Array.from(document.body.children).filter(
+      (element): element is HTMLElement => element instanceof HTMLElement && element !== backdrop,
+    );
+    const previousBackgroundState = backgroundElements.map((element) => ({
+      element,
+      ariaHidden: element.getAttribute('aria-hidden'),
+      inert: element.hasAttribute('inert'),
+    }));
+    for (const element of backgroundElements) {
+      element.setAttribute('aria-hidden', 'true');
+      element.setAttribute('inert', '');
+    }
 
     const focusableElements = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector));
     const handleFocusIn = (event: FocusEvent) => {
@@ -196,6 +197,11 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
     return () => {
       document.removeEventListener('focusin', handleFocusIn);
       document.removeEventListener('keydown', handleKeyDown);
+      for (const { element, ariaHidden, inert } of previousBackgroundState) {
+        if (ariaHidden === null) element.removeAttribute('aria-hidden');
+        else element.setAttribute('aria-hidden', ariaHidden);
+        if (!inert) element.removeAttribute('inert');
+      }
       const previousFocus = previousFocusRef.current;
       queueMicrotask(() => {
         if (previousFocus?.isConnected) previousFocus.focus();
@@ -203,6 +209,14 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
       previousFocusRef.current = null;
     };
   }, [closeModal, open]);
+
+  useLayoutEffect(() => {
+    if (!open || pickerOpen) return;
+    if (state.phase === 'generating') progressRef.current?.focus();
+    else if (state.phase === 'error') errorRef.current?.focus();
+    else if (state.phase === 'ready') readyHeadingRef.current?.focus();
+    else if (state.phase === 'saving') cancelButtonRef.current?.focus();
+  }, [open, pickerOpen, state.phase]);
 
   const selectTargetJob = (id: number) => {
     const version = ++targetVersionRef.current;
@@ -228,14 +242,12 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
 
   const runGeneration = useCallback(() => {
     const normalizedRawText = rawText.trim();
-    if (normalizedRawText.length < 30) {
-      setState({ phase: 'form', thinking: '', error: '你的经历与优势至少 30 个字符。' });
-      return;
-    }
-    if (templateId === '') {
-      setState({ phase: 'form', thinking: '', error: '请选择简历模板。' });
-      return;
-    }
+    const nextValidationErrors: ValidationErrors = {
+      ...(normalizedRawText.length < 30 ? { rawText: '你的经历与优势至少 30 个字符。' } : {}),
+      ...(templateId === '' ? { templateId: '请选择简历模板。' } : {}),
+    };
+    setValidationErrors(nextValidationErrors);
+    if (nextValidationErrors.rawText || nextValidationErrors.templateId || templateId === '') return;
 
     const requestVersion = ++requestVersionRef.current;
     abortRef.current?.abort();
@@ -271,7 +283,7 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
 
       reachedTerminalEvent = true;
       if (receivedError) return;
-      const generated = normalizeGeneratedDocument(pendingContent, templateId, targetJobId);
+      const generated = sanitizeGeneratedResumeDocument(pendingContent, templateId, targetJobId);
       setState(generated
         ? { phase: 'ready', thinking: '', generated }
         : { phase: 'error', thinking: '', error: 'AI 返回的简历格式无效，请重试生成。' });
@@ -288,7 +300,7 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
         || reachedTerminalEvent
         || receivedError
       ) return;
-      const generated = normalizeGeneratedDocument(pendingContent, templateId, targetJobId);
+      const generated = sanitizeGeneratedResumeDocument(pendingContent, templateId, targetJobId);
       setState(generated
         ? { phase: 'ready', thinking: '', generated }
         : { phase: 'error', thinking: '', error: 'AI 响应提前结束，请重试生成。' });
@@ -313,20 +325,32 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
     applyLockRef.current = true;
     const version = requestVersionRef.current;
     const generated = state.generated;
+    const controller = new AbortController();
+    let timedOut = false;
+    cancelSave();
+    saveAbortRef.current = controller;
+    saveTimeoutRef.current = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, SAVE_TIMEOUT_MS);
     setState((current) => ({ ...current, phase: 'saving', error: undefined }));
 
     let created;
     try {
-      created = await createResume(generated);
+      created = await createResume(generated, controller.signal);
     } catch {
       if (version !== requestVersionRef.current) return;
       applyLockRef.current = false;
       setState((current) => ({
         ...current,
         phase: 'ready',
-        error: '新建简历保存失败，请重试。',
+        error: timedOut ? '新建简历保存超时，请重试。' : '新建简历保存失败，请重试。',
       }));
       return;
+    } finally {
+      if (saveTimeoutRef.current !== undefined) window.clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = undefined;
+      if (saveAbortRef.current === controller) saveAbortRef.current = undefined;
     }
 
     if (version !== requestVersionRef.current) return;
@@ -350,7 +374,7 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
 
   return createPortal(
     <>
-      <div className="ai-generate-modal__backdrop">
+      <div className="ai-generate-modal__backdrop" ref={backdropRef}>
         <div
           aria-busy={busy}
           aria-describedby={descriptionId}
@@ -368,7 +392,6 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
             </div>
             <button
               aria-label="关闭 AI 快速生成"
-              disabled={state.phase === 'saving'}
               onClick={closeModal}
               ref={closeButtonRef}
               title="关闭"
@@ -385,16 +408,23 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
               <label>
                 你的经历与优势
                 <textarea
-                  aria-describedby={rawTextHintId}
-                  aria-invalid={Boolean(state.error && rawText.trim().length < 30)}
+                  aria-describedby={`${rawTextHintId}${validationErrors.rawText ? ` ${rawTextErrorId}` : ''}`}
+                  aria-invalid={Boolean(validationErrors.rawText)}
                   disabled={busy}
-                  onChange={(event) => setRawText(event.target.value)}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setRawText(value);
+                    if (value.trim().length >= 30) {
+                      setValidationErrors((current) => ({ ...current, rawText: undefined }));
+                    }
+                  }}
                   placeholder="例如：我有 5 年 Go 后端经验，负责过支付平台与稳定性治理…"
                   rows={8}
                   value={rawText}
                 />
               </label>
               <p className="ai-generate-modal__hint" id={rawTextHintId}>至少 30 个字符；可以包含经历、项目、教育背景和可量化成果。</p>
+              {validationErrors.rawText && <p className="ai-generate-modal__error" id={rawTextErrorId} role="alert">{validationErrors.rawText}</p>}
 
               <div className="ai-generate-modal__field-group">
                 <span className="ai-generate-modal__label">目标岗位（可选）</span>
@@ -411,13 +441,22 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
 
               <label>
                 简历模板
-                <select disabled={busy} onChange={(event) => setTemplateId(event.target.value as TemplateId | '')} value={templateId}>
+                <select
+                  aria-describedby={validationErrors.templateId ? templateErrorId : undefined}
+                  aria-invalid={Boolean(validationErrors.templateId)}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const value = event.target.value as TemplateId | '';
+                    setTemplateId(value);
+                    if (value !== '') setValidationErrors((current) => ({ ...current, templateId: undefined }));
+                  }}
+                  value={templateId}
+                >
                   <option value="">请选择模板</option>
                   {templateRegistry.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
                 </select>
               </label>
-
-              {state.error && <p className="ai-generate-modal__error" role="alert">{state.error}</p>}
+              {validationErrors.templateId && <p className="ai-generate-modal__error" id={templateErrorId} role="alert">{validationErrors.templateId}</p>}
 
               <footer className="ai-generate-modal__actions">
                 <button onClick={closeModal} type="button">取消</button>
@@ -427,7 +466,7 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
           )}
 
           {state.phase === 'generating' && (
-            <section className="ai-generate-modal__progress" aria-live="polite">
+            <section className="ai-generate-modal__progress" aria-live="polite" ref={progressRef} tabIndex={-1}>
               <span aria-hidden="true" className="ai-suggestion-panel__pulse" />
               <div>
                 <strong>正在生成简历…</strong>
@@ -439,7 +478,7 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
 
           {state.phase === 'error' && (
             <section className="ai-generate-modal__result ai-generate-modal__result--error">
-              <div className="ai-generate-modal__error-card" role="alert">
+              <div className="ai-generate-modal__error-card" ref={errorRef} role="alert" tabIndex={-1}>
                 <strong>本次生成未完成</strong>
                 <span>{state.error}</span>
               </div>
@@ -453,9 +492,12 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
 
           {(state.phase === 'ready' || state.phase === 'saving') && state.generated && (
             <section className="ai-generate-modal__result">
+              <p aria-live="polite" className="ai-generate-modal__sr-only" role="status">
+                简历初稿已生成，可以应用到新建简历。
+              </p>
               <div className="ai-generate-modal__resume-summary">
                 <p>初稿已完成</p>
-                <h3>{state.generated.title}</h3>
+                <h3 ref={readyHeadingRef} tabIndex={-1}>{state.generated.title}</h3>
                 <dl>
                   <div><dt>姓名</dt><dd>{state.generated.profile.fullName || '待补充'}</dd></div>
                   <div><dt>章节</dt><dd>{state.generated.sections.length} 个</dd></div>
@@ -464,7 +506,7 @@ export function AiGenerateModal({ open, onClose, onCreated }: AiGenerateModalPro
               </div>
               {state.error && <p className="ai-generate-modal__error" role="alert">{state.error}</p>}
               <footer className="ai-generate-modal__actions">
-                <button disabled={state.phase === 'saving'} onClick={closeModal} type="button">取消</button>
+                <button onClick={closeModal} ref={cancelButtonRef} type="button">取消</button>
                 <button disabled={state.phase === 'saving'} onClick={() => void applyGenerated()} type="button">
                   {state.phase === 'saving' ? '正在新建简历…' : '应用到新建简历'}
                 </button>

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { documentFromStored } from './resumes';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createResume, documentFromStored } from './resumes';
 import { createSampleResumeDocument } from '../types/resume';
 
 function stored(content: unknown, title = '数据库标题', templateId = 'business') {
@@ -12,6 +12,27 @@ function stored(content: unknown, title = '数据库标题', templateId = 'busin
     updatedAt: '2026-08-14T02:00:00Z',
   };
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('createResume', () => {
+  it('forwards an AbortSignal so a pending create can be cancelled', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(stored(createSampleResumeDocument())), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const document = createSampleResumeDocument();
+
+    await createResume(document, controller.signal);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/resumes', expect.objectContaining({ signal: controller.signal }));
+  });
+});
 
 describe('documentFromStored', () => {
   it('restores a complete v2 document and gives persisted metadata precedence', () => {

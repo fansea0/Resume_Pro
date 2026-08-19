@@ -405,7 +405,8 @@ body { margin: 0; }
 .ai-generate-modal__resume-summary dl > div { border-left: 2px solid #b7cef1; display: grid; gap: .16rem; padding-left: .55rem; }
 .ai-generate-modal__resume-summary dt { color: var(--generate-muted); font-size: .65rem; }
 .ai-generate-modal__resume-summary dd { font-size: .78rem; font-weight: 650; margin: 0; overflow-wrap: anywhere; }
-.ai-generate-modal button:focus-visible, .ai-generate-modal textarea:focus-visible, .ai-generate-modal select:focus-visible { outline: 3px solid var(--generate-accent); outline-offset: 2px; }
+.ai-generate-modal__sr-only { clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+.ai-generate-modal button:focus-visible, .ai-generate-modal textarea:focus-visible, .ai-generate-modal select:focus-visible, .ai-generate-modal [tabindex="-1"]:focus-visible { outline: 3px solid var(--generate-accent); outline-offset: 2px; }
 
 .ai-suggestion-panel__backdrop { align-items: stretch; background: rgba(18, 29, 47, .46); display: flex; inset: 0; justify-content: flex-end; position: fixed; z-index: 40; }
 .ai-suggestion-panel { --ai-accent: #155eef; --ai-ink: #162235; --ai-line: #dfe7f2; --ai-muted: #667085; background: #f8faff; border-left: 1px solid #d5dfec; box-shadow: -24px 0 64px rgba(17, 37, 68, .22); color: var(--ai-ink); display: flex; flex-direction: column; max-width: 720px; min-width: 0; overflow: hidden; width: min(720px, calc(100vw - 2rem)); }

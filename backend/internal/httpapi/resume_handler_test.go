@@ -275,6 +275,21 @@ func TestResumeCreateAndUpdateRequireCompleteV2Content(t *testing.T) {
 	}
 }
 
+func TestResumeCreateAcceptsEverySelectableTemplate(t *testing.T) {
+	router, session := testRouter(t)
+	for _, templateID := range []string{
+		"minimal", "business", "creative", "tech", "editorial", "redline", "violet", "azure-chronicle",
+		"mint-canvas", "scholarly-serif", "blue-sidebar",
+	} {
+		t.Run(templateID, func(t *testing.T) {
+			response := requestJSON(t, router, http.MethodPost, "/api/resumes", validResumeRequest("Valid "+templateID, templateID), session)
+			if response.Code != http.StatusCreated {
+				t.Fatalf("create status = %d, want %d: %s", response.Code, http.StatusCreated, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestValidResumeContentAllowsOnlyPositiveIntegralTargetJobID(t *testing.T) {
 	withTargetJobID := func(value string) json.RawMessage {
 		content := strings.TrimSuffix(validV2ResumeContent("Valid", "minimal"), "}") + `,"targetJobId":` + value + `}`
