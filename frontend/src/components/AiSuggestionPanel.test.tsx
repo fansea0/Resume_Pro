@@ -190,6 +190,158 @@ describe('AiSuggestionPanel', () => {
     expect(onAccept).toHaveBeenCalledOnce();
   });
 
+  it('normalizes accepted project rewrites to the runtime allowlist while preserving explicit empty strings', async () => {
+    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
+      onEvent({
+        kind: 'suggestion',
+        sectionId: 'project-42',
+        sectionType: 'project',
+        newContent: {
+          items: [
+            {
+              id: 'project-alpha',
+              introduction: '',
+              achievements: '交付周期缩短 40%。',
+              name: '恶意覆盖项目名',
+              showIntroduction: false,
+              arbitrary: '不在契约内',
+            },
+          ],
+          title: '恶意覆盖章节标题',
+        },
+      } as unknown as SSEEvent);
+      onEvent({ kind: 'done' });
+    });
+    const onAccept = vi.fn();
+
+    render(
+      <AiSuggestionPanel
+        onAccept={onAccept}
+        onClose={vi.fn()}
+        originalSection={projectSection}
+        resumeId={7}
+        sectionType="project"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '采纳' }));
+    expect(onAccept).toHaveBeenCalledWith({
+      items: [{
+        id: 'project-alpha',
+        introduction: '',
+        achievements: '交付周期缩短 40%。',
+      }],
+    });
+  });
+
+  it('keeps a completed suggestion ready when the reader fails after done', async () => {
+    let rejectStream: ((reason: Error) => void) | undefined;
+    streamRewriteMock.mockImplementation((_resumeId, _request, onEvent) => {
+      onEvent({
+        kind: 'suggestion',
+        sectionId: 'summary-42',
+        sectionType: 'summary',
+        newContent: { markdown: '已完成的建议' },
+      });
+      onEvent({ kind: 'done' });
+      return new Promise<void>((_resolve, reject) => {
+        rejectStream = reject;
+      });
+    });
+
+    render(
+      <AiSuggestionPanel
+        onAccept={vi.fn()}
+        onClose={vi.fn()}
+        originalSection={summarySection}
+        resumeId={7}
+        sectionType="summary"
+      />,
+    );
+    expect(await screen.findByText('已完成的建议')).toBeInTheDocument();
+
+    await act(async () => {
+      rejectStream?.(new Error('reader failed after done'));
+    });
+
+    expect(screen.getByText('已完成的建议')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '采纳' })).toBeEnabled();
+  });
+
+  it('aborts and invalidates the active request before invoking onAccept', async () => {
+    let emit: ((event: SSEEvent) => void) | undefined;
+    let requestSignal: AbortSignal | undefined;
+    streamRewriteMock.mockImplementation((_resumeId, _request, onEvent, signal) => {
+      emit = onEvent;
+      requestSignal = signal;
+      onEvent({
+        kind: 'suggestion',
+        sectionId: 'summary-42',
+        sectionType: 'summary',
+        newContent: { markdown: '可采纳建议' },
+      });
+      onEvent({ kind: 'done' });
+      return new Promise<void>(() => undefined);
+    });
+    let callbackObservedAbort = false;
+    const onAccept = vi.fn(() => {
+      callbackObservedAbort = requestSignal?.aborted ?? false;
+      emit?.({ kind: 'error', code: 'LATE', message: '采纳后的过期错误' });
+    });
+
+    render(
+      <AiSuggestionPanel
+        onAccept={onAccept}
+        onClose={vi.fn()}
+        originalSection={summarySection}
+        resumeId={7}
+        sectionType="summary"
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: '采纳' }));
+
+    expect(onAccept).toHaveBeenCalledOnce();
+    expect(callbackObservedAbort).toBe(true);
+    expect(requestSignal?.aborted).toBe(true);
+    expect(screen.queryByText('采纳后的过期错误')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { action: '拒绝', accessibleName: '拒绝' },
+    { action: '关闭', accessibleName: '关闭 AI 润色建议' },
+  ])('aborts and invalidates before $action invokes onClose', async ({ accessibleName }) => {
+    let emit: ((event: SSEEvent) => void) | undefined;
+    let requestSignal: AbortSignal | undefined;
+    streamRewriteMock.mockImplementation((_resumeId, _request, onEvent, signal) => {
+      emit = onEvent;
+      requestSignal = signal;
+      return new Promise<void>(() => undefined);
+    });
+    let callbackObservedAbort = false;
+    const onClose = vi.fn(() => {
+      callbackObservedAbort = requestSignal?.aborted ?? false;
+      emit?.({ kind: 'thinking', text: '关闭后的过期内容' });
+    });
+
+    render(
+      <AiSuggestionPanel
+        onAccept={vi.fn()}
+        onClose={onClose}
+        originalSection={summarySection}
+        resumeId={7}
+        sectionType="summary"
+      />,
+    );
+    await waitFor(() => expect(streamRewriteMock).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: accessibleName }));
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(callbackObservedAbort).toBe(true);
+    expect(requestSignal?.aborted).toBe(true);
+    expect(screen.queryByText('关闭后的过期内容')).not.toBeInTheDocument();
+  });
+
   it('aborts the previous request and ignores its late events when regenerating', async () => {
     const streams: Array<{ onEvent: (event: SSEEvent) => void; signal?: AbortSignal }> = [];
     streamRewriteMock.mockImplementation((_resumeId, _request, onEvent, signal) => {

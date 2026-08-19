@@ -87,6 +87,40 @@ const rewriteableProjectFields = [
   ['highlightsMarkdown', '项目亮点'],
 ] as const;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeRewriteItem(value: unknown, fields: readonly string[]) {
+  if (!isRecord(value) || typeof value.id !== 'string') return undefined;
+  const normalized: Record<string, string> = { id: value.id };
+  for (const field of fields) {
+    if (Object.prototype.hasOwnProperty.call(value, field) && typeof value[field] === 'string') {
+      normalized[field] = value[field];
+    }
+  }
+  return normalized;
+}
+
+function normalizeRewrite<T extends RewriteableSectionType>(
+  sectionType: T,
+  value: unknown,
+): RewriteContentBySectionType[T] | undefined {
+  if (!isRecord(value)) return undefined;
+  if (sectionType === 'summary') {
+    return (typeof value.markdown === 'string' ? { markdown: value.markdown } : undefined) as
+      RewriteContentBySectionType[T] | undefined;
+  }
+  if (!Array.isArray(value.items)) return undefined;
+  const fields = sectionType === 'project'
+    ? rewriteableProjectFields.map(([field]) => field)
+    : rewriteableExperienceFields.map(([field]) => field);
+  const items = value.items
+    .map((item) => normalizeRewriteItem(item, fields))
+    .filter((item): item is Record<string, string> => item !== undefined);
+  return { items } as unknown as RewriteContentBySectionType[T];
+}
+
 function displayValue(value: string) {
   return value === '' ? '（空）' : value;
 }
@@ -263,6 +297,16 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
+  const cancelActiveRequest = useCallback(() => {
+    requestVersionRef.current += 1;
+    abortRef.current?.abort();
+  }, []);
+
+  const closePanel = useCallback(() => {
+    cancelActiveRequest();
+    onCloseRef.current();
+  }, [cancelActiveRequest]);
+
   const runRewrite = useCallback(() => {
     const requestVersion = ++requestVersionRef.current;
     abortRef.current?.abort();
@@ -329,18 +373,20 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
         ? { ...current, phase: 'ready', suggestion: correlatedSuggestion }
         : { ...current, phase: 'error', error: 'AI 响应提前结束，请重新生成。' });
     }).catch((error: unknown) => {
-      if (requestVersion !== requestVersionRef.current || controller.signal.aborted || receivedError) return;
+      if (
+        requestVersion !== requestVersionRef.current
+        || controller.signal.aborted
+        || reachedTerminalEvent
+        || receivedError
+      ) return;
       setState((current) => ({ ...current, phase: 'error', error: errorMessage(error), suggestion: undefined }));
     });
   }, [originalSection.id, originalSection.type, resumeId, sectionType]);
 
   useLayoutEffect(() => {
     runRewrite();
-    return () => {
-      requestVersionRef.current += 1;
-      abortRef.current?.abort();
-    };
-  }, [runRewrite]);
+    return cancelActiveRequest;
+  }, [cancelActiveRequest, runRewrite]);
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
@@ -368,7 +414,7 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onCloseRef.current();
+        closePanel();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -404,11 +450,17 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
         if (previousFocus?.isConnected) previousFocus.focus();
       });
     };
-  }, []);
+  }, [closePanel]);
 
   const accept = () => {
     if (state.phase !== 'ready' || !state.suggestion) return;
-    onAccept(state.suggestion.newContent as RewriteContentBySectionType[T]);
+    const rewrite = normalizeRewrite(sectionType, state.suggestion.newContent);
+    cancelActiveRequest();
+    if (!rewrite) {
+      setState((current) => ({ ...current, phase: 'error', error: 'AI 返回的建议格式无效。', suggestion: undefined }));
+      return;
+    }
+    onAccept(rewrite);
   };
 
   const statusLabel = state.phase === 'loading'
@@ -435,7 +487,7 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
             <p>AI WRITING REVIEW</p>
             <h2 id={titleId}>AI 润色建议</h2>
           </div>
-          <button aria-label="关闭 AI 润色建议" onClick={onClose} ref={closeButtonRef} title="关闭" type="button">×</button>
+          <button aria-label="关闭 AI 润色建议" onClick={closePanel} ref={closeButtonRef} title="关闭" type="button">×</button>
         </header>
 
         <p aria-live="polite" className="ai-suggestion-panel__status" id={statusId}>{statusLabel}</p>
@@ -462,7 +514,7 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
         )}
 
         <footer className="ai-suggestion-panel__actions">
-          <button onClick={onClose} type="button">拒绝</button>
+          <button onClick={closePanel} type="button">拒绝</button>
           <button onClick={runRewrite} type="button">重新生成</button>
           <button disabled={state.phase !== 'ready' || !state.suggestion} onClick={accept} type="button">采纳</button>
         </footer>
