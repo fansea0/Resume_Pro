@@ -24,6 +24,7 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	t.Setenv("OPENAI_MODEL", "")
 	t.Setenv("AI_MAX_TOKENS", "")
 	t.Setenv("AI_REQUEST_TIMEOUT", "")
+	t.Setenv("AI_MAX_RETRIES", "")
 
 	cfg, err := llm.LoadConfigFromEnv()
 
@@ -33,6 +34,7 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	assert.Equal(t, "deepseek-chat", cfg.Model)
 	assert.Equal(t, 2048, cfg.MaxTokens)
 	assert.Equal(t, 30*time.Second, cfg.Timeout)
+	assert.Equal(t, 1, cfg.MaxRetries)
 }
 
 func TestLoadConfigFromEnv_OverridesDefaults(t *testing.T) {
@@ -41,6 +43,7 @@ func TestLoadConfigFromEnv_OverridesDefaults(t *testing.T) {
 	t.Setenv("OPENAI_MODEL", "custom-model")
 	t.Setenv("AI_MAX_TOKENS", "4096")
 	t.Setenv("AI_REQUEST_TIMEOUT", "45s")
+	t.Setenv("AI_MAX_RETRIES", "3")
 
 	cfg, err := llm.LoadConfigFromEnv()
 
@@ -50,6 +53,20 @@ func TestLoadConfigFromEnv_OverridesDefaults(t *testing.T) {
 	assert.Equal(t, "custom-model", cfg.Model)
 	assert.Equal(t, 4096, cfg.MaxTokens)
 	assert.Equal(t, 45*time.Second, cfg.Timeout)
+	assert.Equal(t, 3, cfg.MaxRetries)
+}
+
+func TestLoadConfigFromEnv_RejectsInvalidMaxRetries(t *testing.T) {
+	for _, value := range []string{"not-a-number", "-1", "11"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("OPENAI_API_KEY", "test-key")
+			t.Setenv("AI_MAX_RETRIES", value)
+
+			_, err := llm.LoadConfigFromEnv()
+
+			assert.ErrorIs(t, err, llm.ErrInvalidMaxRetries)
+		})
+	}
 }
 
 func TestLoadConfigFromEnv_IgnoresNonPositiveOrMalformedTuningValues(t *testing.T) {
