@@ -104,4 +104,41 @@ describe('TargetJobPicker', () => {
     await waitFor(() => expect(trigger).toHaveFocus());
     trigger.remove();
   });
+
+  it('focuses the stable list heading when returning from the create form', async () => {
+    render(<TargetJobPicker onClose={vi.fn()} onSelect={vi.fn()} open />);
+    await screen.findByText('字节跳动 · 高级后端工程师');
+
+    const createButton = screen.getByRole('button', { name: '+ 新建目标岗位' });
+    createButton.focus();
+    fireEvent.click(createButton);
+    const returnButton = screen.getByRole('button', { name: '返回列表' });
+    await waitFor(() => expect(screen.getByLabelText('公司（可选）')).toHaveFocus());
+    returnButton.focus();
+    fireEvent.click(returnButton);
+
+    const listHeading = screen.getByRole('heading', { name: '选择目标岗位' });
+    expect(listHeading).toHaveFocus();
+    expect(screen.getByText('字节跳动 · 高级后端工程师')).toBeInTheDocument();
+  });
+
+  it('focuses the stable list heading while retry replaces its focused button with loading state', async () => {
+    let resolveRetry!: (jobs: TargetJob[]) => void;
+    listTargetJobs
+      .mockRejectedValueOnce(new Error('network'))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveRetry = resolve; }));
+    render(<TargetJobPicker onClose={vi.fn()} onSelect={vi.fn()} open />);
+
+    const retry = await screen.findByRole('button', { name: '重试' });
+    retry.focus();
+    fireEvent.click(retry);
+
+    expect(screen.getByText('正在加载目标岗位…')).toBeInTheDocument();
+    const listHeading = screen.getByRole('heading', { name: '选择目标岗位' });
+    expect(listHeading).toHaveFocus();
+
+    resolveRetry(jobs);
+    expect(await screen.findByText('字节跳动 · 高级后端工程师')).toBeInTheDocument();
+    expect(listHeading).toHaveFocus();
+  });
 });

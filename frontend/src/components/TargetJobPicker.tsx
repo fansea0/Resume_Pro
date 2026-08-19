@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { createTargetJob, listTargetJobs } from '../api/targetJobs';
 import type { TargetJob, TargetJobInput } from '../types/targetJob';
@@ -32,6 +32,7 @@ export function TargetJobPicker({ open, onClose, onSelect, returnFocusRef, selec
   const [saving, setSaving] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const companyInputRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const requestVersion = useRef(0);
   const titleId = useId();
@@ -68,7 +69,7 @@ export function TargetJobPicker({ open, onClose, onSelect, returnFocusRef, selec
     void load();
   }, [load, open]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -124,9 +125,14 @@ export function TargetJobPicker({ open, onClose, onSelect, returnFocusRef, selec
     };
   }, [open, returnFocusRef]);
 
-  useEffect(() => {
-    if (open && mode === 'create') companyInputRef.current?.focus();
-  }, [mode, open]);
+  useLayoutEffect(() => {
+    if (!open) return;
+    if (mode === 'create') {
+      companyInputRef.current?.focus();
+      return;
+    }
+    if (!dialogRef.current?.contains(document.activeElement)) titleRef.current?.focus();
+  }, [loadError, loading, mode, open]);
 
   if (!open) return null;
 
@@ -181,7 +187,7 @@ export function TargetJobPicker({ open, onClose, onSelect, returnFocusRef, selec
         <div className="target-job-dialog__heading">
           <div>
             <p className="target-jobs__eyebrow">RESUME DIRECTION</p>
-            <h3 id={titleId}>{mode === 'list' ? '选择目标岗位' : '新建并选择目标岗位'}</h3>
+            <h3 id={titleId} ref={titleRef} tabIndex={-1}>{mode === 'list' ? '选择目标岗位' : '新建并选择目标岗位'}</h3>
           </div>
           <button aria-label="关闭目标岗位选择器" disabled={saving} onClick={close} title="关闭" type="button">×</button>
         </div>
