@@ -66,4 +66,13 @@ describe('drafts workbench styles', () => {
     backdrop.remove();
     style.remove();
   });
+
+  it('lays out the AI suggestion as an accessible desktop drawer and mobile bottom sheet', () => {
+    expect(stylesheet).toMatch(/\.ai-suggestion-panel__backdrop\s*\{[^}]*position:\s*fixed/);
+    expect(stylesheet).toMatch(/\.ai-suggestion-panel\s*\{[^}]*max-width:\s*720px/);
+    expect(stylesheet).toMatch(/\.ai-suggestion-panel button:focus-visible[^\{]*\{[^}]*outline:\s*3px solid/);
+    expect(stylesheet).toMatch(/\.ai-suggestion-panel__sr-only\s*\{[^}]*clip:\s*rect\(0, 0, 0, 0\)/);
+    expect(stylesheet).toMatch(/@media \(max-width: 640px\)\s*\{[\s\S]*?\.ai-suggestion-panel__backdrop\s*\{[^}]*align-items:\s*end/);
+    expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.ai-suggestion-panel__pulse/);
+  });
 });
