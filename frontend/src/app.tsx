@@ -8,6 +8,7 @@ import { ResumeLibrary } from './components/ResumeLibrary';
 import { ResumePreview } from './components/ResumePreview';
 import { TemplateGallery } from './components/TemplateGallery';
 import { TemplateAdmin } from './components/TemplateAdmin';
+import { TargetJobsPage } from './pages/TargetJobsPage';
 import { documentFromStored, type StoredResume } from './api/resumes';
 import { getTemplateStatus } from './api/templates';
 import { templateRegistry } from './templates/registry';
@@ -42,7 +43,9 @@ export default function App() {
   }
 
   const [resume, setResume] = useState(createSampleResumeDocument);
-  const [view, setView] = useState<'gallery' | 'drafts' | 'editor' | 'admin'>('gallery');
+  const [view, setView] = useState<'gallery' | 'drafts' | 'editor' | 'admin' | 'targetJobs'>(() => (
+    typeof window !== 'undefined' && window.location.pathname === '/target-jobs' ? 'targetJobs' : 'gallery'
+  ));
   const [selectedResumeId, setSelectedResumeId] = useState<number | null>(null);
   const [draftReadError, setDraftReadError] = useState(false);
   const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
@@ -98,6 +101,19 @@ export default function App() {
     };
   }, [loadTemplateStatus]);
 
+  useEffect(() => {
+    const handlePopState = () => setView(window.location.pathname === '/target-jobs' ? 'targetJobs' : 'gallery');
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateTo = (nextView: 'gallery' | 'targetJobs') => {
+    const path = nextView === 'targetJobs' ? '/target-jobs' : '/';
+    if (window.location.pathname !== path) window.history.pushState({}, '', path);
+    setDraftReadError(false);
+    setView(nextView);
+  };
+
   const selectTemplate = (templateId: typeof resume.templateId) => {
     setResume((current) => ({ ...current, templateId }));
     setSelectedResumeId(null);
@@ -151,8 +167,9 @@ export default function App() {
         <div className="app-header__brand"><h1>简历生成器</h1><p>专业表达，从清晰开始。</p></div>
         <div className="app-header__actions">
           <nav aria-label="主要导航" className="app-navigation">
-            <button aria-current={view === 'gallery' ? 'page' : undefined} onClick={() => { setDraftReadError(false); setView('gallery'); }} type="button">模板主页</button>
+            <button aria-current={view === 'gallery' ? 'page' : undefined} onClick={() => navigateTo('gallery')} type="button">模板主页</button>
             <button aria-current={view === 'drafts' ? 'page' : undefined} onClick={() => setView('drafts')} type="button">我的草稿</button>
+            <button aria-current={view === 'targetJobs' ? 'page' : undefined} onClick={() => navigateTo('targetJobs')} type="button">目标岗位</button>
             {user?.isAdmin && <button aria-current={view === 'admin' ? 'page' : undefined} onClick={() => setView('admin')} type="button">后台管理</button>}
           </nav>
           <div className="account-menu"><span className="account-menu__email">{user?.email}</span><button onClick={handleLogout} type="button">退出登录</button></div>
@@ -160,6 +177,8 @@ export default function App() {
       </header>
       {view === 'gallery' ? (
         <TemplateGallery disabledTemplateIds={disabledTemplateIds} onSelect={selectTemplate} />
+      ) : view === 'targetJobs' ? (
+        <TargetJobsPage />
       ) : view === 'drafts' ? (
         <>
           {draftReadError && <p className="resume-library__error" role="alert">无法读取该简历内容。</p>}

@@ -11,6 +11,7 @@ const getTemplateStatus = vi.fn();
 const listAdminTemplates = vi.fn();
 const disableTemplate = vi.fn();
 const login = vi.fn();
+const listTargetJobs = vi.fn();
 
 vi.mock('./api/auth', () => ({
   getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
@@ -37,7 +38,17 @@ vi.mock('./api/templates', () => ({
   disableTemplate: (...args: unknown[]) => disableTemplate(...args),
 }));
 
-afterEach(cleanup);
+vi.mock('./api/targetJobs', () => ({
+  listTargetJobs: (...args: unknown[]) => listTargetJobs(...args),
+  createTargetJob: vi.fn(),
+  updateTargetJob: vi.fn(),
+  deleteTargetJob: vi.fn(),
+}));
+
+afterEach(() => {
+  cleanup();
+  window.history.replaceState({}, '', '/');
+});
 
 describe('application authentication gate', () => {
   beforeEach(() => {
@@ -48,8 +59,10 @@ describe('application authentication gate', () => {
     getTemplateStatus.mockReset();
     listAdminTemplates.mockReset();
     disableTemplate.mockReset();
+    listTargetJobs.mockReset();
     listResumes.mockResolvedValue([]);
     getTemplateStatus.mockResolvedValue({ disabledTemplateIds: [] });
+    listTargetJobs.mockResolvedValue([]);
   });
 
   it('shows login when startup has no session', async () => {
@@ -212,5 +225,16 @@ describe('application authentication gate', () => {
     fireEvent.click(await screen.findByRole('button', { name: '去选择模板' }));
 
     expect(await screen.findByRole('heading', { name: '选择简历模板' })).toBeInTheDocument();
+  });
+
+  it('registers the target jobs page at /target-jobs', async () => {
+    window.history.replaceState({}, '', '/target-jobs');
+    getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'ada@example.com', tenantId: 3 });
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: '目标岗位' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '目标岗位' })).toHaveAttribute('aria-current', 'page');
+    expect(listTargetJobs).toHaveBeenCalledOnce();
   });
 });
