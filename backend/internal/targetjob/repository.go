@@ -93,9 +93,10 @@ func (r *Repository) Delete(ctx context.Context, tenantID, id int64) error {
 func (r *Repository) CountByTargetJob(ctx context.Context, tenantID, id int64) (int64, error) {
 	var n int64
 	err := r.db.GetContext(ctx, &n, `
-		SELECT COUNT(*) FROM resumes
-		WHERE tenant_id = ?
-		  AND json_extract(content, '$.targetJobId') = ?`,
-		tenantID, id)
+		SELECT COUNT(*) FROM resumes AS r
+		INNER JOIN target_jobs AS tj ON tj.id = ? AND tj.tenant_id = r.tenant_id
+		WHERE r.tenant_id = ?
+		  AND json_extract(r.content, '$.targetJobId') = ?`,
+		id, tenantID, id)
 	return n, err
 }
