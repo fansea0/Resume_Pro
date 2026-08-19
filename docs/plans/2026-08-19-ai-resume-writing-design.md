@@ -28,9 +28,9 @@
 CREATE TABLE target_jobs (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant_id    INTEGER NOT NULL,
-    company      TEXT NOT NULL DEFAULT '',  -- 可空（投递未知公司 / 海投）
-    position     TEXT NOT NULL,              -- 必填
-    requirements TEXT NOT NULL DEFAULT '',   -- markdown / 纯文本均可
+    company      TEXT NOT NULL DEFAULT '',  -- 可空（投递未知公司 / 海投 / 仅看 JD）
+    position     TEXT NOT NULL DEFAULT '',   -- 可空（同上）
+    requirements TEXT NOT NULL,              -- 必填：JD 描述 / 岗位要求，是用户最关心的实质性内容
     created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
@@ -52,6 +52,39 @@ interface ResumeDocument {
 ```
 
 `validResumeContent` 升级：放过 `targetJobId`（int 或缺失），其他校验不变。**老 v2 简历无需迁移**。
+
+### `TargetJob` 模型（前后端契约）
+
+```typescript
+// Go: internal/targetjob/model.go
+type TargetJob struct {
+    ID           int64     `json:"id"`
+    TenantID     int64     `json:"-"`           // 不外泄
+    Company      string    `json:"company"`     // 可空
+    Position     string    `json:"position"`    // 可空
+    Requirements string    `json:"requirements"`// 必填
+    CreatedAt    time.Time `json:"createdAt"`
+    UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+type CreateInput struct {
+    Company      string
+    Position     string
+    Requirements string  // 必填，去除首尾空白后 ≥ 10 字符
+}
+
+type UpdateInput = CreateInput
+```
+
+**校验规则**：
+- `requirements` trim 后必须 ≥ 10 字符
+- `company` / `position` 任意长度都可（≤ 200 字符上限保护）
+- 任一字段总长度 ≤ 20000 字符（与现有 `maxResumeStringLength` 对齐）
+
+**错误码**（API 层）：
+- `requirements_required` — 字段缺失
+- `requirements_too_short` — trim 后 < 10 字符
+- `field_too_long` — 任一字段超长
 
 ### 字段级改写权限（v1 关键设计，详细版）
 
@@ -633,11 +666,53 @@ func defaultHooks(logger *logrus.Logger) *Hooks {
 </user_instructions>
 ```
 
+**6. 目标岗位上下文注入**（`target_job_context.tmpl`，节选润色 + 从零生成共用）
+
+模板渲染时根据 `TargetJob` 实际字段动态拼接：
+
+```
+{target_job_header}
+
+公司: {targetJob.Company}    ← 仅在非空时输出
+职位: {targetJob.Position}   ← 仅在非空时输出
+
+岗位要求（JD）:
+{targetJob.Requirements}
+```
+
+**渲染逻辑**：
+
+```go
+func renderTargetJobContext(tj *targetjob.TargetJob) string {
+    if tj == nil {
+        return ""  // 不输出此段
+    }
+    var b strings.Builder
+    b.WriteString("【目标岗位参考】\n")
+    if tj.Company != "" {
+        b.WriteString("公司：" + tj.Company + "\n")
+    }
+    if tj.Position != "" {
+        b.WriteString("职位：" + tj.Position + "\n")
+    }
+    b.WriteString("\n岗位要求（JD）：\n" + tj.Requirements + "\n")
+    b.WriteString("\n请在改写时对齐以上岗位要求中的关键词与侧重点，但不要把 JD 内容写进简历原文。\n")
+    return b.String()
+}
+```
+
+**关键点**：
+- `Company` / `Position` 为空时**整行省略**，不出现"公司："空标签
+- `Requirements` 必填，所以一定出现
+- 即使只有 `Requirements`（无公司/职位），仍然提供有效的 JD 对齐依据
+- prompt 里明确写"不要把 JD 内容写进简历原文"——防 AI 直接抄 JD 进 highlights
+
 **v1 模板清单**（`internal/ai/prompts/`）：
 
 - `system_common.tmpl` — 角色 + 通用硬约束
 - `rewriting_strategy.tmpl` — 改写方向优先级
 - `system_generate.tmpl` — 从零生成专用（含 JD 拼接逻辑 + ResumeDocument 整体性约束）
+- `target_job_context.tmpl` — 目标岗位上下文片段（按字段动态拼接）
 - `section_summary.tmpl` / `section_work.tmpl` / `section_project.tmpl` — **仅 3 种**（润色可用 section）的字段说明 + 改写侧重。`section_internship.tmpl` 复用 `section_work.tmpl`（结构相同）。`education / skills / campus / honours` 不提供润色，**无需写模板**
 
 **v1 不做但记下**：few-shot examples（0-shot 起步）、多轮对话、针对 JD 的关键词强制对齐、用户反馈闭环。
@@ -802,7 +877,11 @@ data: {"code": "VALIDATION_FAILED", "message": "AI 输出的内容无法通过 s
 ### 目标岗位管理页（`/target-jobs`）
 
 - 列表按 `updated_at DESC`，每张卡片：company（或"未指定公司"）· position · JD 预览 50 字 · [编辑] [删除]
-- 「+ 新建」按钮 → 弹表单模态：company（可选）、position（必填）、requirements（textarea，markdown 提示）
+- 「+ 新建」按钮 → 弹表单模态：
+  - **requirements**（必填，textarea，markdown 提示，**校验：去除首尾空白后 ≥ 10 字符**）
+  - company（可选，单行）
+  - position（可选，单行）
+  - 提示文案：「不知道公司 / 职位也能保存——requirements 是 AI 润色的核心依据」
 - 编辑：相同表单，预填值
 - 删除：confirm 对话框；删除前查询"被多少简历引用"：
   - 0 引用 → 直接删
