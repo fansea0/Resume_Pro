@@ -72,6 +72,18 @@ func TestService_Create_EnforcesFieldLengthLimits(t *testing.T) {
 	require.ErrorIs(t, err, targetjob.ErrValidation)
 }
 
+func TestService_Create_AllowsMaxRequirementsWithOptionalFields(t *testing.T) {
+	svc := newTestService(t)
+
+	tj, err := svc.Create(context.Background(), 1, targetjob.CreateInput{
+		Company:      "Company",
+		Position:     "Engineer",
+		Requirements: strings.Repeat("r", 20000),
+	})
+	require.NoError(t, err)
+	assert.Len(t, tj.Requirements, 20000)
+}
+
 func TestService_Delete_ReturnsReferenceCount(t *testing.T) {
 	db := newTestDB(t)
 	svc := targetjob.NewService(targetjob.NewRepository(db))

@@ -11,7 +11,7 @@ import (
 const (
 	minRequirementsLen = 10
 	maxFieldLen        = 200
-	maxTotalLen        = 20000
+	maxRequirementsLen = 20000
 )
 
 type Service struct {
@@ -31,8 +31,8 @@ func validate(in CreateInput) error {
 	if len(in.Company) > maxFieldLen || len(in.Position) > maxFieldLen {
 		return fmt.Errorf("%w: company/position must be at most %d characters", ErrValidation, maxFieldLen)
 	}
-	if len(in.Company)+len(in.Position)+len(requirements) > maxTotalLen {
-		return fmt.Errorf("%w: total length exceeds %d", ErrValidation, maxTotalLen)
+	if len(requirements) > maxRequirementsLen {
+		return fmt.Errorf("%w: requirements must be at most %d characters", ErrValidation, maxRequirementsLen)
 	}
 	return nil
 }
