@@ -1,9 +1,15 @@
 package llm_test
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -108,4 +114,81 @@ func TestNewChatModel_ConstructsWithoutCallingProvider(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, chatModel)
+}
+
+func TestNewChatModel_SerializesStrictJSONSchemaResponseFormat(t *testing.T) {
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/chat/completions" {
+			http.Error(response, "unexpected request", http.StatusNotFound)
+			return
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			http.Error(response, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requests <- body
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(response, `{
+			"id":"chatcmpl-local",
+			"object":"chat.completion",
+			"created":1,
+			"model":"test-model",
+			"choices":[{
+				"index":0,
+				"message":{"role":"assistant","content":"{\"markdown\":\"new\"}"},
+				"finish_reason":"stop"
+			}],
+			"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}
+		}`)
+	}))
+	t.Cleanup(server.Close)
+
+	chatModel, err := llm.NewChatModel(llm.Config{
+		APIKey:    "test-key",
+		BaseURL:   server.URL + "/v1",
+		Model:     "test-model",
+		MaxTokens: 128,
+		Timeout:   time.Second,
+	})
+	require.NoError(t, err)
+
+	response, err := chatModel.Generate(context.Background(), []*schema.Message{
+		{Role: schema.User, Content: "rewrite"},
+	}, llm.WithJSONSchemaResponse(llm.JSONSchemaResponseFormat{
+		Name:   "summary_rewrite",
+		Strict: true,
+		Schema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"markdown": map[string]any{"type": "string"},
+			},
+			"required": []string{"markdown"},
+		},
+	}))
+	require.NoError(t, err)
+	require.NotNil(t, response)
+
+	var requestPayload struct {
+		ResponseFormat struct {
+			Type       string `json:"type"`
+			JSONSchema struct {
+				Name   string         `json:"name"`
+				Strict bool           `json:"strict"`
+				Schema map[string]any `json:"schema"`
+			} `json:"json_schema"`
+		} `json:"response_format"`
+	}
+	require.NoError(t, json.Unmarshal(<-requests, &requestPayload))
+	assert.Equal(t, "json_schema", requestPayload.ResponseFormat.Type)
+	assert.Equal(t, "summary_rewrite", requestPayload.ResponseFormat.JSONSchema.Name)
+	assert.True(t, requestPayload.ResponseFormat.JSONSchema.Strict)
+	assert.Equal(t, "object", requestPayload.ResponseFormat.JSONSchema.Schema["type"])
+	assert.Equal(t, false, requestPayload.ResponseFormat.JSONSchema.Schema["additionalProperties"])
+	properties, ok := requestPayload.ResponseFormat.JSONSchema.Schema["properties"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{"type": "string"}, properties["markdown"])
+	assert.Equal(t, []any{"markdown"}, requestPayload.ResponseFormat.JSONSchema.Schema["required"])
 }

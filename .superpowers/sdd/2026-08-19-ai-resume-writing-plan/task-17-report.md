@@ -232,5 +232,79 @@ $ go list -deps ./internal/ai | rg 'resumepro/backend/internal/(auth|targetjob|s
 # no output; exit 1 (no matches)
 ```
 
-All automated tests use `internal/llm/testing.FakeChatModel`; no test contacts
+All AI service tests use `internal/llm/testing.FakeChatModel`; no test contacts
 an LLM provider or any external service.
+
+## Fix round 2: real-adapter wire evidence
+
+Review requested a wire-level assertion in addition to the typed FakeChatModel
+option assertion. `TestNewChatModel_SerializesStrictJSONSchemaResponseFormat`
+now constructs the real adapter returned by `llm.NewChatModel`, points it at a
+loopback `httptest.Server`, performs one controlled completion, and captures
+the outbound `POST /v1/chat/completions` body.
+
+The captured JSON is decoded and independently asserts:
+
+- `response_format.type == "json_schema"`;
+- `response_format.json_schema.name == "summary_rewrite"`;
+- `response_format.json_schema.strict == true`;
+- schema root type and `additionalProperties`;
+- the nested `markdown` property type;
+- the schema's required list.
+
+This was a characterization test for already-implemented adapter behavior, so
+its first run passed and no production file changed in this fix round:
+
+```console
+$ cd backend
+$ go test -count=1 ./internal/llm -run TestNewChatModel_SerializesStrictJSONSchemaResponseFormat -v
+=== RUN   TestNewChatModel_SerializesStrictJSONSchemaResponseFormat
+--- PASS: TestNewChatModel_SerializesStrictJSONSchemaResponseFormat (0.00s)
+PASS
+ok      resumepro/backend/internal/llm   0.703s
+```
+
+The endpoint is process-local and returns a static OpenAI-compatible response.
+It performs no DNS lookup or external network request and generates no content
+beyond that controlled response fixture.
+
+### Fix-round focused and race verification
+
+```console
+$ go test -count=1 ./internal/llm/... ./internal/ai/...
+ok      resumepro/backend/internal/llm           0.770s
+ok      resumepro/backend/internal/llm/testing   0.361s
+ok      resumepro/backend/internal/ai            1.107s
+ok      resumepro/backend/internal/ai/prompts    1.619s
+ok      resumepro/backend/internal/ai/schemas    1.357s
+
+$ go test -race -count=1 ./internal/llm -run TestNewChatModel_SerializesStrictJSONSchemaResponseFormat
+ok      resumepro/backend/internal/llm           1.698s
+```
+
+### Fix-round full verification
+
+```console
+$ go test -count=1 ./...
+?       resumepro/backend/cmd/server             [no test files]
+ok      resumepro/backend/internal/ai            1.383s
+ok      resumepro/backend/internal/ai/prompts    0.755s
+ok      resumepro/backend/internal/ai/schemas    0.496s
+ok      resumepro/backend/internal/auth          2.152s
+ok      resumepro/backend/internal/files         0.274s
+ok      resumepro/backend/internal/httpapi       17.644s
+ok      resumepro/backend/internal/llm           1.502s
+ok      resumepro/backend/internal/llm/testing   2.323s
+ok      resumepro/backend/internal/resume        2.925s
+ok      resumepro/backend/internal/resumesvc     2.650s
+?       resumepro/backend/internal/store         [no test files]
+ok      resumepro/backend/internal/targetjob     3.214s
+ok      resumepro/backend/internal/templates     3.261s
+
+$ go vet ./...
+# no output; exit 0
+```
+
+Per the task ruling, production propagation of `llm.Config.MaxRetries` into
+`ai.WithMaxRetries` remains owned by Task 19; this fix round does not alter
+server wiring.
