@@ -185,7 +185,7 @@ body { margin: 0; }
 .target-jobs__header h2 { font-size: clamp(1.75rem, 3vw, 2.55rem); letter-spacing: -.05em; line-height: 1.05; margin: .3rem 0 .5rem; }
 .target-jobs__header > div > p:last-child { color: var(--target-muted); font-size: .94rem; line-height: 1.55; }
 .target-jobs__eyebrow { color: var(--target-accent); font-size: .7rem; font-weight: 750; letter-spacing: .14em; margin: 0; }
-.target-jobs__create, .target-job-form__actions button:last-child { background: var(--target-accent); border: 1px solid var(--target-accent); border-radius: 999px; color: #fff; cursor: pointer; flex: 0 0 auto; font: inherit; font-size: .88rem; font-weight: 650; padding: .6rem .9rem; }
+.target-jobs__create, .target-job-form__actions button:last-child { background: #155eef; border: 1px solid #155eef; border-radius: 999px; color: #fff; cursor: pointer; flex: 0 0 auto; font: inherit; font-size: .88rem; font-weight: 650; padding: .6rem .9rem; }
 .target-jobs__list { background: #fff; border: 1px solid var(--target-line); border-radius: 14px; box-shadow: 0 10px 26px rgba(28, 51, 84, .055); list-style: none; margin: 0; overflow: hidden; padding: 0; }
 .target-jobs__item { align-items: center; display: grid; gap: 1.25rem; grid-template-columns: minmax(0, 1fr) auto; padding: 1.1rem 1.2rem 1.1rem 1.35rem; position: relative; }
 .target-jobs__item::before { background: var(--target-accent); content: ''; inset: 1.15rem auto 1.15rem 0; position: absolute; width: 3px; }
@@ -206,7 +206,7 @@ body { margin: 0; }
 .target-jobs__empty span, .target-jobs__status { color: var(--target-muted); font-size: .88rem; }
 .target-jobs__load-error { align-items: center; background: #fff5f3; border: 1px solid #f3c8c2; border-radius: 10px; color: #b42318; display: flex; gap: .75rem; justify-content: space-between; padding: .8rem 1rem; }
 .target-jobs__error { color: #b42318; margin: 0; }
-.target-job-dialog__backdrop { align-items: center; background: rgba(18, 29, 47, .42); display: flex; inset: 0; justify-content: center; padding: 1rem; position: fixed; z-index: 20; }
+.target-job-dialog__backdrop { --target-accent: #155eef; --target-ink: #162235; --target-line: #dfe7f2; --target-muted: #667085; --target-wash: #f7faff; align-items: center; background: rgba(18, 29, 47, .42); display: flex; inset: 0; justify-content: center; padding: 1rem; position: fixed; z-index: 20; }
 .target-job-dialog { background: #fff; border: 1px solid #d9e3f0; border-radius: 16px; box-shadow: 0 28px 70px rgba(17, 37, 68, .24); display: grid; gap: .9rem; max-height: calc(100dvh - 2rem); max-width: 620px; overflow-y: auto; padding: 1.35rem; width: 100%; }
 .target-job-dialog__heading { align-items: start; display: flex; gap: 1rem; justify-content: space-between; }
 .target-job-dialog__heading h3 { font-size: 1.4rem; letter-spacing: -.035em; margin: .22rem 0 0; }

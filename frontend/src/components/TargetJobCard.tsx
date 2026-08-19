@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import type { TargetJob } from '../types/targetJob';
 import { TargetJobPicker } from './TargetJobPicker';
@@ -14,10 +14,11 @@ interface ConfirmationDialogProps {
   destructive?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  returnFocusRef: RefObject<HTMLElement>;
   title: string;
 }
 
-function ConfirmationDialog({ confirmLabel, description, destructive, onCancel, onConfirm, title }: ConfirmationDialogProps) {
+function ConfirmationDialog({ confirmLabel, description, destructive, onCancel, onConfirm, returnFocusRef, title }: ConfirmationDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -59,9 +60,19 @@ function ConfirmationDialog({ confirmLabel, description, destructive, onCancel, 
     return () => {
       document.removeEventListener('focusin', handleFocusIn);
       document.removeEventListener('keydown', handleKeyDown);
-      previousFocusRef.current?.focus();
+      const previousFocus = previousFocusRef.current;
+      queueMicrotask(() => {
+        const activeElement = document.activeElement;
+        const focusNeedsRestoring = activeElement === document.body
+          || !(activeElement instanceof HTMLElement)
+          || !activeElement.isConnected;
+        if (!focusNeedsRestoring) return;
+        const previousFocusIsUseful = previousFocus !== document.body && previousFocus?.isConnected;
+        const focusTarget = previousFocusIsUseful ? previousFocus : returnFocusRef.current;
+        if (focusTarget?.isConnected) focusTarget.focus();
+      });
     };
-  }, []);
+  }, [returnFocusRef]);
 
   return createPortal(
     <div className="target-job-dialog__backdrop target-job-confirm__backdrop">
@@ -101,6 +112,7 @@ export function TargetJobCard({ targetJob, onChange }: TargetJobCardProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [confirmation, setConfirmation] = useState<'change' | 'clear' | null>(null);
+  const primaryActionRef = useRef<HTMLButtonElement>(null);
   const headingId = useId();
   const requirementsId = useId();
 
@@ -134,7 +146,7 @@ export function TargetJobCard({ targetJob, onChange }: TargetJobCardProps) {
         <div className="target-job-card__bound">
           <div className="target-job-card__current-row">
             <strong>当前：{targetJobName(targetJob)}</strong>
-            <button onClick={() => setConfirmation('change')} type="button">更换目标岗位</button>
+            <button onClick={() => setConfirmation('change')} ref={primaryActionRef} type="button">更换目标岗位</button>
           </div>
           <div className="target-job-card__requirements">
             <div className="target-job-card__requirements-heading">
@@ -157,7 +169,7 @@ export function TargetJobCard({ targetJob, onChange }: TargetJobCardProps) {
       ) : (
         <div className="target-job-card__empty">
           <p>选择一份岗位简报，让后续 AI 润色更贴近你的求职方向。</p>
-          <button onClick={() => setPickerOpen(true)} type="button">+ 选择目标岗位</button>
+          <button onClick={() => setPickerOpen(true)} ref={primaryActionRef} type="button">+ 选择目标岗位</button>
         </div>
       )}
 
@@ -165,6 +177,7 @@ export function TargetJobCard({ targetJob, onChange }: TargetJobCardProps) {
         onClose={() => setPickerOpen(false)}
         onSelect={selectTargetJob}
         open={pickerOpen}
+        returnFocusRef={primaryActionRef}
         selectedId={targetJob?.id}
       />
 
@@ -174,6 +187,7 @@ export function TargetJobCard({ targetJob, onChange }: TargetJobCardProps) {
           description="选择新岗位前会先保留当前绑定；只有选中新岗位后，简历才会更新并进入自动保存。"
           onCancel={() => setConfirmation(null)}
           onConfirm={confirmChange}
+          returnFocusRef={primaryActionRef}
           title="更换目标岗位？"
         />
       )}
@@ -184,6 +198,7 @@ export function TargetJobCard({ targetJob, onChange }: TargetJobCardProps) {
           destructive
           onCancel={() => setConfirmation(null)}
           onConfirm={confirmClear}
+          returnFocusRef={primaryActionRef}
           title="清除目标岗位绑定？"
         />
       )}

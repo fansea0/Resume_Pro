@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { createTargetJob, listTargetJobs } from '../api/targetJobs';
 import type { TargetJob, TargetJobInput } from '../types/targetJob';
@@ -9,6 +9,7 @@ export interface TargetJobPickerProps {
   open: boolean;
   onClose: () => void;
   onSelect: (id: number) => void;
+  returnFocusRef?: RefObject<HTMLElement>;
   selectedId?: number;
 }
 
@@ -21,7 +22,7 @@ function requirementsPreview(requirements: string) {
   return normalized.length > 90 ? `${normalized.slice(0, 90)}…` : normalized;
 }
 
-export function TargetJobPicker({ open, onClose, onSelect, selectedId }: TargetJobPickerProps) {
+export function TargetJobPicker({ open, onClose, onSelect, returnFocusRef, selectedId }: TargetJobPickerProps) {
   const [targetJobs, setTargetJobs] = useState<TargetJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
@@ -108,10 +109,20 @@ export function TargetJobPicker({ open, onClose, onSelect, selectedId }: TargetJ
     return () => {
       document.removeEventListener('focusin', handleFocusIn);
       document.removeEventListener('keydown', handleKeyDown);
-      previousFocusRef.current?.focus();
+      const previousFocus = previousFocusRef.current;
+      queueMicrotask(() => {
+        const activeElement = document.activeElement;
+        const focusNeedsRestoring = activeElement === document.body
+          || !(activeElement instanceof HTMLElement)
+          || !activeElement.isConnected;
+        if (!focusNeedsRestoring) return;
+        const previousFocusIsUseful = previousFocus !== document.body && previousFocus?.isConnected;
+        const focusTarget = previousFocusIsUseful ? previousFocus : returnFocusRef?.current;
+        if (focusTarget?.isConnected) focusTarget.focus();
+      });
       previousFocusRef.current = null;
     };
-  }, [open]);
+  }, [open, returnFocusRef]);
 
   useEffect(() => {
     if (open && mode === 'create') companyInputRef.current?.focus();

@@ -101,7 +101,7 @@ describe('TargetJobPicker', () => {
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
     rerender(<TargetJobPicker onClose={onClose} onSelect={vi.fn()} open={false} />);
-    expect(trigger).toHaveFocus();
+    await waitFor(() => expect(trigger).toHaveFocus());
     trigger.remove();
   });
 });
