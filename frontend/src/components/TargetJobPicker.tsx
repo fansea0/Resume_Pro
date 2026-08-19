@@ -126,11 +126,11 @@ export function TargetJobPicker({ open, onClose, onSelect, returnFocusRef, selec
   }, [open, returnFocusRef]);
 
   useLayoutEffect(() => {
-    if (!open) return;
-    if (mode === 'create') {
-      companyInputRef.current?.focus();
-      return;
-    }
+    if (open && mode === 'create') companyInputRef.current?.focus();
+  }, [mode, open]);
+
+  useLayoutEffect(() => {
+    if (!open || mode !== 'list') return;
     if (!dialogRef.current?.contains(document.activeElement)) titleRef.current?.focus();
   }, [loadError, loading, mode, open]);
 

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TargetJobPicker } from './TargetJobPicker';
 import type { TargetJob } from '../types/targetJob';
@@ -141,4 +141,26 @@ describe('TargetJobPicker', () => {
     expect(await screen.findByText('字节跳动 · 高级后端工程师')).toBeInTheDocument();
     expect(listHeading).toHaveFocus();
   });
+
+  it.each(['职位（可选）', '岗位要求'] as const)(
+    'does not steal focus from %s when the deferred initial list finishes in create mode',
+    async (fieldLabel) => {
+      let resolveList!: (jobs: TargetJob[]) => void;
+      listTargetJobs.mockReturnValueOnce(new Promise((resolve) => { resolveList = resolve; }));
+      render(<TargetJobPicker onClose={vi.fn()} onSelect={vi.fn()} open />);
+
+      const createButton = screen.getByRole('button', { name: '+ 新建目标岗位' });
+      createButton.focus();
+      fireEvent.click(createButton);
+      const field = screen.getByLabelText(fieldLabel);
+      field.focus();
+      expect(field).toHaveFocus();
+
+      await act(async () => {
+        resolveList(jobs);
+      });
+
+      expect(field).toHaveFocus();
+    },
+  );
 });
