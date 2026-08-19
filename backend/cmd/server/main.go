@@ -10,7 +10,6 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/jmoiron/sqlx"
 	"github.com/sirupsen/logrus"
-	_ "modernc.org/sqlite"
 	"resumepro/backend/internal/ai"
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/files"
@@ -61,7 +60,7 @@ func main() {
 	if databasePath == "" {
 		databasePath = "./resume.db"
 	}
-	db, err := sqlx.Open("sqlite", databasePath)
+	db, err := store.OpenSQLite(databasePath)
 	if err != nil {
 		logger.WithError(err).Fatal("open resume database")
 	}

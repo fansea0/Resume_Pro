@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+
+	"resumepro/backend/internal/store"
 )
 
 var (
@@ -27,7 +29,7 @@ func NewRepository(db *sqlx.DB) *Repository {
 }
 
 func (r *Repository) Create(ctx context.Context, input CreateInput) (Resume, error) {
-	tx, err := r.db.BeginTxx(ctx, nil)
+	tx, err := store.BeginSQLiteWriteTx(ctx, r.db)
 	if err != nil {
 		return Resume{}, err
 	}
@@ -88,7 +90,7 @@ func (r *Repository) AvatarKeyResumeID(ctx context.Context, tenantID int64, key 
 // to storage. The durable reservation closes the gap between a fresh upload
 // and the later resume save, and expires with local temporary uploads.
 func (r *Repository) ReserveAvatarUpload(ctx context.Context, tenantID int64, key, owner string, resumeID int64) error {
-	tx, err := r.db.BeginTxx(ctx, nil)
+	tx, err := store.BeginSQLiteWriteTx(ctx, r.db)
 	if err != nil {
 		return err
 	}
@@ -149,7 +151,7 @@ func lockTargetJobReference(ctx context.Context, tx *sqlx.Tx, tenantID int64, ta
 }
 
 func (r *Repository) Update(ctx context.Context, tenantID, id int64, input UpdateInput) (Resume, error) {
-	tx, err := r.db.BeginTxx(ctx, nil)
+	tx, err := store.BeginSQLiteWriteTx(ctx, r.db)
 	if err != nil {
 		return Resume{}, err
 	}

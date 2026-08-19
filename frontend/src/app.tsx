@@ -71,6 +71,7 @@ export default function App() {
   const [targetJobsModalOpen, setTargetJobsModalOpen] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
   const isMounted = useRef(false);
+  const sessionEpoch = useRef(0);
   const templateStatusRequestVersion = useRef(0);
 
   const loadTemplateStatus = useCallback(async () => {
@@ -90,6 +91,7 @@ export default function App() {
   }, []);
 
   const resetTenantState = useCallback(() => {
+    sessionEpoch.current += 1;
     const nextView: AppView = window.location.pathname === '/target-jobs' ? 'targetJobs' : 'gallery';
     setResume(createSampleResumeDocument());
     setSelectedResumeId(null);
@@ -167,6 +169,13 @@ export default function App() {
     }
   };
   const currentTemplate = templateRegistry.find((template) => template.id === resume.templateId);
+  const renderedSessionEpoch = sessionEpoch.current;
+  const changeResumeForSession = (nextResume: typeof resume) => {
+    if (sessionEpoch.current === renderedSessionEpoch) setResume(nextResume);
+  };
+  const changeSelectedResumeForSession = (id: number | null) => {
+    if (sessionEpoch.current === renderedSessionEpoch) setSelectedResumeId(id);
+  };
 
   const handleAuthenticated = async (nextUser: AuthUser) => {
     if (!(await loadTemplateStatus()) || !isMounted.current) return;
@@ -221,7 +230,7 @@ export default function App() {
       ) : view === 'admin' && user?.isAdmin ? (
         <TemplateAdmin onDisabledTemplateIdsChange={setDisabledTemplateIds} />
       ) : (
-        <div className="resume-workspace">
+        <div className="resume-workspace" key={renderedSessionEpoch}>
           <aside className="resume-workspace__editor">
             <div className="editor-navigation">
               <div>
@@ -230,8 +239,8 @@ export default function App() {
               </div>
               <span>当前模板：{currentTemplate?.name ?? resume.templateId}</span>
             </div>
-            <ResumeLibrary document={resume} selectedId={selectedResumeId} onSelectedIdChange={setSelectedResumeId} onChange={setResume} onRestoreSample={() => setResume(createSampleResumeDocument())} onSelect={setResume} previewRef={previewRef} />
-            <ResumeEditor document={resume} resumeId={selectedResumeId ?? undefined} onChange={setResume} />
+            <ResumeLibrary document={resume} selectedId={selectedResumeId} onSelectedIdChange={changeSelectedResumeForSession} onChange={changeResumeForSession} onRestoreSample={() => changeResumeForSession(createSampleResumeDocument())} onSelect={changeResumeForSession} previewRef={previewRef} />
+            <ResumeEditor document={resume} resumeId={selectedResumeId ?? undefined} onChange={changeResumeForSession} />
           </aside>
           <ResumePreview document={resume} ref={previewRef} />
         </div>

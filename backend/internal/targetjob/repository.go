@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+
+	"resumepro/backend/internal/store"
 )
 
 type Repository struct{ db *sqlx.DB }
@@ -75,7 +77,7 @@ func (r *Repository) Update(ctx context.Context, tenantID, id int64, in UpdateIn
 }
 
 func (r *Repository) Delete(ctx context.Context, tenantID, id int64) (int64, error) {
-	tx, err := r.db.BeginTxx(ctx, nil)
+	tx, err := store.BeginSQLiteWriteTx(ctx, r.db)
 	if err != nil {
 		return 0, err
 	}

@@ -3711,6 +3711,13 @@ git commit -m "feat: /target-jobs 管理页 + 路由"
 - 回归覆盖 CRUD、路由、删除引用计数与租户隔离、删除和简历创建/更新的确定性竞态、A 用户退出或认证过期后 B 用户登录的数据清理，以及 App 级模态隔离。
 - 验证命令：`cd backend && go test ./... -count=1`；`cd frontend && npm test -- --run && npm run build`。
 
+Round 2 加固：
+
+- App 增加会话 epoch。退出、401 和新登录都会推进 epoch；简历编辑器与简历库传回 App 的 document、选中草稿等回调均校验捕获的 epoch，并通过 epoch key 重建编辑工作区。延迟完成的 A 用户头像上传因此无法覆盖 B 用户内存态。
+- 生产数据库统一由 `store.OpenSQLite` 打开，通过 DSN 为连接池中的每条 SQLite 连接设置 5 秒 `busy_timeout`；简历写事务、头像预留事务与目标岗位删除事务还通过 `BeginSQLiteWriteTx` 设置事务连接级兜底。迁移仍由原有 `store.Migrate` 显式执行，顺序和幂等行为不变。
+- 新增文件型 SQLite 竞争测试：使用两个独立 `sqlx.DB`、各自单独连接，分别验证“简历写锁先到，删除等待后清引用”和“删除写锁先到，简历等待后拒绝陈旧引用”两种锁序；另验证生产连接池的每条连接都获得超时策略且打开数据库不会隐式迁移。
+- Round 2 回归证据：延迟头像上传 A→B 测试；文件型双连接双锁序测试连续运行 10 次通过；`go test ./... -count=1` 全包通过；前端 26 个测试文件、195 项测试通过，生产构建通过。
+
 ---
 
 ### Task 24: src/components/TargetJobCard.tsx + TargetJobPicker.tsx
