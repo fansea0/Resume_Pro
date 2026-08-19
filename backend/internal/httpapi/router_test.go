@@ -70,3 +70,29 @@ func TestNewRouterRegistersTargetJobRoutes(t *testing.T) {
 		assert.True(t, routes[route], "missing route %s", route)
 	}
 }
+
+func TestNewRouterRegistersAIRoutesWhenAIIsDisabled(t *testing.T) {
+	db, err := sqlx.Open("sqlite", filepath.Join(t.TempDir(), "ai-router.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(t, store.Migrate(context.Background(), db))
+
+	resumeRepository := resume.NewRepository(db)
+	targetJobService := targetjob.NewService(targetjob.NewRepository(db))
+	router := NewRouter(auth.NewRepository(db), resumeRepository, templates.NewRepository(db), RouterConfig{
+		JWTSecret:        "test-secret-32-chars-minimum-len-padding",
+		TargetJobService: targetJobService,
+		ResumesvcService: resumesvc.NewService(resumeRepository, nil, targetJobService),
+	})
+
+	routes := make(map[string]bool)
+	for _, route := range router.Routes() {
+		routes[route.Method+" "+route.Path] = true
+	}
+	for _, route := range []string{
+		"POST /api/ai/resumes/generate",
+		"POST /api/ai/resumes/:id/section/rewrite",
+	} {
+		assert.True(t, routes[route], "missing route %s", route)
+	}
+}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"resumepro/backend/internal/ai"
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/resume"
@@ -30,6 +31,9 @@ type RouterConfig struct {
 	TargetJobService *targetjob.Service
 	// ResumesvcService owns resume mutation business logic.
 	ResumesvcService *resumesvc.Service
+	// AIService is nil when AI features are disabled. The authenticated routes
+	// remain registered so callers receive an explicit 503 response.
+	AIService *ai.Service
 }
 
 var avatarFilenamePattern = regexp.MustCompile(`^[a-f0-9]{64}-[a-f0-9]{64}\.avatar$`)
@@ -90,6 +94,12 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 		targetJobs.PUT("/:id", targetHandler.update)
 		targetJobs.DELETE("/:id", targetHandler.delete)
 	}
+
+	aiHandler := newAIHandler(config.AIService, resumeRepository, config.TargetJobService)
+	aiRoutes := router.Group("/api/ai")
+	aiRoutes.Use(requireAuthentication(service))
+	aiRoutes.POST("/resumes/generate", aiHandler.generateResume)
+	aiRoutes.POST("/resumes/:id/section/rewrite", aiHandler.rewriteSection)
 
 	return router
 }
