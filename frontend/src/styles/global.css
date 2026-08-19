@@ -180,6 +180,7 @@ body { margin: 0; }
   max-width: 980px;
 }
 .target-jobs__header { align-items: end; border-bottom: 1px solid var(--target-line); display: flex; gap: 1.5rem; justify-content: space-between; padding: .3rem 0 1.2rem; }
+.target-jobs__background { display: grid; gap: 1.25rem; }
 .target-jobs__header h2, .target-jobs__header p { margin: 0; }
 .target-jobs__header h2 { font-size: clamp(1.75rem, 3vw, 2.55rem); letter-spacing: -.05em; line-height: 1.05; margin: .3rem 0 .5rem; }
 .target-jobs__header > div > p:last-child { color: var(--target-muted); font-size: .94rem; line-height: 1.55; }

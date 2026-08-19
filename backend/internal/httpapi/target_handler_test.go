@@ -171,4 +171,44 @@ func TestTargetJobTenantIsolation(t *testing.T) {
 	assert.Empty(t, list)
 }
 
+func TestTargetJobDeleteClearsSameTenantResumeReferences(t *testing.T) {
+	router, db := setupTargetAPI(t)
+	firstCookie := loginAs(t, router, "first-delete@example.com")
+	_ = loginAs(t, router, "second-delete@example.com")
+
+	createdResponse := targetRequest(t, router, http.MethodPost, "/api/target-jobs", targetJobPayload(t, "字节", "后端", "负责目标岗位架构设计工作"), firstCookie)
+	require.Equal(t, http.StatusCreated, createdResponse.Code, createdResponse.Body.String())
+	var created targetjob.TargetJob
+	require.NoError(t, json.Unmarshal(createdResponse.Body.Bytes(), &created))
+
+	var firstTenantID, secondTenantID int64
+	require.NoError(t, db.Get(&firstTenantID, `SELECT tenant_id FROM users WHERE email = ?`, "first-delete@example.com"))
+	require.NoError(t, db.Get(&secondTenantID, `SELECT tenant_id FROM users WHERE email = ?`, "second-delete@example.com"))
+	firstContent := fmt.Sprintf(`{"version":2,"targetJobId":%d,"profile":{"name":"Ada"},"sections":[]}`, created.ID)
+	secondContent := fmt.Sprintf(`{"version":2,"targetJobId":%d,"profile":{"name":"Grace"}}`, created.ID)
+	firstResume, err := db.Exec(`
+		INSERT INTO resumes (tenant_id, title, template_id, content, created_at, updated_at)
+		VALUES (?, 'first resume', 'minimal', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, firstTenantID, firstContent)
+	require.NoError(t, err)
+	firstResumeID, err := firstResume.LastInsertId()
+	require.NoError(t, err)
+	secondResume, err := db.Exec(`
+		INSERT INTO resumes (tenant_id, title, template_id, content, created_at, updated_at)
+		VALUES (?, 'second resume', 'minimal', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, secondTenantID, secondContent)
+	require.NoError(t, err)
+	secondResumeID, err := secondResume.LastInsertId()
+	require.NoError(t, err)
+
+	response := targetRequest(t, router, http.MethodDelete, "/api/target-jobs/"+itoa(created.ID), nil, firstCookie)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "1", response.Header().Get("X-Deleted-References"))
+	assert.JSONEq(t, `{"deletedReferences":1}`, response.Body.String())
+
+	var gotFirst, gotSecond string
+	require.NoError(t, db.Get(&gotFirst, `SELECT content FROM resumes WHERE id = ?`, firstResumeID))
+	require.NoError(t, db.Get(&gotSecond, `SELECT content FROM resumes WHERE id = ?`, secondResumeID))
+	assert.JSONEq(t, `{"version":2,"profile":{"name":"Ada"},"sections":[]}`, gotFirst)
+	assert.JSONEq(t, secondContent, gotSecond)
+}
+
 func itoa(i int64) string { return fmt.Sprintf("%d", i) }

@@ -62,16 +62,5 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, in UpdateInput
 }
 
 func (s *Service) Delete(ctx context.Context, tenantID, id int64) (int64, error) {
-	if _, err := s.repo.Get(ctx, tenantID, id); err != nil {
-		return 0, err
-	}
-
-	count, err := s.repo.CountByTargetJob(ctx, tenantID, id)
-	if err != nil {
-		return 0, err
-	}
-	if err := s.repo.Delete(ctx, tenantID, id); err != nil {
-		return 0, err
-	}
-	return count, nil
+	return s.repo.Delete(ctx, tenantID, id)
 }

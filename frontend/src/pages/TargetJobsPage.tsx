@@ -31,10 +31,59 @@ interface TargetJobFormProps {
 function TargetJobForm({ editingTarget, input, error, saving, onCancel, onChange, onSubmit }: TargetJobFormProps) {
   const title = editingTarget ? '编辑目标岗位' : '新建目标岗位';
   const requirementsDescribedBy = error ? 'target-job-requirements-hint target-job-form-error' : 'target-job-requirements-hint';
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCancelRef = useRef(onCancel);
+  const savingRef = useRef(saving);
+  onCancelRef.current = onCancel;
+  savingRef.current = saving;
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableSelector = 'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+    const focusableElements = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector));
+    const initialFocus = dialog.querySelector<HTMLElement>('input') ?? focusableElements()[0];
+
+    const handleFocusIn = (event: FocusEvent) => {
+      if (!dialog.contains(event.target as Node)) initialFocus?.focus();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !savingRef.current) {
+        event.preventDefault();
+        onCancelRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const elements = focusableElements();
+      if (elements.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('focusin', handleFocusIn);
+    document.addEventListener('keydown', handleKeyDown);
+    initialFocus?.focus();
+    return () => {
+      document.removeEventListener('focusin', handleFocusIn);
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, []);
 
   return (
     <div className="target-job-dialog__backdrop">
-      <div aria-labelledby="target-job-dialog-title" aria-modal="true" className="target-job-dialog" role="dialog">
+      <div aria-labelledby="target-job-dialog-title" aria-modal="true" className="target-job-dialog" ref={dialogRef} role="dialog">
         <div className="target-job-dialog__heading">
           <div>
             <p className="target-jobs__eyebrow">JOB BRIEF</p>
@@ -48,7 +97,6 @@ function TargetJobForm({ editingTarget, input, error, saving, onCancel, onChange
             <label>
               <span>公司（可选）</span>
               <input
-                autoFocus
                 maxLength={200}
                 onChange={(event) => onChange({ ...input, company: event.target.value })}
                 placeholder="例如：字节跳动"
@@ -102,6 +150,7 @@ export function TargetJobsPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const mounted = useRef(false);
   const requestVersion = useRef(0);
+  const deleteInProgress = useRef(false);
 
   const load = useCallback(async () => {
     const version = ++requestVersion.current;
@@ -181,11 +230,13 @@ export function TargetJobsPage() {
   };
 
   const handleDelete = async (targetJob: TargetJob) => {
+    if (deleteInProgress.current) return;
     const confirmed = window.confirm(
       `确定删除“${targetJobName(targetJob)}”吗？如果这份目标岗位被简历引用，删除后会同时清空这些简历的引用。`,
     );
     if (!confirmed) return;
 
+    deleteInProgress.current = true;
     setDeletingId(targetJob.id);
     setActionError('');
     try {
@@ -198,59 +249,62 @@ export function TargetJobsPage() {
     } catch {
       if (mounted.current) setActionError('删除目标岗位失败，请稍后重试。');
     } finally {
+      deleteInProgress.current = false;
       if (mounted.current) setDeletingId(null);
     }
   };
 
   return (
     <section aria-labelledby="target-jobs-title" className="target-jobs">
-      <div className="target-jobs__header">
-        <div>
-          <p className="target-jobs__eyebrow">AI WRITING CONTEXT</p>
-          <h2 id="target-jobs-title">目标岗位</h2>
-          <p>保存岗位要求，让 AI 润色更贴近你的求职方向。</p>
+      <div {...(formOpen ? { 'aria-hidden': true, inert: '' } : {})} className="target-jobs__background">
+        <div className="target-jobs__header">
+          <div>
+            <p className="target-jobs__eyebrow">AI WRITING CONTEXT</p>
+            <h2 id="target-jobs-title">目标岗位</h2>
+            <p>保存岗位要求，让 AI 润色更贴近你的求职方向。</p>
+          </div>
+          <button className="target-jobs__create" onClick={openCreate} type="button">+ 新建</button>
         </div>
-        <button className="target-jobs__create" onClick={openCreate} type="button">+ 新建</button>
-      </div>
 
-      {actionError && <p className="target-jobs__error" role="alert">{actionError}</p>}
-      {loading ? (
-        <p className="target-jobs__status" aria-live="polite">正在加载目标岗位…</p>
-      ) : loadError ? (
-        <div className="target-jobs__load-error">
-          <p role="alert">无法加载目标岗位，请稍后重试。</p>
-          <button onClick={() => void load()} type="button">重试</button>
-        </div>
-      ) : targetJobs.length === 0 ? (
-        <div className="target-jobs__empty">
-          <p>还没有目标岗位。</p>
-          <span>创建一份岗位简报，后续可在简历里直接选择。</span>
-        </div>
-      ) : (
-        <ul aria-label="目标岗位列表" className="target-jobs__list">
-          {targetJobs.map((targetJob) => (
-            <li className="target-jobs__item" key={targetJob.id}>
-              <article>
-                <div className="target-jobs__identity">
-                  <h3>{targetJob.company.trim() || '未指定公司'}</h3>
-                  <span aria-hidden="true">·</span>
-                  <p>{targetJob.position.trim() || '未指定职位'}</p>
+        {actionError && <p className="target-jobs__error" role="alert">{actionError}</p>}
+        {loading ? (
+          <p className="target-jobs__status" aria-live="polite">正在加载目标岗位…</p>
+        ) : loadError ? (
+          <div className="target-jobs__load-error">
+            <p role="alert">无法加载目标岗位，请稍后重试。</p>
+            <button onClick={() => void load()} type="button">重试</button>
+          </div>
+        ) : targetJobs.length === 0 ? (
+          <div className="target-jobs__empty">
+            <p>还没有目标岗位。</p>
+            <span>创建一份岗位简报，后续可在简历里直接选择。</span>
+          </div>
+        ) : (
+          <ul aria-label="目标岗位列表" className="target-jobs__list">
+            {targetJobs.map((targetJob) => (
+              <li className="target-jobs__item" key={targetJob.id}>
+                <article>
+                  <div className="target-jobs__identity">
+                    <h3>{targetJob.company.trim() || '未指定公司'}</h3>
+                    <span aria-hidden="true">·</span>
+                    <p>{targetJob.position.trim() || '未指定职位'}</p>
+                  </div>
+                  <p className="target-jobs__requirements">{requirementsPreview(targetJob.requirements)}</p>
+                </article>
+                <div className="target-jobs__actions">
+                  <button aria-label={`编辑：${targetJobName(targetJob)}`} onClick={() => openEdit(targetJob)} type="button">编辑</button>
+                  <button
+                    aria-label={`删除：${targetJobName(targetJob)}`}
+                    disabled={deletingId !== null}
+                    onClick={() => void handleDelete(targetJob)}
+                    type="button"
+                  >{deletingId === targetJob.id ? '删除中…' : '删除'}</button>
                 </div>
-                <p className="target-jobs__requirements">{requirementsPreview(targetJob.requirements)}</p>
-              </article>
-              <div className="target-jobs__actions">
-                <button aria-label={`编辑：${targetJobName(targetJob)}`} onClick={() => openEdit(targetJob)} type="button">编辑</button>
-                <button
-                  aria-label={`删除：${targetJobName(targetJob)}`}
-                  disabled={deletingId === targetJob.id}
-                  onClick={() => void handleDelete(targetJob)}
-                  type="button"
-                >{deletingId === targetJob.id ? '删除中…' : '删除'}</button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       {formOpen && (
         <TargetJobForm

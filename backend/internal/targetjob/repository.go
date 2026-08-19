@@ -74,20 +74,44 @@ func (r *Repository) Update(ctx context.Context, tenantID, id int64, in UpdateIn
 	return r.Get(ctx, tenantID, id)
 }
 
-func (r *Repository) Delete(ctx context.Context, tenantID, id int64) error {
-	res, err := r.db.ExecContext(ctx,
+func (r *Repository) Delete(ctx context.Context, tenantID, id int64) (int64, error) {
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	clearedResult, err := tx.ExecContext(ctx, `
+		UPDATE resumes
+		SET content = json_remove(content, '$.targetJobId'), updated_at = CURRENT_TIMESTAMP
+		WHERE tenant_id = ?
+		  AND CASE
+			WHEN json_valid(content) THEN json_extract(content, '$.targetJobId')
+		  END = ?`, tenantID, id)
+	if err != nil {
+		return 0, err
+	}
+	cleared, err := clearedResult.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	deleteResult, err := tx.ExecContext(ctx,
 		`DELETE FROM target_jobs WHERE id = ? AND tenant_id = ?`, id, tenantID)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	rows, err := res.RowsAffected()
+	deleted, err := deleteResult.RowsAffected()
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if rows == 0 {
-		return ErrNotFound
+	if deleted == 0 {
+		return 0, ErrNotFound
 	}
-	return nil
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return cleared, nil
 }
 
 func (r *Repository) CountByTargetJob(ctx context.Context, tenantID, id int64) (int64, error) {

@@ -237,4 +237,52 @@ describe('application authentication gate', () => {
     expect(screen.getByRole('button', { name: '目标岗位' })).toHaveAttribute('aria-current', 'page');
     expect(listTargetJobs).toHaveBeenCalledOnce();
   });
+
+  it('returns to a target-jobs deep link after signing in', async () => {
+    window.history.replaceState({}, '', '/target-jobs');
+    getCurrentUser.mockRejectedValueOnce(new Error('authentication required'));
+    login.mockResolvedValueOnce({ id: 1, email: 'ada@example.com', tenantId: 3, isAdmin: false });
+    render(<App />);
+
+    await screen.findByRole('heading', { name: '欢迎回来' });
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'ada@example.com' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password1234' } });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+
+    expect(await screen.findByRole('heading', { name: '目标岗位' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/target-jobs');
+  });
+
+  it('updates the URL when navigating out of target jobs', async () => {
+    window.history.replaceState({}, '', '/target-jobs');
+    getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'ada@example.com', tenantId: 3 });
+    render(<App />);
+
+    await screen.findByRole('heading', { name: '目标岗位' });
+    fireEvent.click(screen.getByRole('button', { name: '我的草稿' }));
+
+    expect(await screen.findByRole('heading', { name: '我的草稿' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/');
+  });
+
+  it('restores the target-jobs route with browser history', async () => {
+    getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'ada@example.com', tenantId: 3 });
+    render(<App />);
+
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    fireEvent.click(screen.getByRole('button', { name: '目标岗位' }));
+    expect(await screen.findByRole('heading', { name: '目标岗位' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '我的草稿' }));
+    expect(await screen.findByRole('heading', { name: '我的草稿' })).toBeInTheDocument();
+
+    window.history.back();
+
+    await waitFor(() => expect(window.location.pathname).toBe('/target-jobs'));
+    expect(await screen.findByRole('heading', { name: '目标岗位' })).toBeInTheDocument();
+
+    window.history.forward();
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'));
+    expect(await screen.findByRole('heading', { name: '我的草稿' })).toBeInTheDocument();
+  });
 });

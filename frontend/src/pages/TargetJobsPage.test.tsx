@@ -125,4 +125,45 @@ describe('TargetJobsPage', () => {
     expect(await screen.findByText('字节跳动')).toBeInTheDocument();
     expect(listTargetJobs).toHaveBeenCalledTimes(2);
   });
+
+  it('traps focus inside the create dialog and restores it after Escape', async () => {
+    render(<TargetJobsPage />);
+    await screen.findByText('还没有目标岗位。');
+    const trigger = screen.getByRole('button', { name: '+ 新建' });
+
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole('dialog', { name: '新建目标岗位' });
+    const company = within(dialog).getByLabelText('公司（可选）');
+    expect(company).toHaveFocus();
+
+    trigger.focus();
+    expect(company).toHaveFocus();
+    const save = within(dialog).getByRole('button', { name: '保存目标岗位' });
+    save.focus();
+    fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(within(dialog).getByRole('button', { name: '关闭' })).toHaveFocus();
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('disables every delete action while a deletion is pending', async () => {
+    const secondJob = { ...job, id: 8, company: '第二家公司' };
+    listTargetJobs.mockResolvedValueOnce([job, secondJob]);
+    let resolveDelete!: (result: { deletedReferences: number }) => void;
+    deleteTargetJob.mockReturnValueOnce(new Promise((resolve) => { resolveDelete = resolve; }));
+    render(<TargetJobsPage />);
+    await screen.findByText('字节跳动');
+
+    fireEvent.click(screen.getByRole('button', { name: '删除：字节跳动 · 高级后端工程师' }));
+
+    expect(screen.getByRole('button', { name: '删除：字节跳动 · 高级后端工程师' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '删除：第二家公司 · 高级后端工程师' })).toBeDisabled();
+    expect(deleteTargetJob).toHaveBeenCalledTimes(1);
+
+    resolveDelete({ deletedReferences: 0 });
+    await waitFor(() => expect(screen.getByRole('button', { name: '删除：第二家公司 · 高级后端工程师' })).toBeEnabled());
+  });
 });

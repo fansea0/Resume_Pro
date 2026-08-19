@@ -148,10 +148,54 @@ func TestRepository_Delete(t *testing.T) {
 
 	tj, err := repo.Create(ctx, 1, targetjob.CreateInput{Requirements: "to delete"})
 	require.NoError(t, err)
-	require.NoError(t, repo.Delete(ctx, 1, tj.ID))
+	cleared, err := repo.Delete(ctx, 1, tj.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), cleared)
 
 	_, err = repo.Get(ctx, 1, tj.ID)
 	assert.ErrorIs(t, err, targetjob.ErrNotFound)
+}
+
+func TestRepository_Delete_ClearsOnlySameTenantResumeReferences(t *testing.T) {
+	db := newTestDB(t)
+	repo := targetjob.NewRepository(db)
+	ctx := context.Background()
+	tenant2 := createTenant(t, db, "Tenant two")
+
+	tj, err := repo.Create(ctx, 1, targetjob.CreateInput{Requirements: "target requirement"})
+	require.NoError(t, err)
+	ownedContent := `{"version":2,"targetJobId":` + strconv.FormatInt(tj.ID, 10) + `,"profile":{"name":"Ada"},"sections":[{"id":"summary"}]}`
+	otherTenantContent := `{"version":2,"targetJobId":` + strconv.FormatInt(tj.ID, 10) + `,"profile":{"name":"Grace"}}`
+	ownedResult, err := db.Exec(`
+		INSERT INTO resumes (tenant_id, title, template_id, content, created_at, updated_at)
+		VALUES (?, 'owned', 'classic', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, 1, ownedContent)
+	require.NoError(t, err)
+	ownedID, err := ownedResult.LastInsertId()
+	require.NoError(t, err)
+	otherResult, err := db.Exec(`
+		INSERT INTO resumes (tenant_id, title, template_id, content, created_at, updated_at)
+		VALUES (?, 'other', 'classic', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, tenant2, otherTenantContent)
+	require.NoError(t, err)
+	otherID, err := otherResult.LastInsertId()
+	require.NoError(t, err)
+	malformedResult, err := db.Exec(`
+		INSERT INTO resumes (tenant_id, title, template_id, content, created_at, updated_at)
+		VALUES (?, 'malformed', 'classic', '{bad json', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, 1)
+	require.NoError(t, err)
+	malformedID, err := malformedResult.LastInsertId()
+	require.NoError(t, err)
+
+	cleared, err := repo.Delete(ctx, 1, tj.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), cleared)
+
+	var gotOwned, gotOther, gotMalformed string
+	require.NoError(t, db.Get(&gotOwned, `SELECT content FROM resumes WHERE id = ?`, ownedID))
+	require.NoError(t, db.Get(&gotOther, `SELECT content FROM resumes WHERE id = ?`, otherID))
+	require.NoError(t, db.Get(&gotMalformed, `SELECT content FROM resumes WHERE id = ?`, malformedID))
+	assert.JSONEq(t, `{"version":2,"profile":{"name":"Ada"},"sections":[{"id":"summary"}]}`, gotOwned)
+	assert.JSONEq(t, otherTenantContent, gotOther)
+	assert.Equal(t, `{bad json`, gotMalformed)
 }
 
 func TestRepository_Delete_TenantIsolation(t *testing.T) {
@@ -162,12 +206,16 @@ func TestRepository_Delete_TenantIsolation(t *testing.T) {
 
 	tj, err := repo.Create(ctx, 1, targetjob.CreateInput{Requirements: "must remain"})
 	require.NoError(t, err)
-	err = repo.Delete(ctx, tenant2, tj.ID)
+	createResumeReference(t, db, tenant2, tj.ID)
+	_, err = repo.Delete(ctx, tenant2, tj.ID)
 	assert.ErrorIs(t, err, targetjob.ErrNotFound)
 
 	got, err := repo.Get(ctx, 1, tj.ID)
 	require.NoError(t, err)
 	assert.Equal(t, tj.ID, got.ID)
+	var content string
+	require.NoError(t, db.Get(&content, `SELECT content FROM resumes WHERE tenant_id = ?`, tenant2))
+	assert.JSONEq(t, `{"targetJobId":`+strconv.FormatInt(tj.ID, 10)+`}`, content)
 }
 
 func TestRepository_CountByTargetJob(t *testing.T) {

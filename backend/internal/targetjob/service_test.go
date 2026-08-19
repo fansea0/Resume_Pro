@@ -96,6 +96,9 @@ func TestService_Delete_ReturnsReferenceCount(t *testing.T) {
 	deletedCount, err := svc.Delete(ctx, 1, tj.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), deletedCount)
+	var content string
+	require.NoError(t, db.Get(&content, `SELECT content FROM resumes WHERE tenant_id = ?`, 1))
+	assert.JSONEq(t, `{}`, content)
 	_, err = svc.Get(ctx, 1, tj.ID)
 	assert.ErrorIs(t, err, targetjob.ErrNotFound)
 }
