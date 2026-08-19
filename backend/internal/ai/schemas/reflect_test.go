@@ -47,11 +47,11 @@ func TestRewriteSchemaForReturnsSchemaForSupportedSectionTypes(t *testing.T) {
 							"additionalProperties": false,
 							"properties": map[string]any{
 								"id":                 map[string]any{"type": "string"},
-								"introduction":       map[string]any{"type": "string"},
-								"achievements":       map[string]any{"type": "string"},
-								"highlightsMarkdown": map[string]any{"type": "string"},
+								"introduction":       map[string]any{"type": []string{"string", "null"}},
+								"achievements":       map[string]any{"type": []string{"string", "null"}},
+								"highlightsMarkdown": map[string]any{"type": []string{"string", "null"}},
 							},
-							"required": []string{"id"},
+							"required": []string{"id", "introduction", "achievements", "highlightsMarkdown"},
 						},
 					},
 				},
@@ -149,6 +149,24 @@ func TestAllRewriteSchemaObjectsRejectAdditionalProperties(t *testing.T) {
 	}
 }
 
+func TestNullableRewriteFieldsDecodeJSONNullAsNil(t *testing.T) {
+	var experience schemas.ExperienceRewriteItem
+	if err := json.Unmarshal([]byte(`{"id":"experience-1","achievements":null,"highlightsMarkdown":null}`), &experience); err != nil {
+		t.Fatalf("unmarshal nullable experience rewrite fields: %v", err)
+	}
+	if experience.Achievements != nil || experience.HighlightsMarkdown != nil {
+		t.Fatalf("nullable experience rewrite fields = %#v, want nil pointers", experience)
+	}
+
+	var project schemas.ProjectRewriteItem
+	if err := json.Unmarshal([]byte(`{"id":"project-1","introduction":null,"achievements":null,"highlightsMarkdown":null}`), &project); err != nil {
+		t.Fatalf("unmarshal nullable project rewrite fields: %v", err)
+	}
+	if project.Introduction != nil || project.Achievements != nil || project.HighlightsMarkdown != nil {
+		t.Fatalf("nullable project rewrite fields = %#v, want nil pointers", project)
+	}
+}
+
 func TestSchemaJSONStringUsesJSONEncoding(t *testing.T) {
 	got := schemas.SchemaJSONString(map[string]any{"description": "line\n\"quoted\""})
 	if !json.Valid([]byte(got)) {
@@ -171,10 +189,10 @@ func experienceSchema() map[string]any {
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"id":                 map[string]any{"type": "string"},
-						"achievements":       map[string]any{"type": "string"},
-						"highlightsMarkdown": map[string]any{"type": "string"},
+						"achievements":       map[string]any{"type": []string{"string", "null"}},
+						"highlightsMarkdown": map[string]any{"type": []string{"string", "null"}},
 					},
-					"required": []string{"id"},
+					"required": []string{"id", "achievements", "highlightsMarkdown"},
 				},
 			},
 		},
