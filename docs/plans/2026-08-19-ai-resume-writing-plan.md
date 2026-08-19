@@ -3677,20 +3677,20 @@ git commit -m "feat: 前端 SSE client + 单测"
 - Create: `frontend/src/pages/TargetJobsPage.test.tsx`
 - Modify: `frontend/src/app.tsx`（注册路由）
 
-- [ ] **Step 1: 创建 TargetJobsPage.tsx**
+- [x] **Step 1: 创建 TargetJobsPage.tsx**
 
 UI 包含：
 - 顶部「+ 新建」按钮（弹 TargetJobPicker 新建模式）
 - 列表：每行显示 company（或"未指定公司"）· position · JD 预览 50 字 · 编辑/删除按钮
 - 删除前 confirm；删除后若响应含 `deletedReferences > 0` 弹"已清空 N 份简历的引用"
 
-- [ ] **Step 2: 在 app.tsx 注册路由**
+- [x] **Step 2: 在 app.tsx 注册路由**
 
 ```tsx
 <Route path="/target-jobs" element={<TargetJobsPage />} />
 ```
 
-- [ ] **Step 3: 写单测 + 跑测试 + 提交**
+- [x] **Step 3: 写单测 + 跑测试 + 提交**
 
 ```bash
 cd /Users/Admin/code/resume_pro/frontend
@@ -3699,6 +3699,17 @@ cd /Users/Admin/code/resume_pro
 git add frontend/src/pages/ frontend/src/app.tsx
 git commit -m "feat: /target-jobs 管理页 + 路由"
 ```
+
+#### Task 23 实施报告（2026-08-19）
+
+状态：完成。
+
+- 管理页已接入 `targetJobs` API，覆盖加载、空态、失败重试、新建、编辑、删除确认、删除引用数提示，以及 `requirements` trim 后至少 10 字符的前端校验。
+- `/target-jobs` 已支持登录态直达、未登录后登录回跳和浏览器前进/后退；离开该页时 URL 同步回 `/`。认证过期、退出登录和重新登录都会清理上一租户的简历、草稿选择和编辑器错误状态，只有 `/target-jobs` 作为可保留的认证深链。
+- 新建/编辑表单通过 portal 渲染为真正的模态层，支持初始聚焦、Tab 焦点循环、Escape 关闭和焦点恢复；打开期间 App 根节点（含头部导航和退出按钮）同时设置 `inert` 与 `aria-hidden`。
+- 删除目标岗位会在同一 SQLite 事务中清除同租户简历 JSON 内匹配的 `targetJobId` 并返回实际清理数；简历创建/更新也在自身写事务内锁定并校验目标岗位，使其与删除串行化，避免并发写回悬空引用。
+- 回归覆盖 CRUD、路由、删除引用计数与租户隔离、删除和简历创建/更新的确定性竞态、A 用户退出或认证过期后 B 用户登录的数据清理，以及 App 级模态隔离。
+- 验证命令：`cd backend && go test ./... -count=1`；`cd frontend && npm test -- --run && npm run build`。
 
 ---
 

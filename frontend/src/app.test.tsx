@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './app';
 import { createSampleResumeDocument } from './types/resume';
@@ -12,6 +12,7 @@ const listAdminTemplates = vi.fn();
 const disableTemplate = vi.fn();
 const login = vi.fn();
 const listTargetJobs = vi.fn();
+let unauthorizedListener: (() => void) | null = null;
 
 vi.mock('./api/auth', () => ({
   getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
@@ -45,6 +46,15 @@ vi.mock('./api/targetJobs', () => ({
   deleteTargetJob: vi.fn(),
 }));
 
+vi.mock('./api/client', () => ({
+  onUnauthorized: (listener: () => void) => {
+    unauthorizedListener = listener;
+    return () => {
+      if (unauthorizedListener === listener) unauthorizedListener = null;
+    };
+  },
+}));
+
 afterEach(() => {
   cleanup();
   window.history.replaceState({}, '', '/');
@@ -60,6 +70,7 @@ describe('application authentication gate', () => {
     listAdminTemplates.mockReset();
     disableTemplate.mockReset();
     listTargetJobs.mockReset();
+    unauthorizedListener = null;
     listResumes.mockResolvedValue([]);
     getTemplateStatus.mockResolvedValue({ disabledTemplateIds: [] });
     listTargetJobs.mockResolvedValue([]);
@@ -84,6 +95,63 @@ describe('application authentication gate', () => {
 
     await waitFor(() => expect(logout).toHaveBeenCalledOnce());
     expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument();
+  });
+
+  it('purges user A resume state before user B signs in', async () => {
+    const userAResume = {
+      ...createSampleResumeDocument(),
+      title: 'A 的机密简历',
+      profile: { ...createSampleResumeDocument().profile, fullName: '用户 A' },
+    };
+    getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'a@example.com', tenantId: 11 });
+    listResumes.mockResolvedValueOnce([{
+      id: 71,
+      title: userAResume.title,
+      templateId: userAResume.templateId,
+      content: JSON.stringify(userAResume),
+      createdAt: '2026-08-18T01:00:00Z',
+      updatedAt: '2026-08-18T02:00:00Z',
+    }]);
+    logout.mockResolvedValueOnce(undefined);
+    login.mockResolvedValueOnce({ id: 2, email: 'b@example.com', tenantId: 22, isAdmin: false });
+    render(<App />);
+
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    fireEvent.click(screen.getByRole('button', { name: '我的草稿' }));
+    fireEvent.click(await screen.findByRole('button', { name: '继续编辑：A 的机密简历' }));
+    expect(screen.getByLabelText('姓名')).toHaveValue('用户 A');
+
+    fireEvent.click(screen.getByRole('button', { name: '退出登录' }));
+    await screen.findByRole('heading', { name: '欢迎回来' });
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'b@example.com' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password1234' } });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    expect(window.location.pathname).toBe('/');
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    expect(screen.getByLabelText('姓名')).not.toHaveValue('用户 A');
+    expect(screen.queryByText('A 的机密简历')).not.toBeInTheDocument();
+  });
+
+  it('purges the active editor when authorization expires', async () => {
+    getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'a@example.com', tenantId: 11 });
+    login.mockResolvedValueOnce({ id: 2, email: 'b@example.com', tenantId: 22, isAdmin: false });
+    render(<App />);
+
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    fireEvent.change(screen.getByLabelText('姓名'), { target: { value: '过期的 A 用户' } });
+    act(() => unauthorizedListener?.());
+
+    await screen.findByRole('heading', { name: '欢迎回来' });
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'b@example.com' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password1234' } });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+
+    expect(screen.getByLabelText('姓名')).not.toHaveValue('过期的 A 用户');
   });
 
   it('uses the template home as the primary authenticated starting point', async () => {
@@ -236,6 +304,27 @@ describe('application authentication gate', () => {
     expect(await screen.findByRole('heading', { name: '目标岗位' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '目标岗位' })).toHaveAttribute('aria-current', 'page');
     expect(listTargetJobs).toHaveBeenCalledOnce();
+  });
+
+  it('isolates the whole authenticated app while the target-job dialog is open', async () => {
+    window.history.replaceState({}, '', '/target-jobs');
+    getCurrentUser.mockResolvedValueOnce({ id: 1, email: 'ada@example.com', tenantId: 3 });
+    const { container } = render(<App />);
+
+    await screen.findByRole('heading', { name: '目标岗位' });
+    const appRoot = container.querySelector('main.app-shell');
+    const headerNavigation = screen.getByRole('navigation', { name: '主要导航' });
+    fireEvent.click(screen.getByRole('button', { name: '+ 新建' }));
+
+    const dialog = screen.getByRole('dialog', { name: '新建目标岗位' });
+    expect(appRoot).toHaveAttribute('aria-hidden', 'true');
+    expect(appRoot).toHaveAttribute('inert');
+    expect(appRoot).not.toContainElement(dialog);
+    headerNavigation.focus();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(appRoot).not.toHaveAttribute('aria-hidden');
+    expect(appRoot).not.toHaveAttribute('inert');
   });
 
   it('returns to a target-jobs deep link after signing in', async () => {

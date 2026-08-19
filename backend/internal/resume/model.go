@@ -15,6 +15,7 @@ type Resume struct {
 
 type CreateInput struct {
 	TenantID    int64
+	TargetJobID *int64
 	AvatarOwner string
 	Title       string
 	TemplateID  string
@@ -22,6 +23,7 @@ type CreateInput struct {
 }
 
 type UpdateInput struct {
+	TargetJobID *int64
 	AvatarOwner string
 	Title       string
 	TemplateID  string

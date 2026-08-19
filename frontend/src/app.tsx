@@ -68,6 +68,7 @@ export default function App() {
   const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
   const [user, setUser] = useState<AuthUser | null>(null);
   const [disabledTemplateIds, setDisabledTemplateIds] = useState<typeof resume.templateId[]>([]);
+  const [targetJobsModalOpen, setTargetJobsModalOpen] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
   const isMounted = useRef(false);
   const templateStatusRequestVersion = useRef(0);
@@ -88,6 +89,16 @@ export default function App() {
     }
   }, []);
 
+  const resetTenantState = useCallback(() => {
+    const nextView: AppView = window.location.pathname === '/target-jobs' ? 'targetJobs' : 'gallery';
+    setResume(createSampleResumeDocument());
+    setSelectedResumeId(null);
+    setDraftReadError(false);
+    setTargetJobsModalOpen(false);
+    setView(nextView);
+    window.history.replaceState({ appView: nextView }, '', pathForView(nextView));
+  }, []);
+
   useEffect(() => {
     let active = true;
     isMounted.current = true;
@@ -95,11 +106,15 @@ export default function App() {
       .then(async (currentUser) => {
         if (!active) return;
         if (!(await loadTemplateStatus()) || !active) return;
+        resetTenantState();
         setUser(currentUser);
         setAuthState('authenticated');
       })
       .catch(() => {
-        if (active) setAuthState('unauthenticated');
+        if (active) {
+          resetTenantState();
+          setAuthState('unauthenticated');
+        }
       });
     const removeUnauthorizedListener = onUnauthorized(() => {
       if (!active) return;
@@ -107,8 +122,7 @@ export default function App() {
       setDisabledTemplateIds([]);
       setUser(null);
       setAuthState('unauthenticated');
-      setView(viewFromHistory(window.location.pathname, window.history.state));
-      setSelectedResumeId(null);
+      resetTenantState();
     });
     return () => {
       active = false;
@@ -116,7 +130,7 @@ export default function App() {
       templateStatusRequestVersion.current += 1;
       removeUnauthorizedListener();
     };
-  }, [loadTemplateStatus]);
+  }, [loadTemplateStatus, resetTenantState]);
 
   useEffect(() => {
     const handlePopState = (event: PopStateEvent) => {
@@ -156,9 +170,9 @@ export default function App() {
 
   const handleAuthenticated = async (nextUser: AuthUser) => {
     if (!(await loadTemplateStatus()) || !isMounted.current) return;
+    resetTenantState();
     setUser(nextUser);
     setAuthState('authenticated');
-    setView(viewFromHistory(window.location.pathname, window.history.state));
   };
 
   const handleLogout = async () => {
@@ -169,8 +183,7 @@ export default function App() {
       setDisabledTemplateIds([]);
       setUser(null);
       setAuthState('unauthenticated');
-      setView(viewFromHistory(window.location.pathname, window.history.state));
-      setSelectedResumeId(null);
+      resetTenantState();
     }
   };
 
@@ -183,7 +196,7 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main {...(targetJobsModalOpen ? { 'aria-hidden': true, inert: '' } : {})} className="app-shell">
       <header className="app-header">
         <div className="app-header__brand"><h1>简历生成器</h1><p>专业表达，从清晰开始。</p></div>
         <div className="app-header__actions">
@@ -199,7 +212,7 @@ export default function App() {
       {view === 'gallery' ? (
         <TemplateGallery disabledTemplateIds={disabledTemplateIds} onSelect={selectTemplate} />
       ) : view === 'targetJobs' ? (
-        <TargetJobsPage />
+        <TargetJobsPage onModalOpenChange={setTargetJobsModalOpen} />
       ) : view === 'drafts' ? (
         <>
           {draftReadError && <p className="resume-library__error" role="alert">无法读取该简历内容。</p>}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -42,6 +43,60 @@ func TestServiceCreateAcceptsNoTargetJobID(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotZero(t, created.ID)
+}
+
+func TestServiceCreateCannotRestoreADeletedTargetJobReference(t *testing.T) {
+	storage := newBlockingStorage()
+	svc, repo, targetSvc, _ := setupService(t, storage)
+	ctx := context.Background()
+	target, err := targetSvc.Create(ctx, 1, targetjob.CreateInput{Requirements: "Build reliable backend services"})
+	require.NoError(t, err)
+	result := make(chan error, 1)
+	go func() {
+		_, createErr := svc.Create(ctx, createInput(
+			principal(1, 1),
+			resumeContent(target.ID, "550e8400-e29b-41d4-a716-446655440000"),
+		))
+		result <- createErr
+	}()
+
+	storage.waitUntilRetained(t)
+	_, err = targetSvc.Delete(ctx, 1, target.ID)
+	require.NoError(t, err)
+	close(storage.continueRetain)
+
+	require.ErrorContains(t, <-result, "target job")
+	items, err := repo.List(ctx, 1)
+	require.NoError(t, err)
+	assert.Empty(t, items)
+}
+
+func TestServiceUpdateCannotRestoreADeletedTargetJobReference(t *testing.T) {
+	storage := newBlockingStorage()
+	svc, repo, targetSvc, _ := setupService(t, storage)
+	ctx := context.Background()
+	created, err := svc.Create(ctx, createInput(principal(1, 1), resumeContent(0, "")))
+	require.NoError(t, err)
+	target, err := targetSvc.Create(ctx, 1, targetjob.CreateInput{Requirements: "Build reliable backend services"})
+	require.NoError(t, err)
+	result := make(chan error, 1)
+	go func() {
+		_, updateErr := svc.Update(ctx, 1, created.ID, resumesvc.UpdateInput{
+			Principal: principal(1, 1), Title: "Updated", TemplateID: "business",
+			Content: resumeContent(target.ID, "550e8400-e29b-41d4-a716-446655440001"),
+		})
+		result <- updateErr
+	}()
+
+	storage.waitUntilRetained(t)
+	_, err = targetSvc.Delete(ctx, 1, target.ID)
+	require.NoError(t, err)
+	close(storage.continueRetain)
+
+	require.ErrorContains(t, <-result, "target job")
+	unchanged, err := repo.Get(ctx, 1, created.ID)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(resumeContent(0, "")), unchanged.Content)
 }
 
 func TestServiceUpdateValidatesTargetJobOwnershipAndScopesResumeByTenant(t *testing.T) {
@@ -209,6 +264,39 @@ type recordingStorage struct {
 	retained  []storageCall
 	released  []storageCall
 	retainErr error
+}
+
+type blockingStorage struct {
+	*recordingStorage
+	retainStarted  chan struct{}
+	continueRetain chan struct{}
+}
+
+func newBlockingStorage() *blockingStorage {
+	return &blockingStorage{
+		recordingStorage: newRecordingStorage(),
+		retainStarted:    make(chan struct{}),
+		continueRetain:   make(chan struct{}),
+	}
+}
+
+func (s *blockingStorage) Retain(ctx context.Context, owner, key string) error {
+	close(s.retainStarted)
+	select {
+	case <-s.continueRetain:
+		return s.recordingStorage.Retain(ctx, owner, key)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *blockingStorage) waitUntilRetained(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.retainStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for avatar retention")
+	}
 }
 
 func newRecordingStorage() *recordingStorage { return &recordingStorage{} }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { createPortal } from 'react-dom';
 import {
   createTargetJob,
   deleteTargetJob,
@@ -137,7 +138,11 @@ function TargetJobForm({ editingTarget, input, error, saving, onCancel, onChange
   );
 }
 
-export function TargetJobsPage() {
+interface TargetJobsPageProps {
+  onModalOpenChange?: (open: boolean) => void;
+}
+
+export function TargetJobsPage({ onModalOpenChange }: TargetJobsPageProps = {}) {
   const [targetJobs, setTargetJobs] = useState<TargetJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -175,11 +180,18 @@ export function TargetJobsPage() {
     };
   }, [load]);
 
+  useEffect(() => () => onModalOpenChange?.(false), [onModalOpenChange]);
+
+  const setFormVisibility = (open: boolean) => {
+    setFormOpen(open);
+    onModalOpenChange?.(open);
+  };
+
   const openCreate = () => {
     setEditingTarget(null);
     setInput(EMPTY_INPUT);
     setFormError('');
-    setFormOpen(true);
+    setFormVisibility(true);
   };
 
   const openEdit = (targetJob: TargetJob) => {
@@ -190,11 +202,11 @@ export function TargetJobsPage() {
       requirements: targetJob.requirements,
     });
     setFormError('');
-    setFormOpen(true);
+    setFormVisibility(true);
   };
 
   const closeForm = () => {
-    if (!saving) setFormOpen(false);
+    if (!saving) setFormVisibility(false);
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -221,7 +233,7 @@ export function TargetJobsPage() {
         if (!mounted.current) return;
         setTargetJobs((items) => [created, ...items]);
       }
-      setFormOpen(false);
+      setFormVisibility(false);
     } catch {
       if (mounted.current) setFormError('保存目标岗位失败，请稍后重试。');
     } finally {
@@ -256,7 +268,7 @@ export function TargetJobsPage() {
 
   return (
     <section aria-labelledby="target-jobs-title" className="target-jobs">
-      <div {...(formOpen ? { 'aria-hidden': true, inert: '' } : {})} className="target-jobs__background">
+      <div className="target-jobs__background">
         <div className="target-jobs__header">
           <div>
             <p className="target-jobs__eyebrow">AI WRITING CONTEXT</p>
@@ -306,7 +318,7 @@ export function TargetJobsPage() {
         )}
       </div>
 
-      {formOpen && (
+      {formOpen && typeof document !== 'undefined' && createPortal(
         <TargetJobForm
           editingTarget={editingTarget}
           error={formError}
@@ -315,7 +327,8 @@ export function TargetJobsPage() {
           onChange={(nextInput) => { setInput(nextInput); if (formError) setFormError(''); }}
           onSubmit={(event) => void handleSubmit(event)}
           saving={saving}
-        />
+        />,
+        document.body,
       )}
     </section>
   );

@@ -32,7 +32,8 @@ type CreateInput struct {
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (*resume.Resume, error) {
-	if err := s.validateTargetJobID(ctx, in.Principal, in.Content); err != nil {
+	targetJobID, err := s.validateTargetJobID(ctx, in.Principal, in.Content)
+	if err != nil {
 		return nil, err
 	}
 
@@ -45,6 +46,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*resume.Resume, e
 
 	item, err := s.repo.Create(ctx, resume.CreateInput{
 		TenantID:    in.Principal.TenantID,
+		TargetJobID: targetJobID,
 		AvatarOwner: avatarOwner(in.Principal),
 		Title:       in.Title,
 		TemplateID:  in.TemplateID,
@@ -54,7 +56,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*resume.Resume, e
 		if s.storage != nil && key != "" && !isAvatarConflict(err) {
 			_ = s.storage.Release(ctx, avatarOwner(in.Principal), key)
 		}
-		return nil, err
+		return nil, targetJobError(targetJobID, err)
 	}
 	return &item, nil
 }
@@ -71,7 +73,8 @@ func (s *Service) Update(ctx context.Context, explicitTenantID, id int64, in Upd
 		return nil, resume.ErrNotFound
 	}
 	tenantID := in.Principal.TenantID
-	if err := s.validateTargetJobID(ctx, in.Principal, in.Content); err != nil {
+	targetJobID, err := s.validateTargetJobID(ctx, in.Principal, in.Content)
+	if err != nil {
 		return nil, err
 	}
 
@@ -89,6 +92,7 @@ func (s *Service) Update(ctx context.Context, explicitTenantID, id int64, in Upd
 	}
 
 	item, err := s.repo.Update(ctx, tenantID, id, resume.UpdateInput{
+		TargetJobID: targetJobID,
 		AvatarOwner: avatarOwner(in.Principal),
 		Title:       in.Title,
 		TemplateID:  in.TemplateID,
@@ -98,7 +102,7 @@ func (s *Service) Update(ctx context.Context, explicitTenantID, id int64, in Upd
 		if retainedNew && !isAvatarConflict(err) {
 			_ = s.storage.Release(ctx, avatarOwner(in.Principal), newKey)
 		}
-		return nil, err
+		return nil, targetJobError(targetJobID, err)
 	}
 	if s.storage != nil && oldKey != "" && oldKey != newKey {
 		_ = s.storage.Release(ctx, avatarOwner(in.Principal), oldKey)
@@ -120,27 +124,42 @@ func (s *Service) Delete(ctx context.Context, principal auth.Principal, id int64
 	return nil
 }
 
-func (s *Service) validateTargetJobID(ctx context.Context, principal auth.Principal, content json.RawMessage) error {
+func targetJobID(content json.RawMessage) (*int64, error) {
 	var document struct {
 		TargetJobID *float64 `json:"targetJobId"`
 	}
 	if err := json.Unmarshal(content, &document); err != nil {
-		return fmt.Errorf("invalid content: %w", err)
+		return nil, fmt.Errorf("invalid content: %w", err)
 	}
 	if document.TargetJobID == nil {
-		return nil
+		return nil, nil
 	}
 	id := int64(*document.TargetJobID)
+	return &id, nil
+}
+
+func (s *Service) validateTargetJobID(ctx context.Context, principal auth.Principal, content json.RawMessage) (*int64, error) {
+	id, err := targetJobID(content)
+	if err != nil || id == nil {
+		return id, err
+	}
 	if s.targetSvc == nil {
-		return fmt.Errorf("target job %d cannot be verified", id)
+		return nil, fmt.Errorf("target job %d cannot be verified", *id)
 	}
-	if _, err := s.targetSvc.Get(ctx, principal.TenantID, id); err != nil {
+	if _, err := s.targetSvc.Get(ctx, principal.TenantID, *id); err != nil {
 		if errors.Is(err, targetjob.ErrNotFound) {
-			return fmt.Errorf("target job %d not found or not owned by tenant", id)
+			return nil, fmt.Errorf("target job %d not found or not owned by tenant", *id)
 		}
-		return err
+		return nil, err
 	}
-	return nil
+	return id, nil
+}
+
+func targetJobError(targetJobID *int64, err error) error {
+	if targetJobID != nil && errors.Is(err, resume.ErrTargetJobNotFound) {
+		return fmt.Errorf("target job %d not found or not owned by tenant", *targetJobID)
+	}
+	return err
 }
 
 func isAvatarConflict(err error) bool {
