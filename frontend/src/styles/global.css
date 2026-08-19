@@ -38,9 +38,12 @@ body { margin: 0; }
 .resume-editor, .resume-library { background: #fff; border: 1px solid #e5eaf2; border-radius: 12px; padding: 1.25rem; box-shadow: 0 4px 16px rgba(32, 51, 85, 0.05); }
 .editor-section h2, .resume-library h2 { margin: 0; font-size: 1rem; }
 .template-gallery { display: grid; gap: 1.25rem; }
-.template-gallery__heading { margin: 0; }
+.template-gallery__heading { align-items: end; display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; margin: 0; }
 .template-gallery__heading h2 { font-size: clamp(1.5rem, 3vw, 2.25rem); letter-spacing: -.04em; line-height: 1.15; margin: .25rem 0 0; }
 .template-gallery__eyebrow { color: #0071e3 !important; font-size: .72rem !important; font-weight: 700; letter-spacing: .12em; }
+.template-gallery__actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.template-gallery__actions button { background: #edf3ff; border: 1px solid #edf3ff; border-radius: 999px; color: #0071e3; cursor: pointer; font: inherit; font-size: .88rem; font-weight: 600; padding: .55rem .85rem; }
+.template-gallery__actions button:last-child { background: #0071e3; border-color: #0071e3; color: #fff; }
 .template-gallery__grid { display: grid; gap: 1.5rem; grid-template-columns: 1fr; }
 .template-card { background: #fff; border: 1px solid #d2d2d7; border-radius: 18px; color: inherit; cursor: pointer; font: inherit; overflow: hidden; padding: 0; text-align: left; transition: box-shadow .2s ease, transform .2s ease; width: 100%; }
 .template-card:hover { box-shadow: 0 12px 30px rgba(0, 0, 0, .09); transform: translateY(-2px); }
@@ -56,6 +59,7 @@ body { margin: 0; }
 .editor-navigation .editor-navigation__secondary { background: #edf3ff; border-color: #edf3ff; color: #0071e3; }
 .editor-navigation span { color: #60708a; font-size: .82rem; }
 .template-card:focus-visible,
+.template-gallery__actions button:focus-visible,
 .editor-navigation button:focus-visible,
 .resume-editor button:focus-visible,
 .resume-library button:focus-visible,

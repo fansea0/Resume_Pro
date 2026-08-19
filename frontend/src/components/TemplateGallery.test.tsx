@@ -8,7 +8,10 @@ vi.mock('../api/auth', () => ({
   login: vi.fn(), register: vi.fn(), logout: vi.fn(),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.history.replaceState({}, '', '/');
+});
 
 describe('template gallery workflow', () => {
   it('uses a compact gallery heading without the removed hero copy', async () => {
@@ -45,6 +48,27 @@ describe('template gallery workflow', () => {
     expect(screen.queryByRole('img', { name: '极简专业 模板预览' })).not.toBeInTheDocument();
     expect(screen.getByRole('img', { name: '现代商务 模板预览' })).toBeInTheDocument();
   });
+
+  it('opens AI quick generation without starting a model request', async () => {
+    const { TemplateGallery } = await import('./TemplateGallery');
+    render(<TemplateGallery onSelect={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI 快速生成' }));
+
+    expect(screen.getByRole('dialog', { name: 'AI 快速生成' })).toBeInTheDocument();
+  });
+
+  it('navigates from the gallery to target-job management', async () => {
+    render(<App />);
+
+    await screen.findByRole('heading', { name: '选择简历模板' });
+
+    fireEvent.click(screen.getByRole('button', { name: '管理目标岗位' }));
+
+    expect(await screen.findByRole('heading', { name: '目标岗位' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/target-jobs');
+  });
+
   it('shows static cards first, enters the selected editor without resetting content, and returns to the gallery', async () => {
     render(<App />);
 
