@@ -56,7 +56,7 @@ event: thinking
 data: {"text":"..."}
 
 event: suggestion
-data: {"newContent":{...},"sectionType":"project"}
+data: {"sectionId":"section-42","sectionType":"project","newContent":{...}}
 
 event: done
 data: {}
@@ -160,6 +160,55 @@ The original frontend plan still constructs rewrite requests from
 In particular, Task 22/27 must not derive identity from the type or array
 position. The stable persisted `ResumeSection.id` is the server contract.
 Frontend source was intentionally not changed in Task 18.
+
+## Integration appendix: SSE suggestion section identity
+
+Task 20's frontend `SuggestionEvent` requires `sectionId` so that a streamed
+suggestion can be applied to the exact persisted section, including when two
+sections share the same type. The original HTTP adapter passed only
+`sectionType` to `writeAIStream`, which meant the correct backend lookup could
+still produce an ambiguous client event.
+
+`rewriteSection` now threads the validated request `sectionId` and
+`sectionType` into `writeAIStream`. Every rewrite `suggestion` frame is now:
+
+```json
+{
+  "sectionId": "summary-second",
+  "sectionType": "summary",
+  "newContent": {"markdown": "rewritten second summary"}
+}
+```
+
+This is solely an HTTP/SSE projection: `ai.Event` and the persistence-free AI
+service event shape are unchanged. Generation passes no section identity, so
+it does not gain rewrite-only fields.
+
+The duplicate-summary regression now asserts both facts together: the fake
+model receives only `summary-second` content (the empty first duplicate does
+not block it), and its returned SSE suggestion contains
+`sectionId: "summary-second"`. The former assertion that treated an absent
+`sectionId` in the suggestion payload as acceptable has therefore been
+replaced by the required payload assertion.
+
+### Integration fix TDD evidence
+
+After changing the expected response first, the focused RED run showed the
+missing field in both rewrite regressions:
+
+```console
+$ cd backend
+$ go test -count=1 ./internal/httpapi -run 'TestAIRewrite(StreamsStoredSectionAndMappedTargetJobContext|SelectsRequestedSectionByIDAndType)' -v
+--- FAIL: TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext
+expected sectionId: "summary"; actual suggestion payload omitted sectionId
+--- FAIL: TestAIRewriteSelectsRequestedSectionByIDAndType
+expected sectionId: "summary-second"; actual suggestion payload omitted sectionId
+FAIL
+```
+
+After threading `sectionID` through `writeAIStream`, the identical focused
+command passed. No real LLM or network process is involved; the tests retain
+the fake chat model and `httptest` recorder boundary.
 
 ## Offline test boundary
 

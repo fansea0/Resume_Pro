@@ -134,7 +134,7 @@ func TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext(t *testing.T) {
 	require.Len(t, frames, 3)
 	assert.Equal(t, []string{"thinking", "suggestion", "done"}, frameNames(frames))
 	assert.JSONEq(t, `{"text":"先分析岗位要求"}`, frames[0].Data)
-	assert.JSONEq(t, `{"sectionType":"summary","newContent":{"markdown":"量化交付成果"}}`, frames[1].Data)
+	assert.JSONEq(t, `{"sectionId":"summary","sectionType":"summary","newContent":{"markdown":"量化交付成果"}}`, frames[1].Data)
 	assert.JSONEq(t, `{}`, frames[2].Data)
 
 	require.Len(t, fake.RecordedInputs, 1)
@@ -173,7 +173,9 @@ func TestAIRewriteSelectsRequestedSectionByIDAndType(t *testing.T) {
 	response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionId":"summary-second","sectionType":"summary"}`, &http.Cookie{Name: "resume_session", Value: cookie})
 
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Equal(t, []string{"suggestion", "done"}, frameNames(parseSSEFrames(t, response.Body.String())))
+	frames := parseSSEFrames(t, response.Body.String())
+	assert.Equal(t, []string{"suggestion", "done"}, frameNames(frames))
+	assert.JSONEq(t, `{"sectionId":"summary-second","sectionType":"summary","newContent":{"markdown":"rewritten second summary"}}`, frames[0].Data)
 	require.Len(t, fake.RecordedInputs, 1)
 	var promptInput struct {
 		CurrentContent json.RawMessage `json:"currentContent"`

@@ -110,7 +110,7 @@ func (h *aiHandler) rewriteSection(ginCtx *gin.Context) {
 		writeError(ginCtx, http.StatusInternalServerError, "could not start AI rewrite")
 		return
 	}
-	writeAIStream(ginCtx, stream, request.SectionType)
+	writeAIStream(ginCtx, stream, request.SectionID, request.SectionType)
 }
 
 func (h *aiHandler) generateResume(ginCtx *gin.Context) {
@@ -129,7 +129,7 @@ func (h *aiHandler) generateResume(ginCtx *gin.Context) {
 		writeError(ginCtx, http.StatusInternalServerError, "could not start AI generation")
 		return
 	}
-	writeAIStream(ginCtx, stream, "")
+	writeAIStream(ginCtx, stream, "", "")
 }
 
 func decodeRewriteRequest(ginCtx *gin.Context) (rewriteRequest, bool) {
@@ -212,7 +212,7 @@ func (h *aiHandler) loadTargetJobContext(ginCtx *gin.Context, tenantID int64, ta
 	}, nil
 }
 
-func writeAIStream(ginCtx *gin.Context, stream <-chan ai.Event, sectionType string) {
+func writeAIStream(ginCtx *gin.Context, stream <-chan ai.Event, sectionID, sectionType string) {
 	sse := newSSEWriter(ginCtx)
 	for event := range stream {
 		var err error
@@ -221,7 +221,8 @@ func writeAIStream(ginCtx *gin.Context, stream <-chan ai.Event, sectionType stri
 			err = sse.WriteEvent("thinking", map[string]string{"text": event.ThinkingText})
 		case "suggestion":
 			payload := map[string]any{"newContent": json.RawMessage(event.Suggestion)}
-			if sectionType != "" {
+			if sectionID != "" && sectionType != "" {
+				payload["sectionId"] = sectionID
 				payload["sectionType"] = sectionType
 			}
 			err = sse.WriteEvent("suggestion", payload)
