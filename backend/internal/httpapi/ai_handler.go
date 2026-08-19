@@ -25,6 +25,7 @@ func newAIHandler(service *ai.Service, resumeRepo *resume.Repository, targetServ
 }
 
 type rewriteRequest struct {
+	SectionID    string `json:"sectionId"`
 	SectionType  string `json:"sectionType"`
 	Instructions string `json:"instructions"`
 }
@@ -32,10 +33,17 @@ type rewriteRequest struct {
 type aiResumeContext struct {
 	TargetJobID *int64 `json:"targetJobId"`
 	Sections    []struct {
+		ID      string          `json:"id"`
 		Type    string          `json:"type"`
 		Content json.RawMessage `json:"content"`
 	} `json:"sections"`
 }
+
+var (
+	errAISectionNotFound     = errors.New("AI rewrite section not found")
+	errAISectionTypeMismatch = errors.New("AI rewrite section type mismatch")
+	errAISectionEmpty        = errors.New("AI rewrite section is empty")
+)
 
 func (h *aiHandler) rewriteSection(ginCtx *gin.Context) {
 	// TODO(ai-ratelimit): 接入 Limiter。
@@ -70,9 +78,18 @@ func (h *aiHandler) rewriteSection(ginCtx *gin.Context) {
 		writeError(ginCtx, http.StatusInternalServerError, "invalid resume content")
 		return
 	}
-	sectionContent, ok := resumeContext.sectionContent(request.SectionType)
-	if !ok {
-		writeError(ginCtx, http.StatusBadRequest, "section not found or empty")
+	sectionContent, err := resumeContext.sectionContent(request.SectionID, request.SectionType)
+	if err != nil {
+		switch {
+		case errors.Is(err, errAISectionNotFound):
+			writeError(ginCtx, http.StatusBadRequest, "section not found")
+		case errors.Is(err, errAISectionTypeMismatch):
+			writeError(ginCtx, http.StatusBadRequest, "section type mismatch")
+		case errors.Is(err, errAISectionEmpty):
+			writeError(ginCtx, http.StatusBadRequest, "section is empty")
+		default:
+			writeError(ginCtx, http.StatusInternalServerError, "invalid resume content")
+		}
 		return
 	}
 
@@ -120,8 +137,8 @@ func decodeRewriteRequest(ginCtx *gin.Context) (rewriteRequest, bool) {
 	decoder := json.NewDecoder(ginCtx.Request.Body)
 	decoder.DisallowUnknownFields()
 	var request rewriteRequest
-	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF || strings.TrimSpace(request.SectionType) == "" {
-		writeError(ginCtx, http.StatusBadRequest, "sectionType is required")
+	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF || strings.TrimSpace(request.SectionID) == "" || strings.TrimSpace(request.SectionType) == "" {
+		writeError(ginCtx, http.StatusBadRequest, "sectionId and sectionType are required")
 		return rewriteRequest{}, false
 	}
 	return request, true
@@ -135,18 +152,26 @@ func parseAIResumeContext(content string) (aiResumeContext, error) {
 	return resumeContext, nil
 }
 
-func (context aiResumeContext) sectionContent(sectionType string) (json.RawMessage, bool) {
+func (context aiResumeContext) sectionContent(sectionID, sectionType string) (json.RawMessage, error) {
+	matchedID := false
 	for _, section := range context.Sections {
+		if section.ID != sectionID {
+			continue
+		}
+		matchedID = true
 		if section.Type != sectionType {
 			continue
 		}
 		trimmed := strings.TrimSpace(string(section.Content))
 		if trimmed == "" || trimmed == "null" || !json.Valid(section.Content) || !hasRewriteableContent(sectionType, section.Content) {
-			return nil, false
+			return nil, errAISectionEmpty
 		}
-		return section.Content, true
+		return section.Content, nil
 	}
-	return nil, false
+	if matchedID {
+		return nil, errAISectionTypeMismatch
+	}
+	return nil, errAISectionNotFound
 }
 
 func hasRewriteableContent(sectionType string, content json.RawMessage) bool {

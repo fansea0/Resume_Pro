@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -64,7 +65,7 @@ func TestAIRewriteRequiresAuthentication(t *testing.T) {
 	fake.FinalJSON = `{"markdown":"new"}`
 	fixture := setupAIAPI(t, ai.NewService(fake, nil, ai.WithMaxRetries(0)))
 
-	response := aiRequest(t, fixture.router, "/api/ai/resumes/1/section/rewrite", `{"sectionType":"summary"}`, nil)
+	response := aiRequest(t, fixture.router, "/api/ai/resumes/1/section/rewrite", `{"sectionId":"summary","sectionType":"summary"}`, nil)
 
 	assert.Equal(t, http.StatusUnauthorized, response.Code)
 	assert.JSONEq(t, `{"error":"authentication required"}`, response.Body.String())
@@ -80,7 +81,7 @@ func TestAIRoutesReturnServiceUnavailableWhenDisabled(t *testing.T) {
 		path string
 		body string
 	}{
-		{name: "rewrite", path: "/api/ai/resumes/1/section/rewrite", body: `{"sectionType":"summary"}`},
+		{name: "rewrite", path: "/api/ai/resumes/1/section/rewrite", body: `{"sectionId":"summary","sectionType":"summary"}`},
 		{name: "generate", path: "/api/ai/resumes/generate", body: `{}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,7 +102,7 @@ func TestAIRewriteHidesCrossTenantResume(t *testing.T) {
 	attackerCookie := loginAs(t, fixture.router, "ai-attacker@example.com")
 	owned := createAIResume(t, fixture, "ai-owner@example.com", resumeContentForAI(nil, "summary", `{"markdown":"private"}`))
 
-	response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(owned.ID)+"/section/rewrite", `{"sectionType":"summary"}`, &http.Cookie{Name: "resume_session", Value: attackerCookie})
+	response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(owned.ID)+"/section/rewrite", `{"sectionId":"summary","sectionType":"summary"}`, &http.Cookie{Name: "resume_session", Value: attackerCookie})
 
 	assert.Equal(t, http.StatusNotFound, response.Code)
 	assert.JSONEq(t, `{"error":"resume not found"}`, response.Body.String())
@@ -124,7 +125,7 @@ func TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext(t *testing.T) {
 	require.NoError(t, err)
 	item := createAIResume(t, fixture, user.Email, resumeContentForAI(&target.ID, "summary", `{"markdown":"旧总结"}`))
 
-	response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionType":"summary","instructions":"突出稳定性"}`, &http.Cookie{Name: "resume_session", Value: cookie})
+	response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionId":"summary","sectionType":"summary","instructions":"突出稳定性"}`, &http.Cookie{Name: "resume_session", Value: cookie})
 
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assertSSEHeaders(t, response)
@@ -154,6 +155,31 @@ func TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext(t *testing.T) {
 		Requirements: "负责高并发系统架构和稳定性交付",
 	}, promptInput.TargetJob)
 	assert.Equal(t, "突出稳定性", promptInput.Instructions)
+}
+
+func TestAIRewriteSelectsRequestedSectionByIDAndType(t *testing.T) {
+	fake := llmtesting.NewFake()
+	fake.FinalJSON = `{"markdown":"rewritten second summary"}`
+	fixture := setupAIAPI(t, ai.NewService(fake, nil, ai.WithMaxRetries(0)))
+	cookie := loginAs(t, fixture.router, "ai-duplicate-section@example.com")
+	item := createAIResume(t, fixture, "ai-duplicate-section@example.com", `{
+		"schemaVersion":2,
+		"sections":[
+			{"id":"summary-first","type":"summary","content":{"markdown":"  "}},
+			{"id":"summary-second","type":"summary","content":{"markdown":"second summary only"}}
+		]
+	}`)
+
+	response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionId":"summary-second","sectionType":"summary"}`, &http.Cookie{Name: "resume_session", Value: cookie})
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, []string{"suggestion", "done"}, frameNames(parseSSEFrames(t, response.Body.String())))
+	require.Len(t, fake.RecordedInputs, 1)
+	var promptInput struct {
+		CurrentContent json.RawMessage `json:"currentContent"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(fake.RecordedInputs[0][1].Content), &promptInput))
+	assert.JSONEq(t, `{"markdown":"second summary only"}`, string(promptInput.CurrentContent))
 }
 
 func TestAIRewriteTreatsMissingOrForeignTargetJobAsNoContext(t *testing.T) {
@@ -193,7 +219,7 @@ func TestAIRewriteTreatsMissingOrForeignTargetJobAsNoContext(t *testing.T) {
 			targetJobID := tc.targetJobID(t, fixture)
 			item := createAIResume(t, fixture, user.Email, resumeContentForAI(&targetJobID, "summary", `{"markdown":"old"}`))
 
-			response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionType":"summary"}`, &http.Cookie{Name: "resume_session", Value: cookie})
+			response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionId":"summary","sectionType":"summary"}`, &http.Cookie{Name: "resume_session", Value: cookie})
 
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 			assert.Equal(t, []string{"suggestion", "done"}, frameNames(parseSSEFrames(t, response.Body.String())))
@@ -215,7 +241,7 @@ func TestAIRewriteStreamsErrorThenDoneForAsyncLLMFailure(t *testing.T) {
 	cookie := loginAs(t, fixture.router, "ai-error@example.com")
 	item := createAIResume(t, fixture, "ai-error@example.com", resumeContentForAI(nil, "summary", `{"markdown":"old"}`))
 
-	response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionType":"summary"}`, &http.Cookie{Name: "resume_session", Value: cookie})
+	response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionId":"summary","sectionType":"summary"}`, &http.Cookie{Name: "resume_session", Value: cookie})
 
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assertSSEHeaders(t, response)
@@ -231,7 +257,7 @@ func TestAIRewriteReturnsJSONWhenStreamCannotStart(t *testing.T) {
 	cookie := loginAs(t, fixture.router, "ai-start-error@example.com")
 	item := createAIResume(t, fixture, "ai-start-error@example.com", resumeContentForAI(nil, "summary", `{"markdown":"old"}`))
 
-	response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionType":"summary"}`, &http.Cookie{Name: "resume_session", Value: cookie})
+	response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionId":"summary","sectionType":"summary"}`, &http.Cookie{Name: "resume_session", Value: cookie})
 
 	assert.Equal(t, http.StatusInternalServerError, response.Code)
 	assert.Equal(t, "application/json", response.Header().Get("Content-Type"))
@@ -267,15 +293,19 @@ func TestAIRewriteRejectsInvalidRequestsBeforeCallingAI(t *testing.T) {
 		path       string
 		body       string
 		wantStatus int
+		wantError  string
 	}{
-		{name: "malformed body", path: "/api/ai/resumes/" + itoa(item.ID) + "/section/rewrite", body: `{`, wantStatus: http.StatusBadRequest},
-		{name: "unsupported section", path: "/api/ai/resumes/" + itoa(item.ID) + "/section/rewrite", body: `{"sectionType":"education"}`, wantStatus: http.StatusBadRequest},
-		{name: "invalid resume id", path: "/api/ai/resumes/not-an-id/section/rewrite", body: `{"sectionType":"summary"}`, wantStatus: http.StatusNotFound},
-		{name: "section absent", path: "/api/ai/resumes/" + itoa(item.ID) + "/section/rewrite", body: `{"sectionType":"project"}`, wantStatus: http.StatusBadRequest},
+		{name: "malformed body", path: "/api/ai/resumes/" + itoa(item.ID) + "/section/rewrite", body: `{`, wantStatus: http.StatusBadRequest, wantError: "sectionId and sectionType are required"},
+		{name: "missing section id", path: "/api/ai/resumes/" + itoa(item.ID) + "/section/rewrite", body: `{"sectionType":"summary"}`, wantStatus: http.StatusBadRequest, wantError: "sectionId and sectionType are required"},
+		{name: "unsupported section", path: "/api/ai/resumes/" + itoa(item.ID) + "/section/rewrite", body: `{"sectionId":"education","sectionType":"education"}`, wantStatus: http.StatusBadRequest, wantError: "unsupported section type for AI rewrite"},
+		{name: "invalid resume id", path: "/api/ai/resumes/not-an-id/section/rewrite", body: `{"sectionId":"summary","sectionType":"summary"}`, wantStatus: http.StatusNotFound, wantError: "resume not found"},
+		{name: "section absent", path: "/api/ai/resumes/" + itoa(item.ID) + "/section/rewrite", body: `{"sectionId":"project","sectionType":"project"}`, wantStatus: http.StatusBadRequest, wantError: "section not found"},
+		{name: "section type mismatch", path: "/api/ai/resumes/" + itoa(item.ID) + "/section/rewrite", body: `{"sectionId":"summary","sectionType":"work"}`, wantStatus: http.StatusBadRequest, wantError: "section type mismatch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			response := aiRequest(t, fixture.router, tc.path, tc.body, session)
 			assert.Equal(t, tc.wantStatus, response.Code, response.Body.String())
+			assert.JSONEq(t, `{"error":`+strconv.Quote(tc.wantError)+`}`, response.Body.String())
 			assert.NotContains(t, response.Header().Get("Content-Type"), "text/event-stream")
 		})
 	}
@@ -300,10 +330,10 @@ func TestAIRewriteRejectsEmptySupportedSections(t *testing.T) {
 	} {
 		t.Run(tc.sectionType, func(t *testing.T) {
 			item := createAIResume(t, fixture, "ai-empty-section@example.com", resumeContentForAI(nil, tc.sectionType, tc.content))
-			response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionType":"`+tc.sectionType+`"}`, session)
+			response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionId":"`+tc.sectionType+`","sectionType":"`+tc.sectionType+`"}`, session)
 
 			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
-			assert.JSONEq(t, `{"error":"section not found or empty"}`, response.Body.String())
+			assert.JSONEq(t, `{"error":"section is empty"}`, response.Body.String())
 		})
 	}
 	assert.Empty(t, fake.RecordedInputs)
