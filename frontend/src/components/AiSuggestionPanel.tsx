@@ -173,6 +173,37 @@ function FieldGroup({ children, frozen }: { children: ReactNode; frozen?: boolea
   );
 }
 
+function ContextEvidence({ section }: { section: RewriteableResumeSection }) {
+  const count = section.type === 'summary' ? 1 : section.content.items.length;
+  const kind = section.type === 'summary' ? '个人总结' : section.type === 'project' ? '项目经历' : '工作经历';
+  return <p className="ai-suggestion-panel__evidence">已读取「{section.title || kind}」的 {count} 项内容，并与已绑定目标岗位要求对照。</p>;
+}
+
+function AnalysisEvidence({ originalSection, suggestion }: { originalSection: RewriteableResumeSection; suggestion: SuggestionEvent }) {
+  const entries: string[] = [];
+  if (originalSection.type === 'summary' && suggestion.sectionType === 'summary' && suggestion.newContent.markdown !== originalSection.content.markdown) {
+    entries.push('个人总结已改为更具体的行动与成果表达，减少泛泛的职责描述。');
+  }
+  if ((originalSection.type === 'work' || originalSection.type === 'internship') && (suggestion.sectionType === 'work' || suggestion.sectionType === 'internship')) {
+    const byID = new Map(suggestion.newContent.items.map((item) => [item.id, item]));
+    originalSection.content.items.forEach((item) => {
+      const changed = byID.get(item.id);
+      if (changed?.achievements !== undefined && changed.achievements !== item.achievements) entries.push(`「${item.company || item.role || '该经历'}」将成果信息前置，便于招聘方快速识别影响。`);
+      if (changed?.highlightsMarkdown !== undefined && changed.highlightsMarkdown !== item.highlightsMarkdown) entries.push(`「${item.company || item.role || '该经历'}」强化了动作与过程描述，保留原有事实边界。`);
+    });
+  }
+  if (originalSection.type === 'project' && suggestion.sectionType === 'project') {
+    const byID = new Map(suggestion.newContent.items.map((item) => [item.id, item]));
+    originalSection.content.items.forEach((item) => {
+      const changed = byID.get(item.id);
+      if (changed?.introduction !== undefined && changed.introduction !== item.introduction) entries.push(`「${item.name || item.role || '该项目'}」重写了项目介绍，突出业务目标和你的贡献。`);
+      if (changed?.achievements !== undefined && changed.achievements !== item.achievements) entries.push(`「${item.name || item.role || '该项目'}」将已有成果放在更易扫描的位置。`);
+      if (changed?.highlightsMarkdown !== undefined && changed.highlightsMarkdown !== item.highlightsMarkdown) entries.push(`「${item.name || item.role || '该项目'}」将过程改为更具体的行动表达。`);
+    });
+  }
+  return <ul className="ai-suggestion-panel__evidence-list">{(entries.length ? entries : ['原表达已足够明确，本次仅做轻量措辞优化。']).slice(0, 5).map((entry) => <li key={entry}>{entry}</li>)}</ul>;
+}
+
 function ItemFields({ children, title }: { children: ReactNode; title: string }) {
   return (
     <article className="ai-suggestion-panel__item">
@@ -189,12 +220,6 @@ function SuggestionDiff({ originalSection, suggestion }: {
   if (originalSection.type === 'summary' && suggestion.sectionType === 'summary') {
     return (
       <div className="ai-suggestion-panel__groups">
-        <FieldGroup frozen>
-          <ItemFields title="章节设置">
-            <FrozenField label="章节标题" value={originalSection.title} />
-            <FrozenField label="显示状态" value={originalSection.visible ? '显示' : '隐藏'} />
-          </ItemFields>
-        </FieldGroup>
         <FieldGroup>
           <ItemFields title="个人总结">
             <RewriteableField
@@ -215,15 +240,6 @@ function SuggestionDiff({ originalSection, suggestion }: {
     const rewriteById = new Map(suggestion.newContent.items.map((item) => [item.id, item]));
     return (
       <div className="ai-suggestion-panel__groups">
-        <FieldGroup frozen>
-          {originalSection.content.items.map((item, index) => (
-            <ItemFields key={item.id} title={`${index + 1}. ${item.company || item.role || '未命名经历'}`}>
-              {frozenExperienceFields.map(([field, label]) => (
-                <FrozenField key={field} label={label} value={item[field]} />
-              ))}
-            </ItemFields>
-          ))}
-        </FieldGroup>
         <FieldGroup>
           {originalSection.content.items.map((item, index) => {
             const rewrite = rewriteById.get(item.id);
@@ -244,15 +260,6 @@ function SuggestionDiff({ originalSection, suggestion }: {
     const rewriteById = new Map(suggestion.newContent.items.map((item) => [item.id, item]));
     return (
       <div className="ai-suggestion-panel__groups">
-        <FieldGroup frozen>
-          {originalSection.content.items.map((item, index) => (
-            <ItemFields key={item.id} title={`${index + 1}. ${item.name || item.role || '未命名项目'}`}>
-              {frozenProjectFields.map(([field, label]) => (
-                <FrozenField key={field} label={label} value={item[field]} />
-              ))}
-            </ItemFields>
-          ))}
-        </FieldGroup>
         <FieldGroup>
           {originalSection.content.items.map((item, index) => {
             const rewrite = rewriteById.get(item.id);
@@ -527,7 +534,8 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
 
         {state.suggestion && state.phase === 'ready' && (
           <div className="ai-suggestion-panel__content">
-            {state.suggestion.rationale && <p className="ai-suggestion-panel__rationale">{state.suggestion.rationale}</p>}
+            <section className="ai-suggestion-panel__explanation"><strong>理解上下文</strong><ContextEvidence section={originalSection} /></section>
+            <section className="ai-suggestion-panel__explanation"><strong>分析问题</strong><AnalysisEvidence originalSection={originalSection} suggestion={state.suggestion} /></section>
             <SuggestionDiff originalSection={originalSection} suggestion={state.suggestion} />
           </div>
         )}

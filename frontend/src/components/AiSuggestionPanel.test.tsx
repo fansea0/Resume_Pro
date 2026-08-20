@@ -147,9 +147,9 @@ describe('AiSuggestionPanel', () => {
       />,
     );
 
-    const frozen = await screen.findByRole('group', { name: 'Frozen · 保持原样' });
-    expect(within(frozen).getByText('智能招聘平台')).toBeInTheDocument();
-    expect(within(frozen).getByText('项目负责人')).not.toHaveClass('ai-suggestion-panel__old-value');
+    expect((await screen.findAllByText('分析问题')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('group', { name: 'Frozen · 保持原样' })).not.toBeInTheDocument();
+    expect(screen.getByText('「智能招聘平台」重写了项目介绍，突出业务目标和你的贡献。')).toBeInTheDocument();
 
     const rewriteable = screen.getByRole('group', { name: 'Rewriteable · AI 建议' });
     expect(within(rewriteable).getByText('建设招聘平台。')).toHaveClass('ai-suggestion-panel__old-value');
