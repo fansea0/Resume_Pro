@@ -68,11 +68,14 @@ describe('AiSuggestionPanel', () => {
       />,
     );
 
-    expect(screen.getAllByText('正在生成建议…')).toHaveLength(2);
+    expect(screen.getByText('理解上下文')).toBeInTheDocument();
+    expect(screen.getByText('分析问题')).toBeInTheDocument();
+    expect(screen.getByText('汇总建议')).toBeInTheDocument();
     act(() => {
       emit?.({ kind: 'thinking', text: '正在分析' });
     });
-    expect(await screen.findByText('正在分析')).toBeInTheDocument();
+    expect(await screen.findByText('分析问题')).toBeInTheDocument();
+    expect(screen.queryByText('正在分析')).not.toBeInTheDocument();
     act(() => {
       emit?.({
         kind: 'suggestion',
@@ -82,7 +85,7 @@ describe('AiSuggestionPanel', () => {
       });
       emit?.({ kind: 'thinking', text: '岗位要求' });
     });
-    expect(await screen.findByText('正在分析岗位要求')).toBeInTheDocument();
+    expect(screen.queryByText('岗位要求')).not.toBeInTheDocument();
     act(() => {
       emit?.({
         kind: 'suggestion',
@@ -376,7 +379,8 @@ describe('AiSuggestionPanel', () => {
     });
 
     expect(screen.queryByText('过期建议')).not.toBeInTheDocument();
-    expect(screen.getByText('新一轮分析')).toBeInTheDocument();
+    expect(screen.getByText('正在分析问题')).toBeInTheDocument();
+    expect(screen.queryByText('新一轮分析')).not.toBeInTheDocument();
   });
 
   it('shows stream errors and allows retrying', async () => {

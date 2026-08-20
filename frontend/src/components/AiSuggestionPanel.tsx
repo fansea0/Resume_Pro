@@ -332,7 +332,7 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
         setState((current) => ({
           ...current,
           phase: 'streaming',
-          thinking: current.thinking + event.text,
+          thinking: '',
         }));
         return;
       }
@@ -464,9 +464,9 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
   };
 
   const statusLabel = state.phase === 'loading'
-    ? '正在生成建议…'
+    ? '正在读取目标岗位与当前简历…'
     : state.phase === 'streaming'
-      ? '正在分析简历内容…'
+      ? '正在分析可优化的表达…'
       : state.phase === 'ready'
         ? '建议已生成，请检查更改。'
         : '本次生成未完成。';
@@ -492,10 +492,29 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
 
         <p aria-live="polite" className="ai-suggestion-panel__status" id={statusId}>{statusLabel}</p>
 
+        {(state.phase === 'loading' || state.phase === 'streaming' || state.phase === 'ready') && (
+          <section className="ai-suggestion-panel__progress" aria-label="AI 润色进度">
+            <div className={`ai-suggestion-panel__progress-step${state.phase !== 'loading' ? ' is-complete' : ' is-active'}`}>
+              <span className="ai-suggestion-panel__progress-node" aria-hidden="true">{state.phase === 'loading' ? <i /> : '✓'}</span>
+              <strong>理解上下文</strong><small>读取 JD 与当前简历</small>
+            </div>
+            <div className={`ai-suggestion-panel__progress-step${state.phase === 'ready' ? ' is-complete' : state.phase === 'streaming' ? ' is-active' : ''}`}>
+              <span className="ai-suggestion-panel__progress-node" aria-hidden="true">{state.phase === 'streaming' ? <i /> : state.phase === 'ready' ? '✓' : '2'}</span>
+              <strong>分析问题</strong><small>提炼可优化的表达</small>
+            </div>
+            <div className={`ai-suggestion-panel__progress-step${state.phase === 'ready' ? ' is-complete' : ''}`}>
+              <span className="ai-suggestion-panel__progress-node" aria-hidden="true">{state.phase === 'ready' ? '✓' : '3'}</span>
+              <strong>汇总建议</strong><small>生成可采纳的修改</small>
+            </div>
+          </section>
+        )}
+
         {(state.phase === 'loading' || state.phase === 'streaming') && (
-          <div className="ai-suggestion-panel__thinking">
-            <span aria-hidden="true" className="ai-suggestion-panel__pulse" />
-            <p>{state.thinking || '正在生成建议…'}</p>
+          <div className="ai-suggestion-panel__analysis" aria-live="polite">
+            <strong>{state.phase === 'loading' ? '正在理解上下文' : '正在分析问题'}</strong>
+            <p>{state.phase === 'loading'
+              ? '正在对照目标岗位要求与当前简历内容。'
+              : '正在识别可强化的成果表达，并确保不补写任何事实。'}</p>
           </div>
         )}
 
