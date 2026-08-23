@@ -49,6 +49,17 @@ describe('template gallery workflow', () => {
     expect(screen.getByRole('img', { name: '现代商务 模板预览' })).toBeInTheDocument();
   });
 
+  it('marks the active template and supports canceling replacement mode', async () => {
+    const { TemplateGallery } = await import('./TemplateGallery');
+    const onCancel = vi.fn();
+    render(<TemplateGallery currentTemplateId="business" onCancelReplacement={onCancel} onSelect={vi.fn()} replacementMode />);
+
+    expect(screen.getByRole('heading', { name: '替换简历模板' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '当前模板：现代商务' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '取消替换' }));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
   it('opens AI quick generation without starting a model request', async () => {
     const { TemplateGallery } = await import('./TemplateGallery');
     render(<TemplateGallery onSelect={vi.fn()} />);

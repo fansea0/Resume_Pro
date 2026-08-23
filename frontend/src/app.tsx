@@ -70,6 +70,7 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [disabledTemplateIds, setDisabledTemplateIds] = useState<typeof resume.templateId[]>([]);
   const [targetJobsModalOpen, setTargetJobsModalOpen] = useState(false);
+  const [templateReplacementMode, setTemplateReplacementMode] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
   const resumeAutosaveRef = useRef<ResumeAutosaveHandle | null>(null);
   const isMounted = useRef(false);
@@ -154,6 +155,12 @@ export default function App() {
   };
 
   const selectTemplate = (templateId: typeof resume.templateId) => {
+    if (templateReplacementMode) {
+      setResume((current) => ({ ...current, templateId }));
+      setTemplateReplacementMode(false);
+      navigateToView('editor');
+      return;
+    }
     setResume((current) => ({ ...current, templateId }));
     setSelectedResumeId(null);
     navigateToView('editor');
@@ -221,7 +228,7 @@ export default function App() {
         </div>
       </header>
       {view === 'gallery' ? (
-        <TemplateGallery disabledTemplateIds={disabledTemplateIds} onSelect={selectTemplate} />
+        <TemplateGallery currentTemplateId={resume.templateId} disabledTemplateIds={disabledTemplateIds} onCancelReplacement={() => { setTemplateReplacementMode(false); navigateToView('editor'); }} onSelect={selectTemplate} replacementMode={templateReplacementMode} />
       ) : view === 'targetJobs' ? (
         <TargetJobsPage onModalOpenChange={setTargetJobsModalOpen} />
       ) : view === 'drafts' ? (
@@ -237,6 +244,7 @@ export default function App() {
             <div className="editor-navigation">
               <div>
                 <button onClick={() => { setDraftReadError(false); navigateToView('gallery'); }} type="button">返回模板主页</button>
+                <button className="editor-navigation__secondary" onClick={() => { setTemplateReplacementMode(true); navigateToView('gallery'); }} type="button">更换模板</button>
                 <button className="editor-navigation__secondary" onClick={() => { setDraftReadError(false); navigateToView('drafts'); }} type="button">我的草稿</button>
               </div>
               <span>当前模板：{currentTemplate?.name ?? resume.templateId}</span>
