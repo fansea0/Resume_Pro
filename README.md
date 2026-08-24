@@ -91,6 +91,36 @@ The endpoint never creates users or tenants. Create a local test user through th
 
 Deploy the API and client over HTTPS, set `COOKIE_SECURE=true`, and use a high-entropy, unique `JWT_SECRET` provided by your deployment secret manager. Do not reuse the local secret or commit it to the repository. This MVP assumes same-origin browser/API requests; before allowing credentialed requests across different origins, add explicit CORS allow-lists and CSRF protection.
 
+## AI 写简历功能
+
+当前 AI 能力支持对 `summary`、`work`、`internship`、`project` 四类简历区块进行流式润色。界面和 API 已预留从零生成简历的入口，但后端目前会返回 SSE `NOT_IMPLEMENTED`，该能力尚不可用。
+
+`internal/ai` 只负责提示词、LLM 调用和输出校验，不直接访问认证或数据库；HTTP 与持久化层负责读取当前租户的简历和目标岗位，并按 `tenant_id` 隔离数据。
+
+### 配置
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | 无 | 必需；填写所用 OpenAI 兼容服务的 API key。 |
+| `OPENAI_BASE_URL` | `https://api.deepseek.com/v1` | OpenAI 兼容服务的 base URL。 |
+| `OPENAI_MODEL` | `deepseek-chat` | 模型名。 |
+| `AI_MAX_TOKENS` | `2048` | 单次响应 token 上限；无效或非正整数会使用默认值。 |
+| `AI_REQUEST_TIMEOUT` | `30s` | 上游请求超时；无效或非正 duration 会使用默认值。 |
+| `AI_MAX_RETRIES` | `1` | LLM 输出未通过 schema 校验后的重试次数，允许 `0` 到 `10`；无效值属于配置错误。 |
+
+非生产环境未设置 `OPENAI_API_KEY` 时，服务仍可启动，需登录的 AI 路由返回 `503` 和 `{"error":"AI features disabled"}`，其他路由不受影响。无效的 `AI_MAX_RETRIES` 在非生产环境也会禁用 AI；`APP_ENV=production` 时缺少 key 或该变量无效都会导致启动失败。LLM 客户端构造失败则在所有环境中阻止启动。
+
+### 字段级改写权限
+
+- AI 润色仅支持 `summary`、`work`、`internship`、`project`；`education`、`skills`、`campus`、`honours` 不显示润色入口。
+- `summary` 输出只包含 `markdown`；`work` 和 `internship` 的条目输出只包含 `id`、`achievements`、`highlightsMarkdown`；`project` 条目还可包含 `introduction`。
+- 公司、职位、日期、学校等事实字段不在改写输出 schema 中；接受建议时仅合并上述可改字段。
+
+### 目标岗位
+
+- 目标岗位是当前用户的资产，可维护多份；`requirements` 去除首尾空白后按当前后端的字节长度校验至少为 `10`，`company` 和 `position` 可留空。
+- 简历可通过 `targetJobId` 绑定一份目标岗位；创建或更新简历时会校验该目标岗位属于当前租户。
+
 ## Verification
 
 ```bash

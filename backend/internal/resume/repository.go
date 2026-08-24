@@ -9,12 +9,15 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+
+	"resumepro/backend/internal/store"
 )
 
 var (
 	ErrNotFound          = errors.New("resume not found")
 	ErrAvatarKeyInUse    = errors.New("avatar storage key is already in use")
 	ErrAvatarKeyReserved = errors.New("avatar storage key is reserved by another upload")
+	ErrTargetJobNotFound = errors.New("target job not found or not owned by tenant")
 )
 
 type Repository struct {
@@ -26,11 +29,14 @@ func NewRepository(db *sqlx.DB) *Repository {
 }
 
 func (r *Repository) Create(ctx context.Context, input CreateInput) (Resume, error) {
-	tx, err := r.db.BeginTxx(ctx, nil)
+	tx, err := store.BeginSQLiteWriteTx(ctx, r.db)
 	if err != nil {
 		return Resume{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := lockTargetJobReference(ctx, tx, input.TenantID, input.TargetJobID); err != nil {
+		return Resume{}, err
+	}
 	now := time.Now().UTC()
 	result, err := tx.ExecContext(ctx, `INSERT INTO resumes (tenant_id, title, template_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`, input.TenantID, input.Title, input.TemplateID, input.Content, now, now)
 	if err != nil {
@@ -84,7 +90,7 @@ func (r *Repository) AvatarKeyResumeID(ctx context.Context, tenantID int64, key 
 // to storage. The durable reservation closes the gap between a fresh upload
 // and the later resume save, and expires with local temporary uploads.
 func (r *Repository) ReserveAvatarUpload(ctx context.Context, tenantID int64, key, owner string, resumeID int64) error {
-	tx, err := r.db.BeginTxx(ctx, nil)
+	tx, err := store.BeginSQLiteWriteTx(ctx, r.db)
 	if err != nil {
 		return err
 	}
@@ -121,12 +127,38 @@ func (r *Repository) ReserveAvatarUpload(ctx context.Context, tenantID int64, ke
 	return tx.Commit()
 }
 
+// lockTargetJobReference validates the reference while taking SQLite's write
+// lock. Target-job deletion takes the same lock, so either the resume commits
+// first and deletion clears it, or deletion commits first and validation fails.
+func lockTargetJobReference(ctx context.Context, tx *sqlx.Tx, tenantID int64, targetJobID *int64) error {
+	if targetJobID == nil {
+		return nil
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE target_jobs SET updated_at = updated_at
+		WHERE id = ? AND tenant_id = ?`, *targetJobID, tenantID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrTargetJobNotFound
+	}
+	return nil
+}
+
 func (r *Repository) Update(ctx context.Context, tenantID, id int64, input UpdateInput) (Resume, error) {
-	tx, err := r.db.BeginTxx(ctx, nil)
+	tx, err := store.BeginSQLiteWriteTx(ctx, r.db)
 	if err != nil {
 		return Resume{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := lockTargetJobReference(ctx, tx, tenantID, input.TargetJobID); err != nil {
+		return Resume{}, err
+	}
 
 	var current Resume
 	err = tx.GetContext(ctx, &current, `SELECT id, tenant_id, title, template_id, content, created_at, updated_at FROM resumes WHERE id = ? AND tenant_id = ?`, id, tenantID)

@@ -16,7 +16,9 @@ import (
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/resume"
+	"resumepro/backend/internal/resumesvc"
 	"resumepro/backend/internal/store"
+	"resumepro/backend/internal/targetjob"
 	"resumepro/backend/internal/templates"
 )
 
@@ -158,16 +160,41 @@ func TestResumeCreateDoesNotPersistAvatarWhenRetentionFails(t *testing.T) {
 	key := "550e8400-e29b-41d4-a716-446655440000"
 	profile := `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"/uploads/avatars/avatar.avatar","avatarStorageKey":"` + key + `"}`
 	body := `{"title":"Avatar","templateId":"minimal","content":` + validV2ContentWithProfile("Avatar", "minimal", profile) + `}`
-	if response := requestJSON(t, router, http.MethodPost, "/api/resumes", body, session); response.Code != http.StatusInternalServerError {
+	response := requestJSON(t, router, http.MethodPost, "/api/resumes", body, session)
+	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("create status = %d: %s", response.Code, response.Body.String())
 	}
-	response := requestJSON(t, router, http.MethodGet, "/api/resumes", "", session)
+	if response.Body.String() != "{\"error\":\"could not retain avatar image\"}\n" {
+		t.Fatalf("create body = %q", response.Body.String())
+	}
+	response = requestJSON(t, router, http.MethodGet, "/api/resumes", "", session)
 	var items []resume.Resume
 	if err := json.NewDecoder(response.Body).Decode(&items); err != nil {
 		t.Fatal(err)
 	}
 	if len(items) != 0 {
 		t.Fatalf("resume persisted despite retain failure: %#v", items)
+	}
+}
+
+func TestResumeUpdatePreservesAvatarRetentionFailureResponse(t *testing.T) {
+	storage := &lifecycleFileStorage{}
+	router, session := testRouterWithStorage(t, storage)
+	created := requestJSON(t, router, http.MethodPost, "/api/resumes", validResumeRequest("Existing", "minimal"), session)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("setup create status = %d: %s", created.Code, created.Body.String())
+	}
+
+	storage.retainErr = errors.New("storage unavailable")
+	key := "550e8400-e29b-41d4-a716-446655440000"
+	profile := `{"fullName":"Ada","headline":"Engineer","email":"ada@example.com","phone":"","location":"","website":"","avatarUrl":"/uploads/avatars/avatar.avatar","avatarStorageKey":"` + key + `"}`
+	body := `{"title":"Updated","templateId":"minimal","content":` + validV2ContentWithProfile("Updated", "minimal", profile) + `}`
+	response := requestJSON(t, router, http.MethodPut, "/api/resumes/1", body, session)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("update status = %d: %s", response.Code, response.Body.String())
+	}
+	if response.Body.String() != "{\"error\":\"could not retain avatar image\"}\n" {
+		t.Fatalf("update body = %q", response.Body.String())
 	}
 }
 
@@ -248,6 +275,53 @@ func TestResumeCreateAndUpdateRequireCompleteV2Content(t *testing.T) {
 	}
 }
 
+func TestResumeCreateAcceptsEverySelectableTemplate(t *testing.T) {
+	router, session := testRouter(t)
+	for _, templateID := range []string{
+		"minimal", "business", "creative", "tech", "editorial", "redline", "violet", "azure-chronicle",
+		"mint-canvas", "scholarly-serif", "blue-sidebar",
+	} {
+		t.Run(templateID, func(t *testing.T) {
+			response := requestJSON(t, router, http.MethodPost, "/api/resumes", validResumeRequest("Valid "+templateID, templateID), session)
+			if response.Code != http.StatusCreated {
+				t.Fatalf("create status = %d, want %d: %s", response.Code, http.StatusCreated, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestValidResumeContentAllowsOnlyPositiveIntegralTargetJobID(t *testing.T) {
+	withTargetJobID := func(value string) json.RawMessage {
+		content := strings.TrimSuffix(validV2ResumeContent("Valid", "minimal"), "}") + `,"targetJobId":` + value + `}`
+		return json.RawMessage(content)
+	}
+
+	cases := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "omitted", value: "", want: true},
+		{name: "positive integer", value: "42", want: true},
+		{name: "zero", value: "0", want: false},
+		{name: "negative integer", value: "-1", want: false},
+		{name: "fraction", value: "1.5", want: false},
+		{name: "string", value: `"42"`, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			content := json.RawMessage(validV2ResumeContent("Valid", "minimal"))
+			if tc.value != "" {
+				content = withTargetJobID(tc.value)
+			}
+			if got := validResumeContent(content, "Valid", "minimal"); got != tc.want {
+				t.Fatalf("validResumeContent(targetJobId=%s) = %t, want %t", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestResumeCreateAndUpdateRequireMatchingMetadataAndBoundedContent(t *testing.T) {
 	router, session := testRouter(t)
 	created := requestJSON(t, router, http.MethodPost, "/api/resumes", validResumeRequest("Valid", "minimal"), session)
@@ -324,6 +398,32 @@ func TestResumeCreateAndUpdateRejectUnpairedOrForeignAvatarURLs(t *testing.T) {
 	}
 }
 
+func TestResumeCreateAndUpdateRejectUnknownTargetJob(t *testing.T) {
+	router, session := testRouter(t)
+	content := strings.TrimSuffix(validV2ResumeContent("Targeted", "minimal"), "}") + `,"targetJobId":999}`
+	body := `{"title":"Targeted","templateId":"minimal","content":` + content + `}`
+
+	create := requestJSON(t, router, http.MethodPost, "/api/resumes", body, session)
+	if create.Code != http.StatusBadRequest {
+		t.Fatalf("create status = %d, want %d: %s", create.Code, http.StatusBadRequest, create.Body.String())
+	}
+	if create.Body.String() != "{\"error\":\"target job 999 not found or not owned by tenant\"}\n" {
+		t.Fatalf("create body = %q", create.Body.String())
+	}
+
+	created := requestJSON(t, router, http.MethodPost, "/api/resumes", validResumeRequest("Existing", "minimal"), session)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("setup create status = %d: %s", created.Code, created.Body.String())
+	}
+	update := requestJSON(t, router, http.MethodPut, "/api/resumes/1", body, session)
+	if update.Code != http.StatusBadRequest {
+		t.Fatalf("update status = %d, want %d: %s", update.Code, http.StatusBadRequest, update.Body.String())
+	}
+	if update.Body.String() != "{\"error\":\"target job 999 not found or not owned by tenant\"}\n" {
+		t.Fatalf("update body = %q", update.Body.String())
+	}
+}
+
 func TestResumeMissingReturnsNotFound(t *testing.T) {
 	router, session := testRouter(t)
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
@@ -376,7 +476,13 @@ func testRouterWithStorage(t *testing.T, fileStorage files.FileStorage) (http.Ha
 	if err := store.Migrate(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	router := NewRouter(auth.NewRepository(db), resume.NewRepository(db), templates.NewRepository(db), RouterConfig{JWTSecret: "resume-handler-test-secret", FileStorage: fileStorage})
+	resumeRepository := resume.NewRepository(db)
+	targetJobService := targetjob.NewService(targetjob.NewRepository(db))
+	router := NewRouter(auth.NewRepository(db), resumeRepository, templates.NewRepository(db), RouterConfig{
+		JWTSecret:        "resume-handler-test-secret",
+		FileStorage:      fileStorage,
+		ResumesvcService: resumesvc.NewService(resumeRepository, fileStorage, targetJobService),
+	})
 	return router, registerAuthUser(t, router, "resume-handler@example.com")
 }
 

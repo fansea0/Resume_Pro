@@ -74,6 +74,16 @@ CREATE TABLE IF NOT EXISTS disabled_templates (
   template_id TEXT PRIMARY KEY,
   disabled_at DATETIME NOT NULL
 );
+CREATE TABLE IF NOT EXISTS target_jobs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id    INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    company      TEXT NOT NULL DEFAULT '',
+    position     TEXT NOT NULL DEFAULT '',
+    requirements TEXT NOT NULL,
+    created_at   DATETIME NOT NULL,
+    updated_at   DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_target_jobs_tenant ON target_jobs(tenant_id, updated_at DESC);
 `
 
 // Migrate applies the application's idempotent SQLite schema migrations.

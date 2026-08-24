@@ -13,6 +13,7 @@ import (
 
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/resume"
+	"resumepro/backend/internal/resumesvc"
 	"resumepro/backend/internal/store"
 	"resumepro/backend/internal/templates"
 )
@@ -217,7 +218,11 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 	if err := store.Migrate(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	return NewRouter(auth.NewRepository(db), resume.NewRepository(db), templates.NewRepository(db), RouterConfig{JWTSecret: "test-secret-that-is-long-enough"})
+	resumeRepository := resume.NewRepository(db)
+	return NewRouter(auth.NewRepository(db), resumeRepository, templates.NewRepository(db), RouterConfig{
+		JWTSecret:        "test-secret-that-is-long-enough",
+		ResumesvcService: resumesvc.NewService(resumeRepository, nil, nil),
+	})
 }
 
 func newDevelopmentAuthTestRouter(t *testing.T) http.Handler {

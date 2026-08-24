@@ -24,6 +24,7 @@ import (
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/resume"
+	"resumepro/backend/internal/resumesvc"
 	"resumepro/backend/internal/store"
 	"resumepro/backend/internal/templates"
 )
@@ -283,7 +284,9 @@ func newAvatarUploadTestRouterWithConfig(t *testing.T, storage files.FileStorage
 	}
 	config.JWTSecret = "avatar-upload-test-secret-that-is-long-enough"
 	config.FileStorage = storage
-	router := NewRouter(auth.NewRepository(db), resume.NewRepository(db), templates.NewRepository(db), config)
+	resumeRepository := resume.NewRepository(db)
+	config.ResumesvcService = resumesvc.NewService(resumeRepository, storage, nil)
+	router := NewRouter(auth.NewRepository(db), resumeRepository, templates.NewRepository(db), config)
 	return router, registerAuthUser(t, router, "avatar@example.com")
 }
 

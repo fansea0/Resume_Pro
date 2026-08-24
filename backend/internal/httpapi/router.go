@@ -8,9 +8,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"resumepro/backend/internal/ai"
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/resume"
+	"resumepro/backend/internal/resumesvc"
+	"resumepro/backend/internal/targetjob"
 	"resumepro/backend/internal/templates"
 )
 
@@ -24,6 +27,13 @@ type RouterConfig struct {
 	// AvatarDirectory is the local public directory mounted at /uploads/avatars.
 	// It is ignored unless explicitly configured.
 	AvatarDirectory string
+	// TargetJobService is optional until target-job management is enabled.
+	TargetJobService *targetjob.Service
+	// ResumesvcService owns resume mutation business logic.
+	ResumesvcService *resumesvc.Service
+	// AIService is nil when AI features are disabled. The authenticated routes
+	// remain registered so callers receive an explicit 503 response.
+	AIService *ai.Service
 }
 
 var avatarFilenamePattern = regexp.MustCompile(`^[a-f0-9]{64}-[a-f0-9]{64}\.avatar$`)
@@ -58,7 +68,7 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 		router.POST("/api/uploads/avatar", requireAuthentication(service), uploadHandler.avatar)
 	}
 
-	resumeHandler := newResumeHandler(resumeRepository, config.FileStorage)
+	resumeHandler := newResumeHandler(config.ResumesvcService, resumeRepository, config.FileStorage)
 	protected := router.Group("/api/resumes")
 	protected.Use(requireAuthentication(service))
 	protected.GET("", resumeHandler.list)
@@ -73,6 +83,23 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 	admin.Use(requireAuthentication(service), requireAdministrator(authRepository))
 	admin.GET("", templateHandler.listDisabled)
 	admin.DELETE("/:templateID", templateHandler.disable)
+
+	if config.TargetJobService != nil {
+		targetHandler := newTargetJobHandler(config.TargetJobService)
+		targetJobs := router.Group("/api/target-jobs")
+		targetJobs.Use(requireAuthentication(service))
+		targetJobs.GET("", targetHandler.list)
+		targetJobs.POST("", targetHandler.create)
+		targetJobs.GET("/:id", targetHandler.get)
+		targetJobs.PUT("/:id", targetHandler.update)
+		targetJobs.DELETE("/:id", targetHandler.delete)
+	}
+
+	aiHandler := newAIHandler(config.AIService, resumeRepository, config.TargetJobService)
+	aiRoutes := router.Group("/api/ai")
+	aiRoutes.Use(requireAuthentication(service))
+	aiRoutes.POST("/resumes/generate", aiHandler.generateResume)
+	aiRoutes.POST("/resumes/:id/section/rewrite", aiHandler.rewriteSection)
 
 	return router
 }

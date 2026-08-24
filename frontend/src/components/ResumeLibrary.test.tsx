@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ResumeLibrary } from './ResumeLibrary';
 import { createEmptyResumeDocument } from '../types/resume';
 import App from '../app';
+import type { ResumeAutosaveHandle } from '../hooks/useResumeAutosave';
 
 const createResume = vi.fn();
 const listResumes = vi.fn().mockResolvedValue([]);
@@ -36,6 +37,9 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.clearAllMocks();
+  createResume.mockReset();
+  updateResume.mockReset();
+  deleteResume.mockReset();
 });
 
 describe('ResumeLibrary', () => {
@@ -95,6 +99,35 @@ describe('ResumeLibrary', () => {
     deleteResume.mockResolvedValueOnce(undefined);
     fireEvent.click(screen.getByRole('button', { name: '删除' }));
     await waitFor(() => expect(deleteResume).toHaveBeenCalledWith(7));
+  });
+
+  it('exposes the existing autosave path for an exact pre-AI flush', async () => {
+    const document = createEmptyResumeDocument();
+    const exact = { ...document, title: 'AI 前精确快照', targetJobId: 7 };
+    const autosaveHandleRef = createRef<ResumeAutosaveHandle>();
+    updateResume.mockResolvedValueOnce({
+      id: 7,
+      title: exact.title,
+      templateId: exact.templateId,
+      content: JSON.stringify(exact),
+      createdAt: '',
+      updatedAt: '',
+    });
+    render(<ResumeLibrary
+      autosaveHandleRef={autosaveHandleRef}
+      document={document}
+      onChange={vi.fn()}
+      onRestoreSample={vi.fn()}
+      onSelect={vi.fn()}
+      onSelectedIdChange={vi.fn()}
+      selectedId={7}
+    />);
+
+    let flushed: boolean | undefined;
+    await act(async () => { flushed = await autosaveHandleRef.current?.flush(exact); });
+
+    expect(flushed).toBe(true);
+    expect(updateResume).toHaveBeenCalledWith(7, exact);
   });
 
   it('keeps the manual new-and-save action available for a selected draft', async () => {

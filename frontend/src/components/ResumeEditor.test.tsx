@@ -1,21 +1,61 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ResumeEditor } from './ResumeEditor';
-import { createEmptyResumeDocument, createWorkSection } from '../types/resume';
+import {
+  createEmptyResumeDocument,
+  createProjectSection,
+  createSampleResumeDocument,
+  createWorkSection,
+} from '../types/resume';
 import { uploadResumeAvatar } from '../api/uploads';
+import type { SSEEvent } from '../types/ai';
+import type { TargetJob } from '../types/targetJob';
+
+const { createTargetJobMock, getTargetJobMock, listTargetJobsMock, streamRewriteMock } = vi.hoisted(() => ({
+  createTargetJobMock: vi.fn(),
+  getTargetJobMock: vi.fn(),
+  listTargetJobsMock: vi.fn(),
+  streamRewriteMock: vi.fn(),
+}));
 
 vi.mock('../api/uploads', () => ({ uploadResumeAvatar: vi.fn() }));
+vi.mock('../api/ai', () => ({ streamRewrite: streamRewriteMock }));
+vi.mock('../api/targetJobs', () => ({
+  createTargetJob: createTargetJobMock,
+  getTargetJob: getTargetJobMock,
+  listTargetJobs: listTargetJobsMock,
+}));
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
+
+const targetJob: TargetJob = {
+  id: 7,
+  company: '字节跳动',
+  position: '高级后端工程师',
+  requirements: '负责后端架构设计与 AI 能力落地，关注稳定性、研发效能和业务结果。',
+  createdAt: '2026-08-18T01:00:00Z',
+  updatedAt: '2026-08-19T02:00:00Z',
+};
+
+beforeEach(() => {
+  getTargetJobMock.mockResolvedValue(targetJob);
+  listTargetJobsMock.mockResolvedValue([targetJob]);
+  streamRewriteMock.mockResolvedValue(undefined);
+});
 
 function latestDocument(onChange: ReturnType<typeof vi.fn>) {
   return onChange.mock.calls[onChange.mock.calls.length - 1]?.[0];
 }
 
-function StatefulEditor({ document, onChange }: { document: ReturnType<typeof createEmptyResumeDocument>; onChange: ReturnType<typeof vi.fn> }) {
+function StatefulEditor({ document, onBeforeAiRewrite = async () => true, onChange, resumeId }: {
+  document: ReturnType<typeof createEmptyResumeDocument>;
+  onBeforeAiRewrite?: (snapshot: ReturnType<typeof createEmptyResumeDocument>) => Promise<boolean>;
+  onChange: ReturnType<typeof vi.fn>;
+  resumeId?: number;
+}) {
   const [current, setCurrent] = useState(document);
-  return <ResumeEditor document={current} onChange={(next) => { setCurrent(next); onChange(next); }} />;
+  return <ResumeEditor document={current} onBeforeAiRewrite={onBeforeAiRewrite} onChange={(next) => { setCurrent(next); onChange(next); }} resumeId={resumeId} />;
 }
 
 describe('ResumeEditor', () => {
@@ -183,5 +223,288 @@ describe('ResumeEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: '添加个人总结区块' }));
     fireEvent.change(screen.getByLabelText('个人总结 Markdown'), { target: { value: '**重点**\n\n- 条目' } });
     expect(latestDocument(onChange).sections[0]).toMatchObject({ type: 'summary', content: { markdown: '**重点**\n\n- 条目' } });
+  });
+
+  it('writes a selected target job id through the document onChange path', async () => {
+    const onChange = vi.fn();
+    render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '+ 选择目标岗位' }));
+    fireEvent.click(await screen.findByRole('button', { name: '选择：字节跳动 · 高级后端工程师' }));
+
+    expect(latestDocument(onChange)).toEqual(expect.objectContaining({ targetJobId: 7 }));
+    expect(await screen.findByText('当前：字节跳动 · 高级后端工程师')).toBeInTheDocument();
+    expect(getTargetJobMock).toHaveBeenCalledWith(7);
+  });
+
+  it('shows AI polish actions only for rewriteable section headers', () => {
+    render(<ResumeEditor document={createSampleResumeDocument()} onChange={vi.fn()} resumeId={42} />);
+
+    ['个人总结', '工作经历', '实习经历', '项目经历'].forEach((label) => {
+      expect(screen.getByRole('button', { name: `AI 润色 ${label}` })).toBeInTheDocument();
+    });
+    ['教育经历', '专业技能', '校园经历', '荣誉奖项'].forEach((label) => {
+      expect(screen.queryByRole('button', { name: `AI 润色 ${label}` })).not.toBeInTheDocument();
+    });
+  });
+
+  it('opens the AI suggestion panel from a supported section header', async () => {
+    render(<ResumeEditor document={createSampleResumeDocument()} onBeforeAiRewrite={async () => true} onChange={vi.fn()} resumeId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI 润色 个人总结' }));
+
+    expect(await screen.findByRole('dialog', { name: 'AI 润色建议' })).toBeInTheDocument();
+    expect(streamRewriteMock).toHaveBeenCalledWith(
+      42,
+      { sectionId: 'sample-summary', sectionType: 'summary' },
+      expect.any(Function),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('waits for the exact current document to save before starting AI rewrite', async () => {
+    const current = createSampleResumeDocument();
+    current.targetJobId = 7;
+    current.sections[0] = {
+      ...current.sections[0],
+      content: { markdown: '刚刚编辑、尚未自动保存的总结' },
+    } as typeof current.sections[0];
+    let finishSave!: (saved: boolean) => void;
+    const onBeforeAiRewrite = vi.fn(() => new Promise<boolean>((resolve) => { finishSave = resolve; }));
+    render(<ResumeEditor
+      document={current}
+      onBeforeAiRewrite={onBeforeAiRewrite}
+      onChange={vi.fn()}
+      resumeId={42}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI 润色 个人总结' }));
+
+    expect(onBeforeAiRewrite).toHaveBeenCalledWith(current);
+    expect(screen.getByRole('button', { name: 'AI 润色 个人总结' })).toBeDisabled();
+    expect(screen.getByText('正在保存最新简历内容…')).toHaveAttribute('role', 'status');
+    expect(streamRewriteMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'AI 润色建议' })).not.toBeInTheDocument();
+
+    await act(async () => { finishSave(true); });
+
+    expect(await screen.findByRole('dialog', { name: 'AI 润色建议' })).toBeInTheDocument();
+    expect(streamRewriteMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps AI rewrite closed and usable after the latest snapshot fails to save', async () => {
+    const onBeforeAiRewrite = vi.fn().mockResolvedValue(false);
+    render(<ResumeEditor
+      document={createSampleResumeDocument()}
+      onBeforeAiRewrite={onBeforeAiRewrite}
+      onChange={vi.fn()}
+      resumeId={42}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI 润色 个人总结' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('保存最新内容后才能使用 AI 润色');
+    expect(screen.getByRole('button', { name: 'AI 润色 个人总结' })).toBeEnabled();
+    expect(streamRewriteMock).not.toHaveBeenCalled();
+  });
+
+  it('retains a failed target binding with retry and clear controls', async () => {
+    getTargetJobMock.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(targetJob);
+    const onChange = vi.fn();
+    render(<StatefulEditor
+      document={{ ...createEmptyResumeDocument(), targetJobId: 7 }}
+      onChange={onChange}
+      resumeId={42}
+    />);
+
+    expect(await screen.findByText('当前：目标岗位 #7')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('无法加载目标岗位详情');
+    expect(screen.getByRole('button', { name: '更换目标岗位' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '清除目标岗位绑定' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '重新加载目标岗位详情' }));
+    expect(await screen.findByText('当前：字节跳动 · 高级后端工程师')).toBeInTheDocument();
+    expect(getTargetJobMock).toHaveBeenCalledTimes(2);
+    expect(getTargetJobMock).toHaveBeenNthCalledWith(2, 7);
+
+    fireEvent.click(screen.getByRole('button', { name: '清除目标岗位绑定' }));
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '清除绑定' }));
+    expect(latestDocument(onChange).targetJobId).toBeUndefined();
+  });
+
+  it('rejects ambiguous duplicate section ids before saving or starting AI', async () => {
+    const first = createProjectSection('duplicate-project');
+    first.title = '重复项目甲';
+    first.content.items = [{
+      id: 'first', name: '甲', role: '', startDate: '', endDate: '', location: '', link: '',
+      introduction: '甲介绍', achievements: '', highlightsMarkdown: '', showLocation: true,
+      showLink: true, showIntroduction: true, showAchievements: true,
+    }];
+    const second = createProjectSection('duplicate-project');
+    second.title = '重复项目乙';
+    second.content.items = [{
+      id: 'second', name: '乙', role: '', startDate: '', endDate: '', location: '', link: '',
+      introduction: '乙介绍', achievements: '', highlightsMarkdown: '', showLocation: true,
+      showLink: true, showIntroduction: true, showAchievements: true,
+    }];
+    const onBeforeAiRewrite = vi.fn().mockResolvedValue(true);
+    render(<ResumeEditor
+      document={{ ...createEmptyResumeDocument(), sections: [first, second] }}
+      onBeforeAiRewrite={onBeforeAiRewrite}
+      onChange={vi.fn()}
+      resumeId={42}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI 润色 重复项目乙' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('区块标识重复，无法安全应用 AI 建议');
+    expect(onBeforeAiRewrite).not.toHaveBeenCalled();
+    expect(streamRewriteMock).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a rewrite after the selected section changes type', async () => {
+    const initial = createSampleResumeDocument();
+    const replacement = createProjectSection(initial.sections[0].id);
+    replacement.content.items = [{
+      id: 'replacement', name: '替换后的项目', role: '', startDate: '', endDate: '', location: '', link: '',
+      introduction: '项目内容', achievements: '', highlightsMarkdown: '', showLocation: true,
+      showLink: true, showIntroduction: true, showAchievements: true,
+    }];
+    let emit!: (event: SSEEvent) => void;
+    streamRewriteMock.mockImplementation((_resumeId, _request, onEvent) => {
+      emit = onEvent;
+      return new Promise<void>(() => undefined);
+    });
+    const onChange = vi.fn();
+    const beforeRewrite = vi.fn().mockResolvedValue(true);
+    const { rerender } = render(<ResumeEditor
+      document={initial}
+      onBeforeAiRewrite={beforeRewrite}
+      onChange={onChange}
+      resumeId={42}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: 'AI 润色 个人总结' }));
+    await screen.findByRole('dialog', { name: 'AI 润色建议' });
+
+    rerender(<ResumeEditor
+      document={{ ...initial, sections: [replacement, ...initial.sections.slice(1)] }}
+      onBeforeAiRewrite={beforeRewrite}
+      onChange={onChange}
+      resumeId={42}
+    />);
+    act(() => {
+      emit({
+        kind: 'suggestion',
+        sectionId: initial.sections[0].id,
+        sectionType: 'summary',
+        newContent: { markdown: '不应应用' },
+      });
+      emit({ kind: 'done' });
+    });
+    fireEvent.click(await screen.findByRole('button', { name: '采纳' }));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alert')).toHaveTextContent('当前区块已变化，未应用 AI 建议');
+  });
+
+  it('merges accepted rewrites by section and item id without changing frozen fields', async () => {
+    const first = createProjectSection('project-first');
+    first.title = '项目甲';
+    first.content.items = [{
+      id: 'first-item',
+      name: '冻结的甲项目名',
+      role: '甲负责人',
+      startDate: '2024.01',
+      endDate: '2024.02',
+      location: '上海',
+      link: 'https://first.example.com',
+      introduction: '甲原介绍',
+      achievements: '甲原成果',
+      highlightsMarkdown: '甲原亮点',
+      showLocation: true,
+      showLink: true,
+      showIntroduction: true,
+      showAchievements: true,
+    }];
+    const second = createProjectSection('project-second');
+    second.title = '项目乙';
+    second.visible = false;
+    second.content.items = [
+      {
+        id: 'second-one',
+        name: '冻结的乙项目名',
+        role: '乙负责人',
+        startDate: '2025.01',
+        endDate: '2025.02',
+        location: '北京',
+        link: 'https://second.example.com',
+        introduction: '乙原介绍',
+        achievements: '乙原成果',
+        highlightsMarkdown: '乙原亮点',
+        showLocation: false,
+        showLink: true,
+        showIntroduction: true,
+        showAchievements: false,
+      },
+      {
+        id: 'second-two',
+        name: '冻结的第三项目名',
+        role: '开发者',
+        startDate: '2025.03',
+        endDate: '2025.04',
+        location: '深圳',
+        link: '',
+        introduction: '第三原介绍',
+        achievements: '第三原成果',
+        highlightsMarkdown: '第三原亮点',
+        showLocation: true,
+        showLink: false,
+        showIntroduction: true,
+        showAchievements: true,
+      },
+    ];
+    streamRewriteMock.mockImplementation(async (
+      _resumeId: number,
+      _request: unknown,
+      onEvent: (event: SSEEvent) => void,
+    ) => {
+      onEvent({
+        kind: 'suggestion',
+        sectionId: 'project-second',
+        sectionType: 'project',
+        newContent: {
+          items: [
+            { id: 'second-two', highlightsMarkdown: '第三新亮点' },
+            {
+              id: 'second-one',
+              introduction: '乙新介绍',
+              achievements: '',
+              name: '不能覆盖的名称',
+            },
+            { id: 'unknown-item', introduction: '不应加入文档' },
+          ],
+        },
+      } as SSEEvent);
+      onEvent({ kind: 'done' });
+    });
+    const onChange = vi.fn();
+    const initialDocument = { ...createEmptyResumeDocument(), sections: [first, second] };
+    render(<StatefulEditor document={initialDocument} onChange={onChange} resumeId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI 润色 项目乙' }));
+    fireEvent.click(await screen.findByRole('button', { name: '采纳' }));
+
+    const changed = latestDocument(onChange);
+    expect(changed.sections[0]).toEqual(first);
+    expect(changed.sections[1]).toEqual({
+      ...second,
+      content: {
+        items: [
+          { ...second.content.items[0], introduction: '乙新介绍', achievements: '' },
+          { ...second.content.items[1], highlightsMarkdown: '第三新亮点' },
+        ],
+      },
+    });
+    expect(changed.sections[1].content.items).toHaveLength(2);
   });
 });

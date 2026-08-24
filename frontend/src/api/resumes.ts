@@ -21,7 +21,10 @@ export interface StoredResume {
 
 type ResumePayload = Pick<StoredResume, 'title' | 'templateId'> & { content: ResumeDocument };
 
-const templateIds = new Set<TemplateId>(['minimal', 'business', 'creative', 'tech', 'editorial', 'redline', 'violet', 'azure-chronicle']);
+const templateIds = new Set<TemplateId>([
+  'minimal', 'business', 'creative', 'tech', 'editorial', 'redline', 'violet', 'azure-chronicle',
+  'mint-canvas', 'scholarly-serif', 'blue-sidebar',
+]);
 const profileFields = ['fullName', 'headline', 'email', 'phone', 'location', 'website', 'avatarUrl', 'avatarStorageKey'] as const;
 const legacyProfileFields = ['fullName', 'headline', 'email', 'phone', 'location', 'website', 'summary'] as const;
 const canonicalUUIDPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -282,8 +285,8 @@ export function listResumes() {
   return apiFetch<StoredResume[]>('/api/resumes');
 }
 
-export function createResume(document: ResumeDocument) {
-  return apiFetch<StoredResume>('/api/resumes', { method: 'POST', body: JSON.stringify(payload(document)) });
+export function createResume(document: ResumeDocument, signal?: AbortSignal) {
+  return apiFetch<StoredResume>('/api/resumes', { method: 'POST', body: JSON.stringify(payload(document)), signal });
 }
 
 export function updateResume(id: number, document: ResumeDocument) {

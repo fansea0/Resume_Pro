@@ -6,6 +6,11 @@ export interface RewriteRequest {
   instructions?: string;
 }
 
+export interface GenerateRequest {
+  rawText: string;
+  targetJobId?: number;
+  templateId: import('./resume').TemplateId;
+}
 export interface SummaryRewriteContent {
   markdown: string;
 }
@@ -61,3 +66,10 @@ export type ErrorEvent = { kind: 'error'; code: string; message: string };
 export type DoneEvent = { kind: 'done' };
 
 export type SSEEvent = ThinkingEvent | SuggestionEvent | ErrorEvent | DoneEvent;
+
+export type GenerateSuggestionEvent = {
+  kind: 'suggestion';
+  newContent: unknown;
+};
+
+export type GenerateSSEEvent = ThinkingEvent | GenerateSuggestionEvent | ErrorEvent | DoneEvent;

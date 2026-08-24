@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState, type ButtonHTMLAttributes, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useState, type ButtonHTMLAttributes, type ReactNode, type Ref, type RefObject } from 'react';
 import { deleteResume, documentFromStored, listResumes, type StoredResume } from '../api/resumes';
-import { useResumeAutosave } from '../hooks/useResumeAutosave';
+import { useResumeAutosave, type ResumeAutosaveHandle } from '../hooks/useResumeAutosave';
 import { templateRegistry } from '../templates/registry';
 import type { ResumeDocument } from '../types/resume';
 import { exportResumePng } from '../utils/exportResumePng';
 
 interface ResumeLibraryProps {
+  autosaveHandleRef?: Ref<ResumeAutosaveHandle>;
   document: ResumeDocument;
   selectedId: number | null;
   onSelectedIdChange: (id: number | null) => void;
@@ -37,7 +38,7 @@ function templateName(templateId: StoredResume['templateId']) {
   return templateRegistry.find((template) => template.id === templateId)?.name ?? '未知模板';
 }
 
-export function ResumeLibrary({ document, selectedId, onSelectedIdChange, onChange, onRestoreSample, onSelect, previewRef }: ResumeLibraryProps) {
+export function ResumeLibrary({ autosaveHandleRef, document, selectedId, onSelectedIdChange, onChange, onRestoreSample, onSelect, previewRef }: ResumeLibraryProps) {
   const [items, setItems] = useState<StoredResume[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
@@ -60,6 +61,7 @@ export function ResumeLibrary({ document, selectedId, onSelectedIdChange, onChan
       : [item, ...current]);
   }, [onSelectedIdChange]);
   const autosave = useResumeAutosave({ document, selectedId, onSaved: handleSaved });
+  useImperativeHandle(autosaveHandleRef, () => ({ flush: autosave.flush }), [autosave.flush]);
 
   const select = (item: StoredResume) => {
     try {

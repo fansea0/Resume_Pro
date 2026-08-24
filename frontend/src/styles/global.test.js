@@ -45,4 +45,34 @@ describe('drafts workbench styles', () => {
     expect(stylesheet).toMatch(/\.resume-drafts__updated-at\s*\{[\s\S]*?font-family:\s*var\(--draft-mono-font\)/);
     expect(stylesheet).toMatch(/\.resume-drafts button:focus-visible\s*\{[\s\S]*?outline:\s*3px solid #155EEF/);
   });
+
+  it('keeps portal target-job primary actions visibly styled outside page-scoped tokens', () => {
+    const backdropRule = stylesheet.match(/\.target-job-dialog__backdrop\s*\{[^}]+\}/)?.[0] ?? '';
+    const primaryActionRule = stylesheet.match(/\.target-jobs__create,\s*\.target-job-form__actions button:last-child\s*\{[^}]+\}/)?.[0] ?? '';
+    const style = document.createElement('style');
+    style.textContent = `${backdropRule}\n${primaryActionRule}`;
+    document.head.appendChild(style);
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'target-job-dialog__backdrop';
+    backdrop.innerHTML = '<form class="target-job-form"><div class="target-job-form__actions"><button>返回</button><button>保存并选择</button></div></form>';
+    document.body.appendChild(backdrop);
+
+    const save = backdrop.querySelector('button:last-child');
+    expect(getComputedStyle(save).backgroundColor).toBe('rgb(21, 94, 239)');
+    expect(getComputedStyle(save).color).toBe('rgb(255, 255, 255)');
+    expect(getComputedStyle(backdrop).getPropertyValue('--target-accent').trim()).toBe('#155eef');
+
+    backdrop.remove();
+    style.remove();
+  });
+
+  it('lays out the AI suggestion as an accessible desktop drawer and mobile bottom sheet', () => {
+    expect(stylesheet).toMatch(/\.ai-suggestion-panel__backdrop\s*\{[^}]*position:\s*fixed/);
+    expect(stylesheet).toMatch(/\.ai-suggestion-panel\s*\{[^}]*max-width:\s*720px/);
+    expect(stylesheet).toMatch(/\.ai-suggestion-panel button:focus-visible[^\{]*\{[^}]*outline:\s*3px solid/);
+    expect(stylesheet).toMatch(/\.ai-suggestion-panel__sr-only\s*\{[^}]*clip:\s*rect\(0, 0, 0, 0\)/);
+    expect(stylesheet).toMatch(/@media \(max-width: 640px\)\s*\{[\s\S]*?\.ai-suggestion-panel__backdrop\s*\{[^}]*align-items:\s*end/);
+    expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.ai-suggestion-panel__pulse/);
+  });
 });
