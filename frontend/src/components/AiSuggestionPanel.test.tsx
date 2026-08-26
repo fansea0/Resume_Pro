@@ -78,7 +78,7 @@ describe('AiSuggestionPanel', () => {
     expect(screen.queryByText('不应覆盖已读取上下文。')).not.toBeInTheDocument();
   });
 
-  it('renders server analysis in order and only accepts the rewrite payload', async () => {
+  it('renders server analysis in order and only accepts the rewrite payload without S1 evidence', async () => {
     streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
       onEvent({ kind: 'progress', stage: 'context_loaded', message: '已读取上下文。' } as SSEEvent);
       onEvent({
@@ -124,6 +124,7 @@ describe('AiSuggestionPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '采纳' }));
     expect(onAccept).toHaveBeenCalledWith({ markdown: '主导产品交付。' });
+    expect(onAccept).not.toHaveBeenCalledWith(expect.objectContaining({ exampleWithPlaceholder: expect.anything() }));
   });
 
   it('labels an empty rewrite as preserving the original and prevents adoption', async () => {

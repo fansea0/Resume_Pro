@@ -117,9 +117,12 @@ func TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext(t *testing.T) {
 		"rewrite":{"markdown":"量化交付成果"},
 		"analysis":{
 			"jdAlignment":{"status":"applied","matchedKeywords":["稳定性"],"excludedKeywords":[]},
-			"matchedIssues":[],
-			"evidenceRequests":[],
-			"warnings":[]
+			"matchedIssues":[
+				{"code":"S2","target":{"field":"markdown"},"resolution":"替换弱动词","status":"fixed"},
+				{"code":"S5","target":{"field":"markdown"},"resolution":"删除无信息量修饰语","status":"fixed"}
+			],
+			"evidenceRequests":[{"code":"S1","target":{"field":"markdown"},"reason":"缺少规模","exampleWithPlaceholder":"覆盖 XX 名用户"}],
+			"warnings":[{"code":"S7","resolution":"请结合既有事实检查经历叙事。"}]
 		}
 	}`
 	fixture := setupAIAPI(t, ai.NewService(fake, nil, ai.WithMaxRetries(0)))
@@ -147,7 +150,15 @@ func TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext(t *testing.T) {
 	assert.JSONEq(t, `{"stage":"jd_alignment_completed","message":"已完成目标岗位关键词对齐。"}`, frames[2].Data)
 	assert.JSONEq(t, `{"stage":"optimization_started","message":"正在优化章节表达。"}`, frames[3].Data)
 	assert.JSONEq(t, `{"stage":"optimization_completed","message":"已生成可审阅的优化建议。"}`, frames[4].Data)
-	assert.JSONEq(t, `{"sectionId":"summary","sectionType":"summary","newContent":{"rewrite":{"markdown":"量化交付成果"},"analysis":{"jdAlignment":{"status":"applied","matchedKeywords":["稳定性"],"excludedKeywords":[]},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}}}`, frames[5].Data)
+	assert.JSONEq(t, `{"sectionId":"summary","sectionType":"summary","newContent":{"rewrite":{"markdown":"量化交付成果"},"analysis":{"jdAlignment":{"status":"applied","matchedKeywords":["稳定性"],"excludedKeywords":[]},"matchedIssues":[{"code":"S2","target":{"field":"markdown"},"resolution":"替换弱动词","status":"fixed"},{"code":"S5","target":{"field":"markdown"},"resolution":"删除无信息量修饰语","status":"fixed"}],"evidenceRequests":[{"code":"S1","target":{"field":"markdown"},"reason":"缺少规模","exampleWithPlaceholder":"覆盖 XX 名用户"}],"warnings":[{"code":"S7","resolution":"已基于既有事实重组叙事，未推测空窗、离职或转行原因。"}]}}}`, frames[5].Data)
+	var suggestion struct {
+		NewContent struct {
+			Rewrite json.RawMessage `json:"rewrite"`
+		} `json:"newContent"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(frames[5].Data), &suggestion))
+	assert.JSONEq(t, `{"markdown":"量化交付成果"}`, string(suggestion.NewContent.Rewrite))
+	assert.NotContains(t, string(suggestion.NewContent.Rewrite), "XX", "S1 placeholders belong to analysis, never the adopted rewrite")
 	assert.JSONEq(t, `{}`, frames[6].Data)
 	assert.NotContains(t, response.Body.String(), fake.ThinkingText)
 	assert.NotContains(t, response.Body.String(), fake.StreamChunks[0])
