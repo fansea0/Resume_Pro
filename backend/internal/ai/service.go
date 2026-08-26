@@ -159,6 +159,13 @@ func (s *Service) rewrite(ctx context.Context, ch chan<- Event, in RewriteInput,
 		s.fail(ctx, ch, callInfo, "INVALID_RESPONSE", err)
 		return
 	}
+	if in.TargetJob == nil {
+		analysis, err = normalizeJDAlignmentWithoutTargetJob(analysis)
+		if err != nil {
+			s.fail(ctx, ch, callInfo, "INVALID_RESPONSE", err)
+			return
+		}
+	}
 	suggestion, err := json.Marshal(struct {
 		Rewrite  json.RawMessage `json:"rewrite"`
 		Analysis json.RawMessage `json:"analysis"`
@@ -185,6 +192,28 @@ func (s *Service) rewrite(ctx context.Context, ch chan<- Event, in RewriteInput,
 		SuggestionOK: true,
 	})
 	s.sendTerminal(ctx, ch, Event{Kind: "suggestion", Suggestion: suggestion})
+}
+
+func normalizeJDAlignmentWithoutTargetJob(analysis json.RawMessage) (json.RawMessage, error) {
+	var analysisObject map[string]json.RawMessage
+	if err := json.Unmarshal(analysis, &analysisObject); err != nil {
+		return nil, fmt.Errorf("decode validated analysis: %w", err)
+	}
+	var alignment map[string]json.RawMessage
+	if err := json.Unmarshal(analysisObject["jdAlignment"], &alignment); err != nil {
+		return nil, fmt.Errorf("decode validated JD alignment: %w", err)
+	}
+	alignment["status"] = json.RawMessage(`"skipped"`)
+	normalizedAlignment, err := json.Marshal(alignment)
+	if err != nil {
+		return nil, fmt.Errorf("encode normalized JD alignment: %w", err)
+	}
+	analysisObject["jdAlignment"] = normalizedAlignment
+	normalizedAnalysis, err := json.Marshal(analysisObject)
+	if err != nil {
+		return nil, fmt.Errorf("encode normalized analysis: %w", err)
+	}
+	return normalizedAnalysis, nil
 }
 
 func (s *Service) GenerateResume(ctx context.Context, _ GenerateInput) (<-chan Event, error) {

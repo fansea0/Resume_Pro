@@ -20,7 +20,7 @@ func TestService_RewriteSection_EmitsControlledProgressAndValidatedWrapper(t *te
 	fake := lltesting.NewFake()
 	fake.ThinkingText = "模型原始推理不得泄露"
 	fake.StreamChunks = []string{"模型分段推理不得泄露"}
-	fake.FinalJSON = projectOptimizationOutput("skipped", "newA")
+	fake.FinalJSON = projectOptimizationOutput("applied", "newA")
 	svc := ai.NewService(fake, ai.NewLogrusHooks(logrus.New()))
 
 	ch, err := svc.RewriteSection(context.Background(), ai.RewriteInput{
@@ -38,7 +38,7 @@ func TestService_RewriteSection_EmitsControlledProgressAndValidatedWrapper(t *te
 	require.Len(t, fake.RecordedInputs, 1)
 	require.Len(t, events, 7)
 	assert.Equal(t, "suggestion", events[5].Kind)
-	assert.JSONEq(t, fake.FinalJSON, string(events[5].Suggestion))
+	assert.JSONEq(t, projectOptimizationOutput("skipped", "newA"), string(events[5].Suggestion))
 	assert.Equal(t, ai.Event{Kind: "done"}, events[6])
 	assert.JSONEq(t, `{"status":"skipped"}`, string(suggestionAnalysis(t, events[5])["jdAlignment"]))
 }
