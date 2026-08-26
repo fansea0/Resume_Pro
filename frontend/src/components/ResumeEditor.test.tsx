@@ -37,6 +37,7 @@ const targetJob: TargetJob = {
   createdAt: '2026-08-18T01:00:00Z',
   updatedAt: '2026-08-19T02:00:00Z',
 };
+const emptyOptimizationAnalysis = { jdAlignment: { status: 'skipped' as const }, matchedIssues: [], evidenceRequests: [], warnings: [] };
 
 beforeEach(() => {
   getTargetJobMock.mockResolvedValue(targetJob);
@@ -397,7 +398,7 @@ describe('ResumeEditor', () => {
         kind: 'suggestion',
         sectionId: initial.sections[0].id,
         sectionType: 'summary',
-        newContent: { markdown: '不应应用' },
+        newContent: { rewrite: { markdown: '不应应用' }, analysis: emptyOptimizationAnalysis },
       });
       emit({ kind: 'done' });
     });
@@ -473,7 +474,7 @@ describe('ResumeEditor', () => {
         sectionId: 'project-second',
         sectionType: 'project',
         newContent: {
-          items: [
+          rewrite: { items: [
             { id: 'second-two', highlightsMarkdown: '第三新亮点' },
             {
               id: 'second-one',
@@ -482,7 +483,8 @@ describe('ResumeEditor', () => {
               name: '不能覆盖的名称',
             },
             { id: 'unknown-item', introduction: '不应加入文档' },
-          ],
+          ] },
+          analysis: emptyOptimizationAnalysis,
         },
       } as SSEEvent);
       onEvent({ kind: 'done' });

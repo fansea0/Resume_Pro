@@ -79,15 +79,13 @@ func TestBuildRouterConfigProductionWithoutAPIKeyReturnsStartupError(t *testing.
 	assert.Contains(t, err.Error(), "AI features required in production")
 }
 
-func TestBuildRouterConfigPassesConfiguredRetryLimitToAIService(t *testing.T) {
+func TestBuildRouterConfigUsesSingleCallOptimizationProtocol(t *testing.T) {
 	db := openServerTestDB(t)
 	resumeRepository := resume.NewRepository(db)
 	chatModel := &sequenceChatModel{
 		FakeChatModel: llmtesting.NewFake(),
 		responses: []string{
-			`{"markdown":"invalid","invented":true}`,
-			`{"markdown":"still invalid","invented":true}`,
-			`{"markdown":"valid on configured retry"}`,
+			`{"rewrite":{"markdown":"valid single-call optimization"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}}`,
 		},
 	}
 	config, err := buildRouterConfig(db, resumeRepository, logrus.New(), serverOptions{
@@ -110,10 +108,15 @@ func TestBuildRouterConfigPassesConfiguredRetryLimitToAIService(t *testing.T) {
 	require.NoError(t, err)
 	events := collectAIEvents(t, stream)
 
-	require.Len(t, events, 2)
-	assert.Equal(t, "suggestion", events[0].Kind)
-	assert.JSONEq(t, `{"markdown":"valid on configured retry"}`, string(events[0].Suggestion))
-	assert.Equal(t, "done", events[1].Kind)
+	require.Len(t, events, 7)
+	assert.Equal(t, []string{"progress", "progress", "progress", "progress", "progress", "suggestion", "done"}, eventKinds(events))
+	assert.Equal(t, "context_loaded", events[0].Stage)
+	assert.Equal(t, "jd_alignment_started", events[1].Stage)
+	assert.Equal(t, "jd_alignment_completed", events[2].Stage)
+	assert.Equal(t, "optimization_started", events[3].Stage)
+	assert.Equal(t, "optimization_completed", events[4].Stage)
+	assert.JSONEq(t, `{"rewrite":{"markdown":"valid single-call optimization"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}}`, string(events[5].Suggestion))
+	assert.Equal(t, 1, chatModel.next, "optimization protocol must use one model call")
 }
 
 func openServerTestDB(t *testing.T) *sqlx.DB {
@@ -155,6 +158,14 @@ func collectAIEvents(t *testing.T, stream <-chan ai.Event) []ai.Event {
 			t.Fatal("timeout waiting for AI events")
 		}
 	}
+}
+
+func eventKinds(events []ai.Event) []string {
+	kinds := make([]string, len(events))
+	for index, event := range events {
+		kinds[index] = event.Kind
+	}
+	return kinds
 }
 
 type sequenceChatModel struct {

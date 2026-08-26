@@ -217,8 +217,16 @@ func writeAIStream(ginCtx *gin.Context, stream <-chan ai.Event, sectionID, secti
 	for event := range stream {
 		var err error
 		switch event.Kind {
+		case "progress":
+			payload := map[string]any{"stage": event.Stage, "message": event.Message}
+			if len(event.Details) > 0 {
+				payload["details"] = json.RawMessage(event.Details)
+			}
+			err = sse.WriteEvent("progress", payload)
 		case "thinking":
-			err = sse.WriteEvent("thinking", map[string]string{"text": event.ThinkingText})
+			if sectionID == "" && sectionType == "" {
+				err = sse.WriteEvent("thinking", map[string]string{"text": event.ThinkingText})
+			}
 		case "suggestion":
 			payload := map[string]any{"newContent": json.RawMessage(event.Suggestion)}
 			if sectionID != "" && sectionType != "" {

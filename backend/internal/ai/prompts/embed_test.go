@@ -14,7 +14,19 @@ func TestEmbeddedPromptTemplatesContainRequiredGuidance(t *testing.T) {
 			"用户没写的数字不要替用户填",
 			"严格按返回的 JSON schema 输出，不要有多余字段、不要 markdown 包裹、不要解释文字。",
 		},
-		"rewriting_strategy.tmpl": {"用户没写的数字不要编", "不编事实的前提下"},
+		"rewriting_strategy.tmpl": {
+			"S1 量化缺失",
+			"S2 动词贫瘠",
+			"S3 职责堆砌/SAR",
+			"S4 成果模糊/价值翻译",
+			"S5 关键词缺失/JD 术语注入",
+			"S6 句式平庸/结构化并列",
+			"S7 劣势暴露",
+			"S8 冗长啰嗦/信息降噪",
+			"只能写入 analysis.warnings",
+			"不得写入 rewrite 或 matchedIssues",
+			"不得推测解释、原因或占位符",
+		},
 		"system_generate.tmpl":    {"不得编造数字、日期、雇主名。", "所有 section 按 JD 侧重点排序。"},
 		"section_summary.tmpl":    {"60-150 字", "定位 + 核心优势 + 目标岗位匹配"},
 		"section_work.tmpl":       {"{{.Title}}", "工作/实习经历", "不可改字段请原样保留", "动作 + 对象 + 结果"},
@@ -34,6 +46,32 @@ func TestEmbeddedPromptTemplatesContainRequiredGuidance(t *testing.T) {
 				t.Fatalf("parse %s: %v", name, err)
 			}
 		})
+	}
+}
+
+func TestRewritingStrategyUsesApprovedS1ToS8TaxonomyInOrder(t *testing.T) {
+	content := MustRead("rewriting_strategy.tmpl")
+	want := []string{
+		"S1 量化缺失",
+		"S2 动词贫瘠",
+		"S3 职责堆砌/SAR",
+		"S4 成果模糊/价值翻译",
+		"S5 关键词缺失/JD 术语注入",
+		"S6 句式平庸/结构化并列",
+		"S7 劣势暴露",
+		"S8 冗长啰嗦/信息降噪",
+	}
+
+	last := -1
+	for _, taxonomy := range want {
+		position := strings.Index(content, taxonomy)
+		if position == -1 {
+			t.Fatalf("rewriting strategy missing approved taxonomy %q", taxonomy)
+		}
+		if position <= last {
+			t.Fatalf("rewriting strategy taxonomy is out of order at %q", taxonomy)
+		}
+		last = position
 	}
 }
 

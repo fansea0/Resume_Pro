@@ -111,8 +111,20 @@ func TestAIRewriteHidesCrossTenantResume(t *testing.T) {
 
 func TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext(t *testing.T) {
 	fake := llmtesting.NewFake()
-	fake.ThinkingText = "先分析岗位要求"
-	fake.FinalJSON = `{"markdown":"量化交付成果"}`
+	fake.ThinkingText = "原始模型推理"
+	fake.StreamChunks = []string{"原始模型分段推理"}
+	fake.FinalJSON = `{
+		"rewrite":{"markdown":"量化交付成果"},
+		"analysis":{
+			"jdAlignment":{"status":"applied","matchedKeywords":["稳定性"],"excludedKeywords":[]},
+			"matchedIssues":[
+				{"code":"S2","target":{"field":"markdown"},"resolution":"替换弱动词","status":"fixed"},
+				{"code":"S5","target":{"field":"markdown"},"resolution":"删除无信息量修饰语","status":"fixed"}
+			],
+			"evidenceRequests":[{"code":"S1","target":{"field":"markdown"},"reason":"缺少规模","exampleWithPlaceholder":"覆盖 XX 名用户"}],
+			"warnings":[{"code":"S7","resolution":"请结合既有事实检查经历叙事。"}]
+		}
+	}`
 	fixture := setupAIAPI(t, ai.NewService(fake, nil, ai.WithMaxRetries(0)))
 	cookie := loginAs(t, fixture.router, "ai-context@example.com")
 	user, err := fixture.authRepository.GetUserByEmail(context.Background(), "ai-context@example.com")
@@ -131,11 +143,25 @@ func TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext(t *testing.T) {
 	assertSSEHeaders(t, response)
 	assert.True(t, response.Flushed, "each SSE event should flush buffered bytes")
 	frames := parseSSEFrames(t, response.Body.String())
-	require.Len(t, frames, 3)
-	assert.Equal(t, []string{"thinking", "suggestion", "done"}, frameNames(frames))
-	assert.JSONEq(t, `{"text":"先分析岗位要求"}`, frames[0].Data)
-	assert.JSONEq(t, `{"sectionId":"summary","sectionType":"summary","newContent":{"markdown":"量化交付成果"}}`, frames[1].Data)
-	assert.JSONEq(t, `{}`, frames[2].Data)
+	require.Len(t, frames, 7)
+	assert.Equal(t, []string{"progress", "progress", "progress", "progress", "progress", "suggestion", "done"}, frameNames(frames))
+	assert.JSONEq(t, `{"stage":"context_loaded","message":"已读取当前章节与目标岗位上下文。"}`, frames[0].Data)
+	assert.JSONEq(t, `{"stage":"jd_alignment_started","message":"正在对齐目标岗位关键词。"}`, frames[1].Data)
+	assert.JSONEq(t, `{"stage":"jd_alignment_completed","message":"已完成目标岗位关键词对齐。"}`, frames[2].Data)
+	assert.JSONEq(t, `{"stage":"optimization_started","message":"正在优化章节表达。"}`, frames[3].Data)
+	assert.JSONEq(t, `{"stage":"optimization_completed","message":"已生成可审阅的优化建议。"}`, frames[4].Data)
+	assert.JSONEq(t, `{"sectionId":"summary","sectionType":"summary","newContent":{"rewrite":{"markdown":"量化交付成果"},"analysis":{"jdAlignment":{"status":"applied","matchedKeywords":["稳定性"],"excludedKeywords":[]},"matchedIssues":[{"code":"S2","target":{"field":"markdown"},"resolution":"替换弱动词","status":"fixed"},{"code":"S5","target":{"field":"markdown"},"resolution":"删除无信息量修饰语","status":"fixed"}],"evidenceRequests":[{"code":"S1","target":{"field":"markdown"},"reason":"缺少规模","exampleWithPlaceholder":"覆盖 XX 名用户"}],"warnings":[{"code":"S7","resolution":"已基于既有事实重组叙事，未推测空窗、离职或转行原因。"}]}}}`, frames[5].Data)
+	var suggestion struct {
+		NewContent struct {
+			Rewrite json.RawMessage `json:"rewrite"`
+		} `json:"newContent"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(frames[5].Data), &suggestion))
+	assert.JSONEq(t, `{"markdown":"量化交付成果"}`, string(suggestion.NewContent.Rewrite))
+	assert.NotContains(t, string(suggestion.NewContent.Rewrite), "XX", "S1 placeholders belong to analysis, never the adopted rewrite")
+	assert.JSONEq(t, `{}`, frames[6].Data)
+	assert.NotContains(t, response.Body.String(), fake.ThinkingText)
+	assert.NotContains(t, response.Body.String(), fake.StreamChunks[0])
 
 	require.Len(t, fake.RecordedInputs, 1)
 	require.Len(t, fake.RecordedInputs[0], 2)
@@ -159,7 +185,10 @@ func TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext(t *testing.T) {
 
 func TestAIRewriteSelectsRequestedSectionByIDAndType(t *testing.T) {
 	fake := llmtesting.NewFake()
-	fake.FinalJSON = `{"markdown":"rewritten second summary"}`
+	fake.FinalJSON = `{
+		"rewrite":{"markdown":"rewritten second summary"},
+		"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}
+	}`
 	fixture := setupAIAPI(t, ai.NewService(fake, nil, ai.WithMaxRetries(0)))
 	cookie := loginAs(t, fixture.router, "ai-duplicate-section@example.com")
 	item := createAIResume(t, fixture, "ai-duplicate-section@example.com", `{
@@ -174,8 +203,8 @@ func TestAIRewriteSelectsRequestedSectionByIDAndType(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	frames := parseSSEFrames(t, response.Body.String())
-	assert.Equal(t, []string{"suggestion", "done"}, frameNames(frames))
-	assert.JSONEq(t, `{"sectionId":"summary-second","sectionType":"summary","newContent":{"markdown":"rewritten second summary"}}`, frames[0].Data)
+	assert.Equal(t, []string{"progress", "progress", "progress", "progress", "progress", "suggestion", "done"}, frameNames(frames))
+	assert.JSONEq(t, `{"sectionId":"summary-second","sectionType":"summary","newContent":{"rewrite":{"markdown":"rewritten second summary"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}}}`, frames[5].Data)
 	require.Len(t, fake.RecordedInputs, 1)
 	var promptInput struct {
 		CurrentContent json.RawMessage `json:"currentContent"`
@@ -213,7 +242,10 @@ func TestAIRewriteTreatsMissingOrForeignTargetJobAsNoContext(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := llmtesting.NewFake()
-			fake.FinalJSON = `{"markdown":"new"}`
+			fake.FinalJSON = `{
+				"rewrite":{"markdown":"new"},
+				"analysis":{"jdAlignment":{"status":"applied"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}
+			}`
 			fixture := setupAIAPI(t, ai.NewService(fake, nil, ai.WithMaxRetries(0)))
 			cookie := loginAs(t, fixture.router, "missing-target@example.com")
 			user, err := fixture.authRepository.GetUserByEmail(context.Background(), "missing-target@example.com")
@@ -224,7 +256,19 @@ func TestAIRewriteTreatsMissingOrForeignTargetJobAsNoContext(t *testing.T) {
 			response := aiRequest(t, fixture.router, "/api/ai/resumes/"+itoa(item.ID)+"/section/rewrite", `{"sectionId":"summary","sectionType":"summary"}`, &http.Cookie{Name: "resume_session", Value: cookie})
 
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-			assert.Equal(t, []string{"suggestion", "done"}, frameNames(parseSSEFrames(t, response.Body.String())))
+			frames := parseSSEFrames(t, response.Body.String())
+			assert.Equal(t, []string{"progress", "progress", "progress", "progress", "progress", "suggestion", "done"}, frameNames(frames))
+			var suggestion struct {
+				NewContent struct {
+					Analysis struct {
+						JDAlignment struct {
+							Status string `json:"status"`
+						} `json:"jdAlignment"`
+					} `json:"analysis"`
+				} `json:"newContent"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(frames[5].Data), &suggestion))
+			assert.Equal(t, "skipped", suggestion.NewContent.Analysis.JDAlignment.Status)
 			require.Len(t, fake.RecordedInputs, 1)
 			var promptInput struct {
 				TargetJob *ai.TargetJobContext `json:"targetJob"`
@@ -248,10 +292,12 @@ func TestAIRewriteStreamsErrorThenDoneForAsyncLLMFailure(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assertSSEHeaders(t, response)
 	frames := parseSSEFrames(t, response.Body.String())
-	require.Len(t, frames, 2)
-	assert.Equal(t, []string{"error", "done"}, frameNames(frames))
-	assert.JSONEq(t, `{"code":"LLM_ERROR","message":"upstream unavailable"}`, frames[0].Data)
-	assert.JSONEq(t, `{}`, frames[1].Data)
+	require.Len(t, frames, 4)
+	assert.Equal(t, []string{"progress", "progress", "error", "done"}, frameNames(frames))
+	assert.JSONEq(t, `{"stage":"context_loaded","message":"已读取当前章节与目标岗位上下文。"}`, frames[0].Data)
+	assert.JSONEq(t, `{"stage":"jd_alignment_started","message":"正在对齐目标岗位关键词。"}`, frames[1].Data)
+	assert.JSONEq(t, `{"code":"LLM_ERROR","message":"upstream unavailable"}`, frames[2].Data)
+	assert.JSONEq(t, `{}`, frames[3].Data)
 }
 
 func TestAIRewriteReturnsJSONWhenStreamCannotStart(t *testing.T) {

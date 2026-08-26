@@ -38,34 +38,74 @@ export interface ProjectRewriteContent {
   items: ProjectRewriteItem[];
 }
 
+export type OptimizationStage =
+  | 'context_loaded'
+  | 'jd_alignment_started'
+  | 'jd_alignment_completed'
+  | 'optimization_started'
+  | 'optimization_completed';
+
+export interface OptimizationTarget {
+  itemId?: string;
+  field: string;
+}
+
+export interface OptimizationAnalysis {
+  jdAlignment: {
+    status: 'applied' | 'skipped';
+    matchedKeywords?: string[];
+    excludedKeywords?: string[];
+  };
+  matchedIssues: Array<{
+    code: string;
+    label?: string;
+    target: OptimizationTarget;
+    resolution: string;
+    status: 'fixed';
+  }>;
+  evidenceRequests: Array<{
+    code: 'S1';
+    target: OptimizationTarget;
+    reason: string;
+    exampleWithPlaceholder: string;
+  }>;
+  warnings: Array<{
+    code: string;
+    resolution: string;
+  }>;
+}
+
+export interface OptimizationSuggestion<TRewrite> {
+  rewrite: TRewrite;
+  analysis: OptimizationAnalysis;
+}
+
 export type SuggestionEvent =
   | {
       kind: 'suggestion';
       sectionId: string;
       sectionType: 'summary';
-      newContent: SummaryRewriteContent;
-      rationale?: string;
+      newContent: OptimizationSuggestion<SummaryRewriteContent>;
     }
   | {
       kind: 'suggestion';
       sectionId: string;
       sectionType: 'work' | 'internship';
-      newContent: ExperienceRewriteContent;
-      rationale?: string;
+      newContent: OptimizationSuggestion<ExperienceRewriteContent>;
     }
   | {
       kind: 'suggestion';
       sectionId: string;
       sectionType: 'project';
-      newContent: ProjectRewriteContent;
-      rationale?: string;
+      newContent: OptimizationSuggestion<ProjectRewriteContent>;
     };
 
 export type ThinkingEvent = { kind: 'thinking'; text: string };
+export type ProgressEvent = { kind: 'progress'; stage: OptimizationStage; message: string };
 export type ErrorEvent = { kind: 'error'; code: string; message: string };
 export type DoneEvent = { kind: 'done' };
 
-export type SSEEvent = ThinkingEvent | SuggestionEvent | ErrorEvent | DoneEvent;
+export type SSEEvent = ThinkingEvent | ProgressEvent | SuggestionEvent | ErrorEvent | DoneEvent;
 
 export type GenerateSuggestionEvent = {
   kind: 'suggestion';
