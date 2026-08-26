@@ -70,6 +70,44 @@ func TestOptimizationOutputAllowsS1PlaceholderOnlyInEvidenceRequest(t *testing.T
 	assert.Contains(t, string(analysis), `"exampleWithPlaceholder":"覆盖 XX 名用户"`)
 }
 
+func TestOptimizationOutputDowngradesAnalysisWhenEvidencePlaceholderLeaksOutsideS1Example(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []byte
+	}{
+		{
+			name: "matched issue resolution",
+			raw:  []byte(`{"rewrite":{"markdown":"主导产品交付"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[{"code":"S2","target":{"field":"markdown"},"resolution":"覆盖 XX 名用户","status":"fixed"}],"evidenceRequests":[],"warnings":[]}}`),
+		},
+		{
+			name: "matched issue label",
+			raw:  []byte(`{"rewrite":{"markdown":"主导产品交付"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[{"code":"S2","label":"XX 量化缺失","target":{"field":"markdown"},"resolution":"替换弱动词","status":"fixed"}],"evidenceRequests":[],"warnings":[]}}`),
+		},
+		{
+			name: "evidence request reason",
+			raw:  []byte(`{"rewrite":{"markdown":"主导产品交付"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[{"code":"S1","target":{"field":"markdown"},"reason":"还需 XX 名用户规模","exampleWithPlaceholder":"覆盖 XX 名用户"}],"warnings":[]}}`),
+		},
+		{
+			name: "warning resolution",
+			raw:  []byte(`{"rewrite":{"markdown":"主导产品交付"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[{"code":"S8","resolution":"请补充 XX 数据"}]}}`),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, analysis, ok, err := ai.ValidateOptimizationOutput(
+				"summary",
+				json.RawMessage(`{"markdown":"负责产品交付"}`),
+				tt.raw,
+			)
+
+			require.NoError(t, err)
+			assert.False(t, ok)
+			assert.NotContains(t, string(analysis), "XX")
+		})
+	}
+}
+
 func TestOptimizationOutputDowngradesAnalysisForFrozenTarget(t *testing.T) {
 	rewrite, analysis, ok, err := ai.ValidateOptimizationOutput(
 		"work",
@@ -109,6 +147,46 @@ func TestOptimizationOutputDowngradesFixedIssueWithoutActualDiff(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok)
 	assert.JSONEq(t, `{"markdown":"负责产品交付"}`, string(rewrite))
+	assert.Contains(t, string(analysis), "未能生成完整分析说明")
+}
+
+func TestOptimizationOutputDowngradesS7RewriteTargetedFixedIssue(t *testing.T) {
+	_, analysis, ok, err := ai.ValidateOptimizationOutput(
+		"summary",
+		json.RawMessage(`{"markdown":"负责产品交付"}`),
+		[]byte(`{
+			"rewrite":{"markdown":"主导产品交付"},
+			"analysis":{
+				"jdAlignment":{"status":"skipped"},
+				"matchedIssues":[{"code":"S7","target":{"field":"markdown"},"resolution":"已重组既有事实","status":"fixed"}],
+				"evidenceRequests":[],
+				"warnings":[]
+			}
+		}`),
+	)
+
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Contains(t, string(analysis), "未能生成完整分析说明")
+}
+
+func TestOptimizationOutputDowngradesS7WarningWithInventedCausalLanguage(t *testing.T) {
+	_, analysis, ok, err := ai.ValidateOptimizationOutput(
+		"summary",
+		json.RawMessage(`{"markdown":"负责产品交付"}`),
+		[]byte(`{
+			"rewrite":{"markdown":"主导产品交付"},
+			"analysis":{
+				"jdAlignment":{"status":"skipped"},
+				"matchedIssues":[],
+				"evidenceRequests":[],
+				"warnings":[{"code":"S7","resolution":"由于频繁跳槽，改写为稳定的职业叙事。"}]
+			}
+		}`),
+	)
+
+	require.NoError(t, err)
+	assert.False(t, ok)
 	assert.Contains(t, string(analysis), "未能生成完整分析说明")
 }
 
@@ -171,4 +249,16 @@ func TestOptimizationOutputRejectsTrailingJSONValue(t *testing.T) {
 
 	require.Error(t, err)
 	assert.False(t, ok)
+}
+
+func TestOptimizationOutputFallbackUsesSchemaAllowedWarningCode(t *testing.T) {
+	_, analysis, ok, err := ai.ValidateOptimizationOutput(
+		"summary",
+		json.RawMessage(`{"markdown":"负责产品交付"}`),
+		[]byte(`{"rewrite":{"markdown":"主导产品交付"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[]}}`),
+	)
+
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.JSONEq(t, `{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[{"code":"S8","resolution":"未能生成完整分析说明。"}]}`, string(analysis))
 }

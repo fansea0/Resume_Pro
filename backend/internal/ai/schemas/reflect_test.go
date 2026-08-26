@@ -123,6 +123,31 @@ func TestOptimizationOutputSchemaForRejectsUnsupportedSectionType(t *testing.T) 
 	}
 }
 
+func TestOptimizationOutputSchemaKeepsS7ExplanationOnly(t *testing.T) {
+	schemaValue, err := schemas.OptimizationOutputFor("summary")
+	if err != nil {
+		t.Fatalf("OptimizationOutputFor(summary) error: %v", err)
+	}
+	schema := schemaValue.(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	analysis := properties["analysis"].(map[string]any)
+	analysisProperties := analysis["properties"].(map[string]any)
+	issues := analysisProperties["matchedIssues"].(map[string]any)
+	issueItems := issues["items"].(map[string]any)
+	issueProperties := issueItems["properties"].(map[string]any)
+	issueCodes := issueProperties["code"].(map[string]any)["enum"].([]string)
+	if containsString(issueCodes, "S7") {
+		t.Fatalf("matched issue codes = %#v, must not permit rewrite-targeted S7", issueCodes)
+	}
+	warnings := analysisProperties["warnings"].(map[string]any)
+	warningItems := warnings["items"].(map[string]any)
+	warningProperties := warningItems["properties"].(map[string]any)
+	warningCodes := warningProperties["code"].(map[string]any)["enum"].([]string)
+	if !containsString(warningCodes, "S7") {
+		t.Fatalf("warning codes = %#v, want S7 explanation support", warningCodes)
+	}
+}
+
 func TestGenerateJSONSchemaRejectsUnsupportedType(t *testing.T) {
 	got, err := schemas.GenerateJSONSchema(struct{}{})
 	if err == nil {
@@ -238,6 +263,15 @@ func experienceSchema() map[string]any {
 		},
 		"required": []string{"items"},
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func assertObjectSchemasAreStrict(t *testing.T, path string, node any) {

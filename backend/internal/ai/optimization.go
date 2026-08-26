@@ -168,8 +168,13 @@ func validateJDAlignment(value any) error {
 		return errors.New("analysis jdAlignment status must be applied or skipped")
 	}
 	for _, field := range []string{"matchedKeywords", "excludedKeywords"} {
-		if value, present := alignment[field]; present && !isStringArray(value) {
-			return fmt.Errorf("analysis jdAlignment %s must be an array of strings", field)
+		if value, present := alignment[field]; present {
+			if !isStringArray(value) {
+				return fmt.Errorf("analysis jdAlignment %s must be an array of strings", field)
+			}
+			if containsUnsafePlaceholderValue(value) {
+				return fmt.Errorf("analysis jdAlignment %s contains an evidence placeholder", field)
+			}
 		}
 	}
 	return nil
@@ -189,15 +194,23 @@ func validateIssues(sectionType string, current, rewrite map[string]any, value a
 			return err
 		}
 		code, ok := issue["code"].(string)
-		if !ok || !isIssueCode(code) || code == "S1" {
+		if !ok || !isIssueCode(code) || code == "S1" || code == "S7" {
 			return fmt.Errorf("analysis matchedIssues %d has invalid code", index)
 		}
-		if _, ok := issue["resolution"].(string); !ok {
+		resolution, ok := issue["resolution"].(string)
+		if !ok {
 			return fmt.Errorf("analysis matchedIssues %d resolution must be a string", index)
 		}
+		if containsUnsafePlaceholderText(resolution) {
+			return fmt.Errorf("analysis matchedIssues %d resolution contains an evidence placeholder", index)
+		}
 		if label, present := issue["label"]; present {
-			if _, ok := label.(string); !ok {
+			label, ok := label.(string)
+			if !ok {
 				return fmt.Errorf("analysis matchedIssues %d label must be a string", index)
+			}
+			if containsUnsafePlaceholderText(label) {
+				return fmt.Errorf("analysis matchedIssues %d label contains an evidence placeholder", index)
 			}
 		}
 		field, itemID, err := validateTarget(sectionType, current, issue["target"])
@@ -235,8 +248,12 @@ func validateEvidenceRequests(sectionType string, current map[string]any, value 
 		if _, _, err := validateTarget(sectionType, current, request["target"]); err != nil {
 			return fmt.Errorf("analysis evidenceRequests %d: %w", index, err)
 		}
-		if _, ok := request["reason"].(string); !ok {
+		reason, ok := request["reason"].(string)
+		if !ok {
 			return fmt.Errorf("analysis evidenceRequests %d reason must be a string", index)
+		}
+		if containsUnsafePlaceholderText(reason) {
+			return fmt.Errorf("analysis evidenceRequests %d reason contains an evidence placeholder", index)
 		}
 		example, ok := request["exampleWithPlaceholder"].(string)
 		if !ok || !strings.Contains(example, "XX") {
@@ -263,8 +280,15 @@ func validateWarnings(value any) error {
 		if !ok || !isIssueCode(code) || code == "S1" {
 			return fmt.Errorf("analysis warnings %d has invalid code", index)
 		}
-		if _, ok := warning["resolution"].(string); !ok {
+		resolution, ok := warning["resolution"].(string)
+		if !ok {
 			return fmt.Errorf("analysis warnings %d resolution must be a string", index)
+		}
+		if containsUnsafePlaceholderText(resolution) {
+			return fmt.Errorf("analysis warnings %d resolution contains an evidence placeholder", index)
+		}
+		if code == "S7" && containsInventedS7CausalLanguage(resolution) {
+			return fmt.Errorf("analysis warnings %d S7 resolution contains causal language", index)
 		}
 	}
 	return nil
@@ -377,7 +401,7 @@ func containsUnsafePlaceholder(raw json.RawMessage) bool {
 func hasUnsafePlaceholder(value any) bool {
 	switch value := value.(type) {
 	case string:
-		return strings.Contains(value, "XX") || strings.Contains(value, "待补充")
+		return containsUnsafePlaceholderText(value)
 	case []any:
 		for _, item := range value {
 			if hasUnsafePlaceholder(item) {
@@ -395,7 +419,24 @@ func hasUnsafePlaceholder(value any) bool {
 }
 
 func fallbackAnalysisJSON() json.RawMessage {
-	return json.RawMessage(`{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[{"code":"ANALYSIS_UNAVAILABLE","resolution":"未能生成完整分析说明。"}]}`)
+	return json.RawMessage(`{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[{"code":"S8","resolution":"未能生成完整分析说明。"}]}`)
+}
+
+func containsUnsafePlaceholderText(value string) bool {
+	return strings.Contains(value, "XX") || strings.Contains(value, "待补充")
+}
+
+func containsUnsafePlaceholderValue(value any) bool {
+	return hasUnsafePlaceholder(value)
+}
+
+func containsInventedS7CausalLanguage(resolution string) bool {
+	for _, marker := range []string{"因为", "由于", "所以", "导致", "造成", "源于", "归因", "原因是"} {
+		if strings.Contains(resolution, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeJSONObject(raw []byte, name string) (map[string]any, error) {
