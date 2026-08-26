@@ -9,6 +9,7 @@ import { AiSuggestionPanel } from './AiSuggestionPanel';
 vi.mock('../api/ai', () => ({ streamRewrite: vi.fn() }));
 
 const streamRewriteMock = vi.mocked(streamRewrite);
+const emptyAnalysis = { jdAlignment: { status: 'skipped' as const }, matchedIssues: [], evidenceRequests: [], warnings: [] };
 
 const summarySection: SummarySection = {
   id: 'summary-42',
@@ -51,6 +52,110 @@ afterEach(() => {
 });
 
 describe('AiSuggestionPanel', () => {
+  it('keeps the first message for a repeated progress stage', async () => {
+    let emit: ((event: SSEEvent) => void) | undefined;
+    streamRewriteMock.mockImplementation((_resumeId, _request, onEvent) => {
+      emit = onEvent;
+      return new Promise<void>(() => undefined);
+    });
+
+    render(
+      <AiSuggestionPanel
+        onAccept={vi.fn()}
+        onClose={vi.fn()}
+        originalSection={summarySection}
+        resumeId={7}
+        sectionType="summary"
+      />,
+    );
+
+    act(() => {
+      emit?.({ kind: 'progress', stage: 'context_loaded', message: '已读取上下文。' });
+      emit?.({ kind: 'progress', stage: 'context_loaded', message: '不应覆盖已读取上下文。' });
+    });
+
+    expect(screen.getAllByText('已读取上下文。')).toHaveLength(2);
+    expect(screen.queryByText('不应覆盖已读取上下文。')).not.toBeInTheDocument();
+  });
+
+  it('renders server analysis in order and only accepts the rewrite payload', async () => {
+    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
+      onEvent({ kind: 'progress', stage: 'context_loaded', message: '已读取上下文。' } as SSEEvent);
+      onEvent({
+        kind: 'suggestion',
+        sectionId: 'summary-42',
+        sectionType: 'summary',
+        newContent: {
+          rewrite: { markdown: '主导产品交付。' },
+          analysis: {
+            jdAlignment: { status: 'skipped' },
+            matchedIssues: [
+              { code: 'S2', target: { field: 'markdown' }, resolution: '替换弱动词', status: 'fixed' },
+              { code: 'S5', target: { field: 'markdown' }, resolution: '删除无信息量修饰语', status: 'fixed' },
+            ],
+            evidenceRequests: [{ code: 'S1', target: { field: 'markdown' }, reason: '缺少规模', exampleWithPlaceholder: '覆盖 XX 名用户' }],
+            warnings: [{ code: 'S7', resolution: '请结合既有事实检查经历叙事。' }],
+          },
+        },
+      } as SSEEvent);
+      onEvent({ kind: 'done' });
+    });
+    const onAccept = vi.fn();
+
+    render(
+      <AiSuggestionPanel
+        onAccept={onAccept}
+        onClose={vi.fn()}
+        originalSection={summarySection}
+        resumeId={7}
+        sectionType="summary"
+      />,
+    );
+
+    const analysis = await screen.findByRole('region', { name: '分析过程' });
+    expect(analysis).toHaveTextContent('未绑定目标岗位');
+    expect(analysis).toHaveTextContent('替换弱动词');
+    expect(analysis).toHaveTextContent('删除无信息量修饰语');
+    expect(analysis).toHaveTextContent('覆盖 XX 名用户');
+    expect(analysis).toHaveTextContent('不会随采纳写入简历');
+    expect(analysis).toHaveTextContent('请结合既有事实检查经历叙事。');
+    expect(analysis.querySelectorAll('section')).toHaveLength(4);
+    expect(within(analysis).queryByRole('button')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '采纳' }));
+    expect(onAccept).toHaveBeenCalledWith({ markdown: '主导产品交付。' });
+  });
+
+  it('labels an empty rewrite as preserving the original and prevents adoption', async () => {
+    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
+      onEvent({
+        kind: 'suggestion',
+        sectionId: 'summary-42',
+        sectionType: 'summary',
+        newContent: {
+          rewrite: { markdown: '' },
+          analysis: { jdAlignment: { status: 'skipped' }, matchedIssues: [], evidenceRequests: [], warnings: [] },
+        },
+      } as SSEEvent);
+      onEvent({ kind: 'done' });
+    });
+    const onAccept = vi.fn();
+
+    render(
+      <AiSuggestionPanel
+        onAccept={onAccept}
+        onClose={vi.fn()}
+        originalSection={summarySection}
+        resumeId={7}
+        sectionType="summary"
+      />,
+    );
+
+    expect(await screen.findByText(/保留原文/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '采纳' }));
+    expect(onAccept).not.toHaveBeenCalled();
+  });
+
   it('requests and renders only the suggestion correlated to the current section id and type', async () => {
     let emit: ((event: SSEEvent) => void) | undefined;
     streamRewriteMock.mockImplementation((_resumeId, _request, onEvent) => {
@@ -81,7 +186,7 @@ describe('AiSuggestionPanel', () => {
         kind: 'suggestion',
         sectionId: 'another-summary',
         sectionType: 'summary',
-        newContent: { markdown: '不应显示的内容' },
+        newContent: { rewrite: { markdown: '不应显示的内容' }, analysis: emptyAnalysis },
       });
       emit?.({ kind: 'thinking', text: '岗位要求' });
     });
@@ -91,7 +196,7 @@ describe('AiSuggestionPanel', () => {
         kind: 'suggestion',
         sectionId: 'summary-42',
         sectionType: 'summary',
-        newContent: { markdown: '主导产品交付，推动上线效率提升 30%。' },
+        newContent: { rewrite: { markdown: '主导产品交付，推动上线效率提升 30%。' }, analysis: emptyAnalysis },
       });
       emit?.({ kind: 'done' });
     });
@@ -103,7 +208,7 @@ describe('AiSuggestionPanel', () => {
         kind: 'suggestion',
         sectionId: 'summary-42',
         sectionType: 'summary',
-        newContent: { markdown: '过期建议' },
+        newContent: { rewrite: { markdown: '过期建议' }, analysis: emptyAnalysis },
       });
     });
     expect(screen.queryByText('过期建议')).not.toBeInTheDocument();
@@ -124,14 +229,15 @@ describe('AiSuggestionPanel', () => {
         sectionId: 'project-42',
         sectionType: 'project',
         newContent: {
-          items: [
+          rewrite: { items: [
             {
               id: 'project-alpha',
               introduction: '搭建面向校招的智能招聘平台。',
               achievements: '提高了效率。',
             },
             { id: 'unknown-item', introduction: '不应渲染的条目' },
-          ],
+          ] },
+          analysis: emptyAnalysis,
         },
       });
       onEvent({ kind: 'done' });
@@ -149,7 +255,7 @@ describe('AiSuggestionPanel', () => {
 
     expect((await screen.findAllByText('分析问题')).length).toBeGreaterThan(0);
     expect(screen.queryByRole('group', { name: 'Frozen · 保持原样' })).not.toBeInTheDocument();
-    expect(screen.getByText('「智能招聘平台」重写了项目介绍，突出业务目标和你的贡献。')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '分析过程' })).toHaveTextContent('未绑定目标岗位');
 
     const rewriteable = screen.getByRole('group', { name: 'Rewriteable · AI 建议' });
     expect(within(rewriteable).getByText('建设招聘平台。')).toHaveClass('ai-suggestion-panel__old-value');
@@ -161,7 +267,7 @@ describe('AiSuggestionPanel', () => {
   it('accepts the typed rewrite and rejects without changing it', async () => {
     const rewrite = { markdown: '量化产品交付成果。' };
     streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
-      onEvent({ kind: 'suggestion', sectionId: 'summary-42', sectionType: 'summary', newContent: rewrite });
+      onEvent({ kind: 'suggestion', sectionId: 'summary-42', sectionType: 'summary', newContent: { rewrite, analysis: emptyAnalysis } });
       onEvent({ kind: 'done' });
     });
     const onAccept = vi.fn();
@@ -200,7 +306,7 @@ describe('AiSuggestionPanel', () => {
         sectionId: 'project-42',
         sectionType: 'project',
         newContent: {
-          items: [
+          rewrite: { items: [
             {
               id: 'project-alpha',
               introduction: '',
@@ -210,7 +316,8 @@ describe('AiSuggestionPanel', () => {
               arbitrary: '不在契约内',
             },
           ],
-          title: '恶意覆盖章节标题',
+          title: '恶意覆盖章节标题' },
+          analysis: emptyAnalysis,
         },
       } as unknown as SSEEvent);
       onEvent({ kind: 'done' });
@@ -244,7 +351,7 @@ describe('AiSuggestionPanel', () => {
         kind: 'suggestion',
         sectionId: 'summary-42',
         sectionType: 'summary',
-        newContent: { markdown: '已完成的建议' },
+        newContent: { rewrite: { markdown: '已完成的建议' }, analysis: emptyAnalysis },
       });
       onEvent({ kind: 'done' });
       return new Promise<void>((_resolve, reject) => {
@@ -282,7 +389,7 @@ describe('AiSuggestionPanel', () => {
         kind: 'suggestion',
         sectionId: 'summary-42',
         sectionType: 'summary',
-        newContent: { markdown: '可采纳建议' },
+        newContent: { rewrite: { markdown: '可采纳建议' }, analysis: emptyAnalysis },
       });
       onEvent({ kind: 'done' });
       return new Promise<void>(() => undefined);
@@ -372,7 +479,7 @@ describe('AiSuggestionPanel', () => {
         kind: 'suggestion',
         sectionId: 'summary-42',
         sectionType: 'summary',
-        newContent: { markdown: '过期建议' },
+        newContent: { rewrite: { markdown: '过期建议' }, analysis: emptyAnalysis },
       });
       streams[0].onEvent({ kind: 'done' });
       streams[1].onEvent({ kind: 'thinking', text: '新一轮分析' });

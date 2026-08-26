@@ -30,6 +30,35 @@ afterEach(() => {
 });
 
 describe('streamRewrite', () => {
+  it('decodes split progress, wrapped suggestion, and done frames in stream order', async () => {
+    const source = [
+      'event: progress\n',
+      'data: {"stage":"jd_alignment_started","message":"正在对齐目标岗位关键词。"}\n\n',
+      'event: suggestion\n',
+      'data: {"sectionId":"summary-42","sectionType":"summary","newContent":{"rewrite":{"markdown":"主导产品交付。"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}}}\n\n',
+      'event: done\n',
+      'data: {}\n\n',
+    ].join('');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse(source, [7, 39, source.length - 4])));
+    const events: SSEEvent[] = [];
+
+    await streamRewrite(7, { sectionId: 'summary-42', sectionType: 'summary' }, (event) => events.push(event));
+
+    expect(events).toEqual([
+      { kind: 'progress', stage: 'jd_alignment_started', message: '正在对齐目标岗位关键词。' },
+      {
+        kind: 'suggestion',
+        sectionId: 'summary-42',
+        sectionType: 'summary',
+        newContent: {
+          rewrite: { markdown: '主导产品交付。' },
+          analysis: { jdAlignment: { status: 'skipped' }, matchedIssues: [], evidenceRequests: [], warnings: [] },
+        },
+      },
+      { kind: 'done' },
+    ]);
+  });
+
   it('posts the stable section identity once and parses chunked CRLF SSE frames', async () => {
     const source = [
       ': heartbeat\r\n',
@@ -39,7 +68,7 @@ describe('streamRewrite', () => {
       'data: "先分析岗位"}\r\n',
       '\r\n',
       'event: suggestion\r\n',
-      'data: {"kind":"untrusted","sectionId":"section-42","sectionType":"project","newContent":{"items":[]}}\r\n',
+      'data: {"kind":"untrusted","sectionId":"section-42","sectionType":"project","newContent":{"rewrite":{"items":[]},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}}}\r\n',
       '\r\n',
       'event:done\r\n',
       'data: {}\r\n',
@@ -67,7 +96,12 @@ describe('streamRewrite', () => {
     });
     expect(events).toEqual([
       { kind: 'thinking', text: '先分析岗位' },
-      { kind: 'suggestion', sectionId: 'section-42', sectionType: 'project', newContent: { items: [] } },
+      {
+        kind: 'suggestion', sectionId: 'section-42', sectionType: 'project', newContent: {
+          rewrite: { items: [] },
+          analysis: { jdAlignment: { status: 'skipped' }, matchedIssues: [], evidenceRequests: [], warnings: [] },
+        },
+      },
       { kind: 'done' },
     ]);
   });

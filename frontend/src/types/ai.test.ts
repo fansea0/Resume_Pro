@@ -2,6 +2,7 @@ import { describe, expectTypeOf, it } from 'vitest';
 
 import type {
   ExperienceRewriteContent,
+  OptimizationSuggestion,
   ProjectRewriteContent,
   RewriteRequest,
   SSEEvent,
@@ -41,26 +42,24 @@ describe('AI type contracts', () => {
           kind: 'suggestion';
           sectionId: string;
           sectionType: 'summary';
-          newContent: { markdown: string };
-          rationale?: string;
+          newContent: OptimizationSuggestion<{ markdown: string }>;
         }
       | {
           kind: 'suggestion';
           sectionId: string;
           sectionType: 'work' | 'internship';
-          newContent: ExperienceRewriteContent;
-          rationale?: string;
+          newContent: OptimizationSuggestion<ExperienceRewriteContent>;
         }
       | {
           kind: 'suggestion';
           sectionId: string;
           sectionType: 'project';
-          newContent: ProjectRewriteContent;
-          rationale?: string;
+          newContent: OptimizationSuggestion<ProjectRewriteContent>;
         }
     >();
     expectTypeOf<SSEEvent>().toEqualTypeOf<
       | { kind: 'thinking'; text: string }
+      | { kind: 'progress'; stage: 'context_loaded' | 'jd_alignment_started' | 'jd_alignment_completed' | 'optimization_started' | 'optimization_completed'; message: string }
       | SuggestionEvent
       | { kind: 'error'; code: string; message: string }
       | { kind: 'done' }

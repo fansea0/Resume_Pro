@@ -10,6 +10,7 @@ type SSEEventKind = SSEEvent['kind'];
 
 const supportedEventKinds = new Set<SSEEventKind>([
   'thinking',
+  'progress',
   'suggestion',
   'error',
   'done',
