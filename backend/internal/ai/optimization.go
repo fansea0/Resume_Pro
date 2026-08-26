@@ -218,10 +218,10 @@ func validateIssues(sectionType string, current, rewrite map[string]any, value a
 			return fmt.Errorf("analysis matchedIssues %d: %w", index, err)
 		}
 		status, ok := issue["status"].(string)
-		if !ok {
-			return fmt.Errorf("analysis matchedIssues %d status must be a string", index)
+		if !ok || status != "fixed" {
+			return fmt.Errorf("analysis matchedIssues %d status must be fixed", index)
 		}
-		if status == "fixed" && !targetChanged(sectionType, current, rewrite, itemID, field) {
+		if !targetChanged(sectionType, current, rewrite, itemID, field) {
 			return fmt.Errorf("analysis matchedIssues %d marks an unchanged target as fixed", index)
 		}
 	}
@@ -284,11 +284,12 @@ func validateWarnings(value any) error {
 		if !ok {
 			return fmt.Errorf("analysis warnings %d resolution must be a string", index)
 		}
+		if code == "S7" {
+			warning["resolution"] = normalizedS7WarningResolution
+			continue
+		}
 		if containsUnsafePlaceholderText(resolution) {
 			return fmt.Errorf("analysis warnings %d resolution contains an evidence placeholder", index)
-		}
-		if code == "S7" && containsInventedS7CausalLanguage(resolution) {
-			return fmt.Errorf("analysis warnings %d S7 resolution contains causal language", index)
 		}
 	}
 	return nil
@@ -422,21 +423,14 @@ func fallbackAnalysisJSON() json.RawMessage {
 	return json.RawMessage(`{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[{"code":"S8","resolution":"未能生成完整分析说明。"}]}`)
 }
 
+const normalizedS7WarningResolution = "已基于既有事实重组叙事，未推测空窗、离职或转行原因。"
+
 func containsUnsafePlaceholderText(value string) bool {
 	return strings.Contains(value, "XX") || strings.Contains(value, "待补充")
 }
 
 func containsUnsafePlaceholderValue(value any) bool {
 	return hasUnsafePlaceholder(value)
-}
-
-func containsInventedS7CausalLanguage(resolution string) bool {
-	for _, marker := range []string{"因为", "由于", "所以", "导致", "造成", "源于", "归因", "原因是"} {
-		if strings.Contains(resolution, marker) {
-			return true
-		}
-	}
-	return false
 }
 
 func decodeJSONObject(raw []byte, name string) (map[string]any, error) {

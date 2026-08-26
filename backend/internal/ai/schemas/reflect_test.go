@@ -146,6 +146,10 @@ func TestOptimizationOutputSchemaKeepsS7ExplanationOnly(t *testing.T) {
 	if !containsString(warningCodes, "S7") {
 		t.Fatalf("warning codes = %#v, want S7 explanation support", warningCodes)
 	}
+	issueStatuses := issueProperties["status"].(map[string]any)["enum"].([]string)
+	if !reflect.DeepEqual(issueStatuses, []string{"fixed"}) {
+		t.Fatalf("matched issue status enum = %#v, want only fixed", issueStatuses)
+	}
 }
 
 func TestGenerateJSONSchemaRejectsUnsupportedType(t *testing.T) {

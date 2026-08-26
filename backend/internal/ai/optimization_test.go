@@ -150,6 +150,30 @@ func TestOptimizationOutputDowngradesFixedIssueWithoutActualDiff(t *testing.T) {
 	assert.Contains(t, string(analysis), "未能生成完整分析说明")
 }
 
+func TestOptimizationOutputDowngradesMatchedIssueWithNonFixedStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{name: "evidence marker", status: "XX"},
+		{name: "unknown semantic status", status: "pending"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, analysis, ok, err := ai.ValidateOptimizationOutput(
+				"summary",
+				json.RawMessage(`{"markdown":"负责产品交付"}`),
+				[]byte(`{"rewrite":{"markdown":"主导产品交付"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[{"code":"S2","target":{"field":"markdown"},"resolution":"替换弱动词","status":"`+tt.status+`"}],"evidenceRequests":[],"warnings":[]}}`),
+			)
+
+			require.NoError(t, err)
+			assert.False(t, ok)
+			assert.NotContains(t, string(analysis), tt.status)
+		})
+	}
+}
+
 func TestOptimizationOutputDowngradesS7RewriteTargetedFixedIssue(t *testing.T) {
 	_, analysis, ok, err := ai.ValidateOptimizationOutput(
 		"summary",
@@ -170,7 +194,7 @@ func TestOptimizationOutputDowngradesS7RewriteTargetedFixedIssue(t *testing.T) {
 	assert.Contains(t, string(analysis), "未能生成完整分析说明")
 }
 
-func TestOptimizationOutputDowngradesS7WarningWithInventedCausalLanguage(t *testing.T) {
+func TestOptimizationOutputNormalizesS7WarningWithoutPreservingInventedReason(t *testing.T) {
 	_, analysis, ok, err := ai.ValidateOptimizationOutput(
 		"summary",
 		json.RawMessage(`{"markdown":"负责产品交付"}`),
@@ -186,8 +210,9 @@ func TestOptimizationOutputDowngradesS7WarningWithInventedCausalLanguage(t *test
 	)
 
 	require.NoError(t, err)
-	assert.False(t, ok)
-	assert.Contains(t, string(analysis), "未能生成完整分析说明")
+	assert.True(t, ok)
+	assert.Contains(t, string(analysis), "已基于既有事实重组叙事，未推测空窗、离职或转行原因。")
+	assert.NotContains(t, string(analysis), "由于频繁跳槽")
 }
 
 func TestOptimizationOutputDowngradesFixedIssueForNullRewriteField(t *testing.T) {

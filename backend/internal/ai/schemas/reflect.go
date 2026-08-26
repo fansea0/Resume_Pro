@@ -178,7 +178,7 @@ func issueSchema() map[string]any {
 			"label":      map[string]any{"type": "string"},
 			"target":     issueTargetSchema(),
 			"resolution": map[string]any{"type": "string"},
-			"status":     map[string]any{"type": "string"},
+			"status":     map[string]any{"type": "string", "enum": []string{"fixed"}},
 		},
 		"required": []string{"code", "target", "resolution", "status"},
 	}
