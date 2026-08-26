@@ -199,8 +199,8 @@ function OptimizationAnalysis({ analysis }: { analysis: OptimizationAnalysisPayl
           <ul className="ai-suggestion-panel__analysis-list">
             {matchedIssues.map((issue, index) => (
               <li key={`${issue.code}-${issue.target.itemId ?? ''}-${issue.target.field}-${index}`}>
-                <strong>{issue.code}</strong>
-                <span>{issue.label ?? issue.resolution}</span>
+                <strong>{issue.code}{issue.label ? ` · ${issue.label}` : ''}</strong>
+                <span>如何修复：{issue.resolution}</span>
               </li>
             ))}
           </ul>
@@ -335,13 +335,24 @@ function hasSafeRewrite(
   originalSection: RewriteableResumeSection,
   rewrite: SummaryRewriteContent | ExperienceRewriteContent | ProjectRewriteContent,
 ) {
-  if (originalSection.type === 'summary') return 'markdown' in rewrite && rewrite.markdown.trim() !== '';
+  if (originalSection.type === 'summary') {
+    return 'markdown' in rewrite
+      && rewrite.markdown.trim() !== ''
+      && rewrite.markdown !== originalSection.content.markdown;
+  }
   if (!('items' in rewrite)) return false;
-  const itemIds = new Set(originalSection.content.items.map((item) => item.id));
-  const fields = originalSection.type === 'project'
-    ? rewriteableProjectFields.map(([field]) => field)
-    : rewriteableExperienceFields.map(([field]) => field);
-  return rewrite.items.some((item) => itemIds.has(item.id) && fields.some((field) => field in item));
+  if (originalSection.type === 'project') {
+    const originalItemsByID = new Map(originalSection.content.items.map((item) => [item.id, item]));
+    return (rewrite as ProjectRewriteContent).items.some((item) => {
+      const originalItem = originalItemsByID.get(item.id);
+      return originalItem !== undefined && rewriteableProjectFields.some(([field]) => field in item && item[field] !== originalItem[field]);
+    });
+  }
+  const originalItemsByID = new Map(originalSection.content.items.map((item) => [item.id, item]));
+  return (rewrite as ExperienceRewriteContent).items.some((item) => {
+    const originalItem = originalItemsByID.get(item.id);
+    return originalItem !== undefined && rewriteableExperienceFields.some(([field]) => field in item && item[field] !== originalItem[field]);
+  });
 }
 
 export function AiSuggestionPanel<T extends RewriteableSectionType>({

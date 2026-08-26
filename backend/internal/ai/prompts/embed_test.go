@@ -15,8 +15,14 @@ func TestEmbeddedPromptTemplatesContainRequiredGuidance(t *testing.T) {
 			"严格按返回的 JSON schema 输出，不要有多余字段、不要 markdown 包裹、不要解释文字。",
 		},
 		"rewriting_strategy.tmpl": {
-			"用户没写的数字不要编",
-			"不编事实的前提下",
+			"S1 量化缺失",
+			"S2 动词贫瘠",
+			"S3 职责堆砌/SAR",
+			"S4 成果模糊/价值翻译",
+			"S5 关键词缺失/JD 术语注入",
+			"S6 句式平庸/结构化并列",
+			"S7 劣势暴露",
+			"S8 冗长啰嗦/信息降噪",
 			"只能写入 analysis.warnings",
 			"不得写入 rewrite 或 matchedIssues",
 			"不得推测解释、原因或占位符",
@@ -40,6 +46,32 @@ func TestEmbeddedPromptTemplatesContainRequiredGuidance(t *testing.T) {
 				t.Fatalf("parse %s: %v", name, err)
 			}
 		})
+	}
+}
+
+func TestRewritingStrategyUsesApprovedS1ToS8TaxonomyInOrder(t *testing.T) {
+	content := MustRead("rewriting_strategy.tmpl")
+	want := []string{
+		"S1 量化缺失",
+		"S2 动词贫瘠",
+		"S3 职责堆砌/SAR",
+		"S4 成果模糊/价值翻译",
+		"S5 关键词缺失/JD 术语注入",
+		"S6 句式平庸/结构化并列",
+		"S7 劣势暴露",
+		"S8 冗长啰嗦/信息降噪",
+	}
+
+	last := -1
+	for _, taxonomy := range want {
+		position := strings.Index(content, taxonomy)
+		if position == -1 {
+			t.Fatalf("rewriting strategy missing approved taxonomy %q", taxonomy)
+		}
+		if position <= last {
+			t.Fatalf("rewriting strategy taxonomy is out of order at %q", taxonomy)
+		}
+		last = position
 	}
 }
 

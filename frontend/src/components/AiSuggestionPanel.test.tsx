@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { streamRewrite } from '../api/ai';
 import type { SSEEvent } from '../types/ai';
-import type { ProjectSection, SummarySection } from '../types/resume';
+import type { InternshipSection, ProjectSection, SummarySection, WorkSection } from '../types/resume';
 import { AiSuggestionPanel } from './AiSuggestionPanel';
 
 vi.mock('../api/ai', () => ({ streamRewrite: vi.fn() }));
@@ -44,6 +44,26 @@ const projectSection: ProjectSection = {
       },
     ],
   },
+};
+
+const workSection: WorkSection = {
+  id: 'work-42',
+  type: 'work',
+  title: '工作经历',
+  visible: true,
+  content: {
+    items: [{
+      id: 'work-alpha', company: '示例公司', role: '产品经理', startDate: '2024.01', endDate: '至今', location: '上海',
+      achievements: '负责产品交付。', highlightsMarkdown: '- 参与需求梳理', showLocation: true, showAchievements: true,
+    }],
+  },
+};
+
+const internshipSection: InternshipSection = {
+  ...workSection,
+  id: 'internship-42',
+  type: 'internship',
+  title: '实习经历',
 };
 
 afterEach(() => {
@@ -90,8 +110,8 @@ describe('AiSuggestionPanel', () => {
           analysis: {
             jdAlignment: { status: 'skipped' },
             matchedIssues: [
-              { code: 'S2', target: { field: 'markdown' }, resolution: '替换弱动词', status: 'fixed' },
-              { code: 'S5', target: { field: 'markdown' }, resolution: '删除无信息量修饰语', status: 'fixed' },
+              { code: 'S2', label: '动词贫瘠', target: { field: 'markdown' }, resolution: '替换弱动词', status: 'fixed' },
+              { code: 'S5', label: '关键词缺失', target: { field: 'markdown' }, resolution: '删除无信息量修饰语', status: 'fixed' },
             ],
             evidenceRequests: [{ code: 'S1', target: { field: 'markdown' }, reason: '缺少规模', exampleWithPlaceholder: '覆盖 XX 名用户' }],
             warnings: [{ code: 'S7', resolution: '请结合既有事实检查经历叙事。' }],
@@ -114,7 +134,9 @@ describe('AiSuggestionPanel', () => {
 
     const analysis = await screen.findByRole('region', { name: '分析过程' });
     expect(analysis).toHaveTextContent('未绑定目标岗位');
+    expect(analysis).toHaveTextContent('动词贫瘠');
     expect(analysis).toHaveTextContent('替换弱动词');
+    expect(analysis).toHaveTextContent('关键词缺失');
     expect(analysis).toHaveTextContent('删除无信息量修饰语');
     expect(analysis).toHaveTextContent('覆盖 XX 名用户');
     expect(analysis).toHaveTextContent('不会随采纳写入简历');
@@ -153,6 +175,39 @@ describe('AiSuggestionPanel', () => {
     );
 
     expect(await screen.findByText(/保留原文/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '采纳' }));
+    expect(onAccept).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { section: summarySection, sectionType: 'summary' as const, rewrite: { markdown: '我负责产品交付。' } },
+    { section: workSection, sectionType: 'work' as const, rewrite: { items: [{ id: 'work-alpha', achievements: '负责产品交付。', highlightsMarkdown: '- 参与需求梳理' }] } },
+    { section: internshipSection, sectionType: 'internship' as const, rewrite: { items: [{ id: 'work-alpha', achievements: '负责产品交付。', highlightsMarkdown: '- 参与需求梳理' }] } },
+    { section: projectSection, sectionType: 'project' as const, rewrite: { items: [{ id: 'project-alpha', introduction: '建设招聘平台。', achievements: '提高了效率。', highlightsMarkdown: '- 完成系统交付' }] } },
+  ])('treats a no-op $sectionType rewrite as preserving the original and prevents adoption', async ({ section, sectionType, rewrite }) => {
+    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
+      onEvent({
+        kind: 'suggestion',
+        sectionId: section.id,
+        sectionType,
+        newContent: { rewrite, analysis: emptyAnalysis },
+      } as SSEEvent);
+      onEvent({ kind: 'done' });
+    });
+    const onAccept = vi.fn();
+
+    render(
+      <AiSuggestionPanel
+        onAccept={onAccept}
+        onClose={vi.fn()}
+        originalSection={section}
+        resumeId={7}
+        sectionType={sectionType}
+      />,
+    );
+
+    expect(await screen.findByText(/保留原文/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '采纳' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '采纳' }));
     expect(onAccept).not.toHaveBeenCalled();
   });
