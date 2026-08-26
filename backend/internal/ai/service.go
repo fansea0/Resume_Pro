@@ -84,6 +84,9 @@ type GenerateInput struct {
 
 type Event struct {
 	Kind         string          `json:"kind"`
+	Stage        string          `json:"stage,omitempty"`
+	Message      string          `json:"message,omitempty"`
+	Details      json.RawMessage `json:"details,omitempty"`
 	ThinkingText string          `json:"thinkingText,omitempty"`
 	Suggestion   json.RawMessage `json:"suggestion,omitempty"`
 	ErrorCode    string          `json:"errorCode,omitempty"`
@@ -95,7 +98,7 @@ func (s *Service) RewriteSection(ctx context.Context, in RewriteInput) (<-chan E
 		return nil, errors.New("AI chat model is required")
 	}
 
-	outputSchemaValue, err := schemas.RewriteSchemaFor(in.SectionType)
+	outputSchemaValue, err := schemas.OptimizationOutputFor(in.SectionType)
 	if err != nil {
 		return nil, err
 	}
@@ -130,44 +133,58 @@ func (s *Service) rewrite(ctx context.Context, ch chan<- Event, in RewriteInput,
 		return
 	}
 
-	tokensIn := 0
-	tokensOut := 0
+	if !s.emit(ctx, ch, Event{Kind: "progress", Stage: "context_loaded", Message: "已读取当前章节与目标岗位上下文。"}) {
+		return
+	}
+	if !s.emit(ctx, ch, Event{Kind: "progress", Stage: "jd_alignment_started", Message: "正在对齐目标岗位关键词。"}) {
+		return
+	}
+
 	responseFormat := llm.WithJSONSchemaResponse(llm.JSONSchemaResponseFormat{
-		Name:   in.SectionType + "_rewrite",
+		Name:   in.SectionType + "_optimization",
 		Strict: true,
 		Schema: outputSchema,
 	})
-	for attempt := 0; attempt <= s.maxRetries; attempt++ {
-		response, err := s.streamResponse(ctx, ch, messages, responseFormat)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			s.fail(ctx, ch, callInfo, "LLM_ERROR", err)
+	response, err := s.streamResponse(ctx, ch, messages, responseFormat)
+	if err != nil {
+		if ctx.Err() != nil {
 			return
 		}
-		tokensIn += response.tokensIn
-		tokensOut += response.tokensOut
-
-		if err := validateRewriteResponse([]byte(response.content), outputSchema); err != nil {
-			if attempt < s.maxRetries {
-				messages = repairMessages(messages, response.content, err)
-				continue
-			}
-			s.fail(ctx, ch, callInfo, "INVALID_RESPONSE", err)
-			return
-		}
-
-		s.hooks.OnCallFinished(ctx, callInfo, CallResult{
-			DurationMS:   time.Since(startedAt).Milliseconds(),
-			TokensIn:     tokensIn,
-			TokensOut:    tokensOut,
-			RetryCount:   attempt,
-			SuggestionOK: true,
-		})
-		s.sendTerminal(ctx, ch, Event{Kind: "suggestion", Suggestion: json.RawMessage(response.content)})
+		s.fail(ctx, ch, callInfo, "LLM_ERROR", err)
 		return
 	}
+
+	rewrite, analysis, _, err := ValidateOptimizationOutput(in.SectionType, in.CurrentContent, []byte(response.content))
+	if err != nil {
+		s.fail(ctx, ch, callInfo, "INVALID_RESPONSE", err)
+		return
+	}
+	suggestion, err := json.Marshal(struct {
+		Rewrite  json.RawMessage `json:"rewrite"`
+		Analysis json.RawMessage `json:"analysis"`
+	}{Rewrite: rewrite, Analysis: analysis})
+	if err != nil {
+		s.fail(ctx, ch, callInfo, "INVALID_RESPONSE", err)
+		return
+	}
+	if !s.emit(ctx, ch, Event{Kind: "progress", Stage: "jd_alignment_completed", Message: "已完成目标岗位关键词对齐。"}) {
+		return
+	}
+	if !s.emit(ctx, ch, Event{Kind: "progress", Stage: "optimization_started", Message: "正在优化章节表达。"}) {
+		return
+	}
+	if !s.emit(ctx, ch, Event{Kind: "progress", Stage: "optimization_completed", Message: "已生成可审阅的优化建议。"}) {
+		return
+	}
+
+	s.hooks.OnCallFinished(ctx, callInfo, CallResult{
+		DurationMS:   time.Since(startedAt).Milliseconds(),
+		TokensIn:     response.tokensIn,
+		TokensOut:    response.tokensOut,
+		RetryCount:   0,
+		SuggestionOK: true,
+	})
+	s.sendTerminal(ctx, ch, Event{Kind: "suggestion", Suggestion: suggestion})
 }
 
 func (s *Service) GenerateResume(ctx context.Context, _ GenerateInput) (<-chan Event, error) {
@@ -220,11 +237,6 @@ func (s *Service) streamResponse(ctx context.Context, ch chan<- Event, messages 
 			}
 			if usage.CompletionTokens > tokensOut {
 				tokensOut = usage.CompletionTokens
-			}
-		}
-		if message.ReasoningContent != "" {
-			if !s.emit(ctx, ch, Event{Kind: "thinking", ThinkingText: message.ReasoningContent}) {
-				return streamResponse{}, ctx.Err()
 			}
 		}
 		content.WriteString(message.Content)
@@ -314,7 +326,7 @@ func (s *Service) emit(ctx context.Context, ch chan<- Event, event Event) bool {
 	if ctx.Err() != nil {
 		return false
 	}
-	// Thinking is best-effort telemetry. Reserve two buffered slots for the
+	// Progress is best-effort telemetry. Reserve two buffered slots for the
 	// atomic terminal outcome so a slow consumer cannot stall completion.
 	if cap(ch) >= 2 && len(ch) >= cap(ch)-2 {
 		return true
