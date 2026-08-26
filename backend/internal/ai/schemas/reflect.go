@@ -29,6 +29,24 @@ func RewriteSchemaFor(sectionType string) (any, error) {
 	return GenerateJSONSchema(v)
 }
 
+// OptimizationOutputFor returns the strict rewrite-and-analysis response
+// schema for a supported resume section.
+func OptimizationOutputFor(sectionType string) (any, error) {
+	rewrite, err := RewriteSchemaFor(sectionType)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"rewrite":  rewrite,
+			"analysis": optimizationAnalysisSchema(),
+		},
+		"required": []string{"rewrite", "analysis"},
+	}, nil
+}
+
 func rewriteStructFor(sectionType string) (any, error) {
 	switch sectionType {
 	case "summary":
@@ -100,6 +118,95 @@ func projectRewriteSchema() map[string]any {
 			},
 		},
 		"required": []string{"items"},
+	}
+}
+
+func optimizationAnalysisSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"jdAlignment": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"status":           map[string]any{"type": "string", "enum": []string{"applied", "skipped"}},
+					"matchedKeywords":  stringArraySchema(),
+					"excludedKeywords": stringArraySchema(),
+				},
+				"required": []string{"status"},
+			},
+			"matchedIssues": map[string]any{
+				"type":  "array",
+				"items": issueSchema(),
+			},
+			"evidenceRequests": map[string]any{
+				"type":  "array",
+				"items": evidenceRequestSchema(),
+			},
+			"warnings": map[string]any{
+				"type":  "array",
+				"items": warningSchema(),
+			},
+		},
+		"required": []string{"jdAlignment", "matchedIssues", "evidenceRequests", "warnings"},
+	}
+}
+
+func stringArraySchema() map[string]any {
+	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+}
+
+func issueTargetSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"itemId": map[string]any{"type": "string"},
+			"field":  map[string]any{"type": "string"},
+		},
+		"required": []string{"field"},
+	}
+}
+
+func issueSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"code":       map[string]any{"type": "string", "enum": []string{"S2", "S3", "S4", "S5", "S6", "S7", "S8"}},
+			"label":      map[string]any{"type": "string"},
+			"target":     issueTargetSchema(),
+			"resolution": map[string]any{"type": "string"},
+			"status":     map[string]any{"type": "string"},
+		},
+		"required": []string{"code", "target", "resolution", "status"},
+	}
+}
+
+func evidenceRequestSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"code":                   map[string]any{"type": "string", "enum": []string{"S1"}},
+			"target":                 issueTargetSchema(),
+			"reason":                 map[string]any{"type": "string"},
+			"exampleWithPlaceholder": map[string]any{"type": "string"},
+		},
+		"required": []string{"code", "target", "reason", "exampleWithPlaceholder"},
+	}
+}
+
+func warningSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"code":       map[string]any{"type": "string", "enum": []string{"S2", "S3", "S4", "S5", "S6", "S7", "S8"}},
+			"resolution": map[string]any{"type": "string"},
+		},
+		"required": []string{"code", "resolution"},
 	}
 }
 

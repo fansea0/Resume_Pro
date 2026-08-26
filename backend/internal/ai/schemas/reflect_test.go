@@ -83,6 +83,46 @@ func TestRewriteSchemaForRejectsUnsupportedSectionType(t *testing.T) {
 	}
 }
 
+func TestOptimizationOutputSchemaForWrapsRewriteAndAnalysisStrictly(t *testing.T) {
+	schemaValue, err := schemas.OptimizationOutputFor("summary")
+	if err != nil {
+		t.Fatalf("OptimizationOutputFor(summary) error: %v", err)
+	}
+
+	schema, ok := schemaValue.(map[string]any)
+	if !ok {
+		t.Fatalf("OptimizationOutputFor(summary) = %T, want map[string]any", schemaValue)
+	}
+	if schema["type"] != "object" {
+		t.Fatalf("optimization schema type = %#v, want object", schema["type"])
+	}
+	if schema["additionalProperties"] != false {
+		t.Fatalf("optimization schema additionalProperties = %#v, want false", schema["additionalProperties"])
+	}
+	if !reflect.DeepEqual(schema["required"], []string{"rewrite", "analysis"}) {
+		t.Fatalf("optimization schema required = %#v, want rewrite and analysis", schema["required"])
+	}
+
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("optimization schema properties = %#v, want map", schema["properties"])
+	}
+	if len(properties) != 2 || properties["rewrite"] == nil || properties["analysis"] == nil {
+		t.Fatalf("optimization schema properties = %#v, want only rewrite and analysis", properties)
+	}
+	assertObjectSchemasAreStrict(t, "$", schema)
+}
+
+func TestOptimizationOutputSchemaForRejectsUnsupportedSectionType(t *testing.T) {
+	got, err := schemas.OptimizationOutputFor("education")
+	if err == nil {
+		t.Fatal("OptimizationOutputFor(education) error = nil, want unsupported section error")
+	}
+	if got != nil {
+		t.Fatalf("OptimizationOutputFor(education) schema = %#v, want nil", got)
+	}
+}
+
 func TestGenerateJSONSchemaRejectsUnsupportedType(t *testing.T) {
 	got, err := schemas.GenerateJSONSchema(struct{}{})
 	if err == nil {
