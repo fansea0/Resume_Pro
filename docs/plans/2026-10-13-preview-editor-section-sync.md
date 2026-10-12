@@ -468,7 +468,7 @@ export interface ResumeTemplate {
 }
 ```
 
-- [ ] **Step 4: 给 7 个模板的组件签名加上 `onLocate` 并透传**
+- [ ] **Step 4: 给全部 12 个模板的组件签名加上 `onLocate` 并透传**
 
 每个模板的导出组件从 `({ document }: { document: ResumeDocument })` 改为：
 
@@ -477,6 +477,8 @@ export interface ResumeTemplate {
 ```
 
 并在其 `<ResumeSections …>` 上加 `onLocate={onLocate}`。`creative` 与 `editorial` 各有两处 `<ResumeSections>`，两处都要加。`onLocate` 为 `undefined` 时行为与改动前完全一致。
+
+> **注意：必须是全部 12 个，不只是覆盖槽的那 7 个。** 本任务的跨模板不变量用 `it.each(templateRegistry.map(...))` 遍历整个注册表，而走默认槽的 6 个模板（`minimal` / `creative` / `editorial` / `redline` / `violet` / `azure-chronicle`）标题渲染的是 `DefaultTitle`——它同样需要 `onLocate` 透传，否则断言"每个区块标题内都有定位按钮"会在这 6 个模板上失败。只改 7 个会留下红色套件。
 
 - [ ] **Step 5: 补区块锚点（4 个模板）**
 
