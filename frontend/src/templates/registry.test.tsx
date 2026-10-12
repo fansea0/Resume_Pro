@@ -35,7 +35,7 @@ const sampleResume: ResumeDocument = {
 afterEach(cleanup);
 
 describe('templateRegistry', () => {
-  it('registers the minimal, business, creative, tech, editorial, redline, violet, azure chronicle, mint canvas, scholarly serif, and blue sidebar templates', () => {
+  it('registers the minimal, business, creative, tech, editorial, redline, violet, azure chronicle, mint canvas, scholarly serif, blue sidebar, and navy gutter templates', () => {
     expect(templateRegistry.map((template) => template.id)).toEqual([
       'minimal',
       'business',
@@ -48,7 +48,35 @@ describe('templateRegistry', () => {
       'mint-canvas',
       'scholarly-serif',
       'blue-sidebar',
+      'navy-gutter',
     ]);
+  });
+
+  it('renders the navy gutter label rail, section card, and resume content', () => {
+    const template = templateRegistry.find(({ id }) => id === 'navy-gutter');
+
+    expect(template).toBeDefined();
+    const Renderer = template!.Renderer;
+    const { container } = render(<Renderer document={sampleResume} />);
+
+    const root = container.querySelector('.template-navy-gutter');
+    expect(root).toBeInTheDocument();
+    // Section labels are navy blocks pinned to the top-left of each section card.
+    const skillsSection = container.querySelector('[data-resume-section="skills"]');
+    expect(skillsSection?.classList.contains('template-navy-gutter__section')).toBe(true);
+    const skillsLabel = skillsSection?.querySelector('[data-resume-section-title] .template-navy-gutter__label');
+    expect(skillsLabel?.textContent).toBe('专业技能');
+    // The first section extends a navy rule out of its label, as in the reference.
+    const summarySection = container.querySelector('[data-resume-section="summary"]');
+    expect(summarySection?.classList.contains('template-navy-gutter__section--summary')).toBe(true);
+    // Skills render as chips with a highlighted core item.
+    const chips = container.querySelectorAll('[data-resume-section="skills"] .template-navy-gutter__skill');
+    expect(chips).toHaveLength(1);
+    expect(chips[0]?.classList.contains('template-navy-gutter__skill--core')).toBe(true);
+    expect(container.querySelector('[data-template-honours]')).toBeInTheDocument();
+
+    expect(screen.getByText('林晓')).toBeInTheDocument();
+    expect(screen.getByText('星云科技')).toBeInTheDocument();
   });
 
   it('renders the blue sidebar identity landmark and resume content', () => {

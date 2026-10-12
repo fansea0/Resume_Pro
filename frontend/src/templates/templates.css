@@ -710,6 +710,317 @@
 }
 .template-blue-sidebar__honour { margin: .25mm 0; }
 
+/* Navy Gutter — 技术岗「深蓝栏标 + 双列表格」单栏版式，取自参考简历的网格语言：
+   左侧一条浅灰蓝栏标带（实测 #f5f6f8），右侧内容区接近纯白（实测 #fbfcfd），
+   中间一条细分隔线；每个分区是一行表格，分区之间无间隙、只有横线。
+   色块为极深藏蓝（实测 #020c3c ~ #04113f），压在栏标带左上角，文字居中。 */
+.template-navy-gutter {
+  --ng-navy: #0a1a4a;
+  --ng-navy-bright: #24366b;
+  --ng-ink: #14161c;
+  --ng-muted: #555d6b;
+  --ng-band: #f5f6f8;
+  --ng-paper: #fcfdfe;
+  --ng-band-alt: #eef1f6;
+  --ng-rule: #dcdfe4;
+  --ng-label: 25.5mm;
+  --ng-gutter: 31.5mm;
+  background: #fff;
+  color: var(--ng-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  font-size: 13.5px;
+  line-height: 1.72;
+  max-width: 210mm;
+  padding: 13mm 13mm 15mm;
+}
+.template-navy-gutter a { color: var(--ng-navy-bright); text-decoration: none; }
+.template-navy-gutter a:hover { text-decoration: underline; }
+
+/* Header — 姓名左、求职意向右，底部一条深色细线，联系方式独占一行。 */
+.template-navy-gutter__header {
+  align-items: flex-end;
+  border-bottom: 1px solid var(--ng-navy);
+  display: flex;
+  gap: 6mm;
+  justify-content: space-between;
+  margin: 0 0 3.4mm;
+  padding: 0 0 2.8mm;
+}
+.template-navy-gutter h1.template-navy-gutter__name {
+  color: var(--ng-ink);
+  font-size: 3rem;
+  font-weight: 800;
+  letter-spacing: .02em;
+  line-height: 1.08;
+  margin: 0;
+  padding: 0;
+}
+.template-navy-gutter__header-side {
+  align-items: flex-end;
+  display: flex;
+  flex: 0 1 auto;
+  gap: 3mm;
+}
+.template-navy-gutter__headline {
+  color: var(--ng-ink);
+  font-size: .95rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  margin: 0 0 .3mm;
+  text-align: right;
+}
+.template-navy-gutter__avatar {
+  align-items: center;
+  background: var(--ng-navy);
+  color: #fff;
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 1.05rem;
+  font-weight: 700;
+  height: 15mm;
+  justify-content: center;
+  overflow: hidden;
+  width: 15mm;
+}
+.template-navy-gutter__contact {
+  color: var(--ng-ink);
+  font-size: .86rem;
+  letter-spacing: 0;
+  margin: 0 0 5.5mm;
+}
+.template-navy-gutter__contact-item { white-space: nowrap; }
+.template-navy-gutter__contact-value { color: var(--ng-ink); }
+.template-navy-gutter__contact-sep {
+  color: var(--ng-muted);
+  font-weight: 300;
+  margin: 0 1.8mm;
+}
+
+/* Section — 一行表格：灰蓝色带 + 白色内容区，中间竖线；分区之间无缝，
+   只用 1px 横线分隔，形成连续的表格外观。 */
+.template-navy-gutter__section {
+  background: linear-gradient(90deg, var(--ng-band) 0 var(--ng-gutter), var(--ng-paper) var(--ng-gutter) 100%);
+  border-bottom: 1px solid var(--ng-rule);
+  border-top: 1px solid var(--ng-rule);
+  column-gap: 6mm;
+  display: grid;
+  grid-template-columns: var(--ng-gutter) 1fr;
+  margin: 0;
+  position: relative;
+}
+.template-navy-gutter__section + .template-navy-gutter__section {
+  border-top: 0;
+}
+.template-navy-gutter__section > *:not([data-resume-section-title]) {
+  grid-column: 2;
+  padding-right: 4mm;
+  padding-top: 3mm;
+}
+.template-navy-gutter__section > *:not([data-resume-section-title]):last-child {
+  padding-bottom: 3.2mm;
+}
+.template-navy-gutter__section > .template-navy-gutter__skills,
+.template-navy-gutter__section > .template-navy-gutter__honours {
+  padding-top: 2.2mm;
+}
+/* 栏标带与内容区之间的竖线；色块 z-index 更高，会盖住竖线上端。 */
+.template-navy-gutter__section::before {
+  background: var(--ng-rule);
+  bottom: 0;
+  content: '';
+  left: var(--ng-gutter);
+  position: absolute;
+  top: 0;
+  width: 1px;
+}
+/* 选择器必须带 h2：全局 `.resume-template h2` 的优先级 (0,1,1) 高于单类名
+   (0,1,0)，否则 font-size / letter-spacing / margin 会被全局值夺走。 */
+.template-navy-gutter h2.template-navy-gutter__section-title {
+  align-self: start;
+  background: var(--ng-navy);
+  color: #fff;
+  font-size: .92rem;
+  font-weight: 700;
+  grid-column: 1;
+  grid-row: 1;
+  letter-spacing: .04em;
+  line-height: 1.2;
+  margin: 0;
+  padding: 2.6mm 1.5mm;
+  text-transform: none;
+  width: var(--ng-label);
+  z-index: 1;
+}
+.template-navy-gutter__label {
+  display: block;
+  text-align: center;
+  white-space: nowrap;
+}
+/* 参考图的标志性动作：栏标色块向右延伸出一条深蓝细线，横穿栏标带与内容区。 */
+.template-navy-gutter__section--summary::after {
+  background: var(--ng-navy);
+  content: '';
+  height: .34rem;
+  left: var(--ng-label);
+  position: absolute;
+  right: 0;
+  top: 4.9mm;
+  z-index: 1;
+}
+.template-navy-gutter__section--summary > *:not([data-resume-section-title]) {
+  padding-top: 5.6mm;
+}
+
+/* Summary — 正文略加粗、居中行距，贴合参考图的阅读密度。 */
+.template-navy-gutter__summary {
+  color: var(--ng-ink);
+  font-size: .92rem;
+  font-weight: 500;
+  line-height: 1.85;
+  margin: 0;
+}
+.template-navy-gutter__summary p { margin: 0; }
+.template-navy-gutter__summary ul { margin: .5mm 0 0; }
+
+/* Entries — 左标题右日期的标题行，条目整体避免跨页断裂。 */
+.template-navy-gutter__entry {
+  break-inside: avoid;
+  margin: 0 0 3mm;
+  page-break-inside: avoid;
+}
+.template-navy-gutter__entry:last-child { margin-bottom: 0; }
+.template-navy-gutter__entry-heading {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .2rem 1rem;
+  justify-content: space-between;
+}
+.template-navy-gutter h3.template-navy-gutter__entry-title {
+  color: var(--ng-ink);
+  font-size: .97rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.4;
+  margin: 0 0 .3mm;
+}
+.template-navy-gutter__entry-role {
+  color: var(--ng-ink);
+  font-weight: 700;
+}
+.template-navy-gutter__entry-sep {
+  color: var(--ng-ink);
+  font-weight: 400;
+  margin: 0 .5rem;
+}
+.template-navy-gutter__meta {
+  color: var(--ng-ink);
+  flex: 0 0 auto;
+  font-size: .86rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.template-navy-gutter__location {
+  color: var(--ng-muted);
+  font-size: .82rem;
+  font-weight: 400;
+}
+.template-navy-gutter__role { color: var(--ng-muted); font-size: .86rem; margin: 0 0 .4mm; }
+.template-navy-gutter__achievements {
+  color: var(--ng-ink);
+  font-size: .88rem;
+  margin: 0 0 .6mm;
+}
+.template-navy-gutter__tag {
+  border-left: 2px solid var(--ng-navy);
+  color: var(--ng-navy);
+  font-size: .84rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin-right: 1.4mm;
+  padding-left: 1.4mm;
+}
+.template-navy-gutter__introduction {
+  background: var(--ng-band-alt);
+  border-left: 3px solid var(--ng-navy);
+  color: var(--ng-ink);
+  font-size: .88rem;
+  font-weight: 600;
+  line-height: 1.62;
+  margin: 0 0 1mm;
+  padding: 1.4mm 2.6mm;
+}
+.template-navy-gutter__link { font-size: .82rem; margin-bottom: .6mm; }
+
+/* Markdown 要点 — 实心圆点、行距紧凑，正文加粗贴近参考图。 */
+.template-navy-gutter__markdown { color: var(--ng-ink); font-size: .88rem; font-weight: 500; }
+.template-navy-gutter__markdown p { margin: 0 0 .4mm; }
+.template-navy-gutter__markdown ul,
+.template-navy-gutter__markdown ol { margin: .4mm 0 .8mm; padding-left: 4.4mm; }
+.template-navy-gutter__markdown li { margin: .5mm 0; }
+.template-navy-gutter__markdown li::marker { color: var(--ng-ink); }
+.template-navy-gutter__markdown a { color: var(--ng-navy-bright); }
+
+/* Chips — 胶囊形，描边为默认样式，核心技能填充实心深蓝。 */
+.template-navy-gutter__skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2mm;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.template-navy-gutter__skill {
+  background: #fff;
+  border: 1px solid #c9ced8;
+  border-radius: 999px;
+  color: var(--ng-ink);
+  font-size: .82rem;
+  letter-spacing: 0;
+  line-height: 1.5;
+  padding: .8mm 3.4mm;
+}
+.template-navy-gutter__skill--core {
+  background: var(--ng-navy);
+  border-color: var(--ng-navy);
+  color: #fff;
+}
+.template-navy-gutter__skill-note {
+  color: var(--ng-muted);
+  font-size: .72rem;
+  letter-spacing: 0;
+}
+.template-navy-gutter__skill--core .template-navy-gutter__skill-note { color: rgba(255, 255, 255, .72); }
+.template-navy-gutter__tech-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.6mm;
+  list-style: none;
+  margin: 0 0 1mm;
+  padding: 0;
+}
+.template-navy-gutter__tech-tag {
+  background: var(--ng-band-alt);
+  color: var(--ng-navy);
+  font-size: .74rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  padding: .4mm 2.2mm;
+}
+
+/* Honours / campus — 简单圆点列表，尊重 A4 分页。 */
+.template-navy-gutter__honours {
+  font-size: .88rem;
+  font-weight: 500;
+  line-height: 1.8;
+  list-style: disc;
+  margin: 0;
+  padding-left: 4.4mm;
+}
+.template-navy-gutter__honour { margin: 0; }
+.template-navy-gutter__honour::marker { color: var(--ng-ink); }
+
 @media (max-width: 640px) {
   .resume-template { min-height: auto; padding: 1.5rem; }
   .template-business__header { align-items: start; flex-direction: column; gap: .75rem; }
@@ -750,4 +1061,17 @@
   .template-blue-sidebar__name { font-size: 1.45rem; }
   .template-blue-sidebar__entry-heading { align-items: flex-start; flex-direction: column; gap: 0; }
   .template-blue-sidebar__date { white-space: normal; }
+  .template-navy-gutter { padding: 1.2rem 1.2rem 1.5rem; }
+  .template-navy-gutter__header { align-items: flex-start; flex-direction: column; gap: .7rem; }
+  .template-navy-gutter__name { font-size: 1.9rem; }
+  .template-navy-gutter__headline { text-align: left; }
+  .template-navy-gutter__avatar { height: 3.6rem; width: 3.6rem; }
+  .template-navy-gutter__section { column-gap: 0; grid-template-columns: 1fr; }
+  .template-navy-gutter__section-title { grid-column: 1; grid-row: 1; padding: 1.4mm 3mm; }
+  .template-navy-gutter__section > *:not([data-resume-section-title]) { grid-column: 1; padding-right: 3mm; padding-top: 2.4mm; }
+  .template-navy-gutter__section > *:not([data-resume-section-title]):last-child { padding-bottom: 2.8mm; }
+  .template-navy-gutter__section--summary > *:not([data-resume-section-title]) { padding-top: 2.4mm; }
+  .template-navy-gutter__section--summary::after { display: none; }
+  .template-navy-gutter__entry-heading { align-items: flex-start; flex-direction: column; gap: 0; }
+  .template-navy-gutter__meta { white-space: normal; }
 }

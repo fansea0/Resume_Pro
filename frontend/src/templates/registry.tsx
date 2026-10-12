@@ -11,6 +11,7 @@ import { AzureChronicleTemplate } from './azure-chronicle';
 import { MintCanvasTemplate } from './mint-canvas';
 import { ScholarlySerifTemplate } from './scholarly-serif';
 import { BlueSidebarTemplate } from './blue-sidebar';
+import { NavyGutterTemplate } from './navy-gutter';
 import './templates.css';
 
 export interface ResumeTemplate {
@@ -35,6 +36,7 @@ export const templateRegistry: ResumeTemplate[] = [
   { id: 'mint-canvas', name: '薄荷绿卡', description: '薄荷绿色块 header 与圆角卡片，关键词 chip 自动高亮，校招与技术岗清新。', tags: ['校招', '技术', '互联网'], styleDescription: '薄荷色块与圆角卡片，关键词 chip 化。', previewImage: '/template-previews/mint-canvas.png', Renderer: MintCanvasTemplate },
   { id: 'scholarly-serif', name: '书卷单栏', description: 'Times 衬线 + 全大写下划线小标题，信息密度高，适合工科校招与传统行业求职。', tags: ['校招', '研发', '工科'], styleDescription: 'Times 衬线全大写下划线标题，单栏密排，工科与学术气质。', previewImage: '/template-previews/scholarly-serif.png', Renderer: ScholarlySerifTemplate },
   { id: 'blue-sidebar', name: '蓝线单栏', description: '白底单栏 + 蓝色左侧引用块，紧凑清晰，技术岗与互联网求职通用。', tags: ['技术', '校招', '互联网'], styleDescription: '白底单栏紧凑布局，蓝色左边线强化重点段落。', previewImage: '/template-previews/blue-sidebar.png', Renderer: BlueSidebarTemplate },
+  { id: 'navy-gutter', name: '深蓝标栏', description: '深蓝标签栏 + 浅色分区卡片，技术栈 chip 化，适合后端与 AI 研发岗位。', tags: ['后端', '研发', '互联网'], styleDescription: '深蓝标签栏压在分区左上角，技能 chip 高亮，工程感强。', previewImage: '/template-previews/navy-gutter.png', Renderer: NavyGutterTemplate },
 ];
 
 export function getTemplate(templateId: TemplateId): ResumeTemplate {
