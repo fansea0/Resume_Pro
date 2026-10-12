@@ -404,22 +404,11 @@ git commit -m "feat: 默认简历区块输出定位锚点与标题定位按钮"
 在 `frontend/src/templates/registry.test.tsx` 追加**跨模板不变量测试**（方案 B 的核心）：
 
 ```tsx
-describe('全部模板的定位锚点不变量', () => {
-  const withItems = createSampleResumeDocument().sections.filter((section) => section.type !== 'summary' && section.type !== 'skills' && section.type !== 'honours');
-
+describe('全部模板的区块与标题定位不变量', () => {
   it.each(templateRegistry.map((t) => t.id))('%s 的每个可见区块都有 section id 锚点', (id) => {
     const { container } = render(<Renderer id={id} />);
     for (const section of createSampleResumeDocument().sections) {
       expect(container.querySelector(`[data-resume-section="${section.type}"][${SECTION_ANCHOR_ATTR}="${section.id}"]`)).not.toBeNull();
-    }
-  });
-
-  it.each(templateRegistry.map((t) => t.id))('%s 的每个经历类条目都有 item id 锚点', (id) => {
-    const { container } = render(<Renderer id={id} />);
-    for (const section of withItems) {
-      for (const item of section.content.items) {
-        expect(container.querySelector(`[${ITEM_ANCHOR_ATTR}="${item.id}"]`)).not.toBeNull();
-      }
     }
   });
 
@@ -430,6 +419,8 @@ describe('全部模板的定位锚点不变量', () => {
   });
 });
 ```
+
+> **条目锚点不变量在 Task 4 才加入。** 本任务结束时整个测试套件必须保持全绿，不允许提交一个红的套件——CI 在 `backend/**` 变更时跑测试，但前端套件的绿色同样是项目门禁。
 
 在该测试文件顶部补齐 import：
 
@@ -522,8 +513,8 @@ function AzureTitle({ children, className, onLocate, section }: TitleSlotProps) 
 
 - [ ] **Step 7: 运行测试确认通过**
 
-Run: `cd frontend && npx vitest run src/templates/registry.test.tsx`
-Expected: 本任务的三组不变量全绿；条目锚点那组此时**仍失败**（Task 4 未做），这是预期的——不要为了让测试变绿而在本任务里顺手改条目渲染。
+Run: `cd frontend && npx vitest run`
+Expected: **全绿**。本任务结束时整个套件必须是绿的。
 
 - [ ] **Step 8: 提交**
 
@@ -545,9 +536,31 @@ git commit -m "feat: 模板补齐区块定位锚点与标题定位按钮"
 
 > **只改 `item` 渲染路径。** `blue-sidebar` / `navy-gutter` / `scholarly-serif` / `tech` 的 `entry` 槽当前不可达（它们都提供了 `item`，`ResumeSections` 里 `slots?.item ? … : <Entry/>` 永远走前者）。不要去改那四个死代码组件。
 
-- [ ] **Step 1: 确认当前失败状态**
+- [ ] **Step 1: 加入条目锚点不变量测试并确认失败**
 
-Run: `cd frontend && npx vitest run src/templates/registry.test.tsx -t "每个经历类条目都有 item id 锚点"`
+在 `frontend/src/templates/registry.test.tsx` 追加（Task 3 已建立的 `describe` 块内或新开一个同名的）：
+
+```tsx
+describe('全部模板的条目定位不变量', () => {
+  const itemSections = createSampleResumeDocument().sections.filter(
+    (section): section is Extract<typeof section, { type: 'work' | 'internship' | 'project' | 'education' | 'campus' }> =>
+      section.type === 'work' || section.type === 'internship' || section.type === 'project' || section.type === 'education' || section.type === 'campus',
+  );
+
+  it.each(templateRegistry.map((t) => t.id))('%s 的每个经历类条目都有 item id 锚点', (id) => {
+    const { container } = render(<Renderer id={id} />);
+    for (const section of itemSections) {
+      for (const item of section.content.items) {
+        expect(container.querySelector(`[${ITEM_ANCHOR_ATTR}="${item.id}"]`)).not.toBeNull();
+      }
+    }
+  });
+});
+```
+
+> 「专业技能」「荣誉奖项」**不在**这个不变量里：设计文档已明确这两类只提供区块级定位（chip / `<li>` 点击区域过小，违反 `AGSIN.md`）。
+
+Run: `cd frontend && npx vitest run src/templates/registry.test.tsx`
 Expected: FAIL，6 个自带 `item` 槽的模板报缺失。
 
 - [ ] **Step 2: `business.tsx`**
