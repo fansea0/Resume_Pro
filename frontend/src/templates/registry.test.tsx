@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { getTemplate, templateRegistry } from './registry';
@@ -45,12 +45,22 @@ const visibleSections = sampleSections.filter((section) => section.visible);
 /**
  * 「专业技能」「荣誉奖项」按设计决策只提供区块级定位：它们渲染为内联 chip / `<li>`，
  * 点击区域过小，套按钮会违反 AGSIN.md 的可用性约束。因此条目级不变量只覆盖经历类区块。
+ *
+ * 与 visibleSections 一样先按 visible 过滤：隐藏区块的条目根本不渲染，
+ * 若不排除，锚点不变量会去要求一个永远不存在的锚点。
  */
 const itemSections = sampleSections.filter(
   (section): section is Extract<ResumeSection, { type: 'work' | 'internship' | 'project' | 'education' | 'campus' }> =>
-    section.type === 'work' || section.type === 'internship' || section.type === 'project' || section.type === 'education' || section.type === 'campus',
+    section.visible && (section.type === 'work' || section.type === 'internship' || section.type === 'project' || section.type === 'education' || section.type === 'campus'),
 );
 const locateEntryCount = itemSections.reduce((total, section) => total + section.content.items.length, 0);
+
+/**
+ * 条目标题元素：多数模板用 `<h3>`，tech 的教育分支用 `<strong>`。
+ * 条目标题不带 `data-resume-section-title`，因此不能按区块标题那样用全局选择器查找——
+ * 必须从条目锚点元素内部向下定位。
+ */
+const ENTRY_HEADING_SELECTOR = 'h1,h2,h3,h4,h5,h6,strong';
 
 describe('templateRegistry', () => {
   it('registers the minimal, business, creative, tech, editorial, redline, violet, azure chronicle, mint canvas, scholarly serif, blue sidebar, and navy gutter templates', () => {
@@ -275,6 +285,48 @@ describe('全部模板的条目定位不变量', () => {
     for (const section of itemSections) {
       for (const item of section.content.items) {
         expect(container.querySelector(`[${ITEM_ANCHOR_ATTR}="${item.id}"]`)).not.toBeNull();
+      }
+    }
+  });
+
+  // 条目按钮的无障碍兜底：数量、位置、可访问名称与定位载荷四件事都要钉住。
+  // 只有区块标题有这一层断言时，把条目按钮挪出 <h3> 或改掉 itemId 都还能保持总数不变。
+  it.each(templateRegistry.map((t) => t.id))('%s 的每个经历类条目标题内恰有一个定位按钮', (id) => {
+    const onLocate = vi.fn();
+    const { container } = render(<Renderer id={id} onLocate={onLocate} />);
+    for (const section of itemSections) {
+      for (const item of section.content.items) {
+        const entry = container.querySelector(`[${ITEM_ANCHOR_ATTR}="${item.id}"]`)!;
+        const buttons = Array.from(entry.querySelectorAll('button'));
+
+        // 每个条目恰好一个按钮：多一个（重复渲染）或少一个（漏渲染）都会被抓到。
+        expect(buttons).toHaveLength(1);
+        const button = buttons[0];
+
+        // 按钮必须在条目自己的标题元素内部。从按钮向上找最近的标题元素，且不能越过条目根：
+        // 按钮仍在 <h3> / <strong> 里时能找到；被挪到标题之外（挪进外层容器或挪成兄弟节点）
+        // 时就会一路走到条目根仍无命中，断言随之失败。全程不依赖全局标题选择器。
+        let node: HTMLElement | null = button;
+        let heading: HTMLElement | null = null;
+        while (node && node !== entry) {
+          if (node.matches(ENTRY_HEADING_SELECTOR)) {
+            heading = node;
+            break;
+          }
+          node = node.parentElement;
+        }
+        expect(heading).not.toBeNull();
+
+        // 按钮只包裹条目标题文字，且可访问名称必须与这段可见文字一致。
+        expect(button.textContent).not.toBe('');
+        expect(button.getAttribute('aria-label')).toBe(`定位到编辑器的「${button.textContent}」`);
+
+        // 载荷必须指向这个条目本身：sectionId / itemId 与文档中的条目对应。
+        // ResumeSections.test.tsx 只覆盖默认槽路径，6 个自带 item 槽的模板靠这里保证。
+        onLocate.mockClear();
+        fireEvent.click(button);
+        expect(onLocate).toHaveBeenCalledTimes(1);
+        expect(onLocate).toHaveBeenCalledWith({ sectionId: section.id, itemId: item.id });
       }
     }
   });
