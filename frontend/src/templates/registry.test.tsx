@@ -233,9 +233,26 @@ describe('全部模板的区块与标题定位不变量', () => {
     }
   });
 
+  // 期望值全部从文档与 DOM 推导，不写死区块个数：将来新增区块类型时，
+  // 本用例不会因为「个数变了」这种错误原因失败。
   it.each(templateRegistry.map((t) => t.id))('%s 的每个区块标题内都有定位按钮', (id) => {
-    render(<Renderer id={id} onLocate={vi.fn()} />);
-    const buttons = screen.getAllByRole('button', { name: /^定位到编辑器的「.+」$/ });
-    expect(buttons.length).toBeGreaterThan(0);
+    const { container } = render(<Renderer id={id} onLocate={vi.fn()} />);
+    const visibleSections = createSampleResumeDocument().sections.filter((section) => section.visible);
+    const headings = Array.from(container.querySelectorAll('[data-resume-section-title]'));
+
+    // 姓名所在的 <h1> 没有 data-resume-section-title，因此这里只数区块标题。
+    expect(headings).toHaveLength(visibleSections.length);
+    for (const [index, section] of visibleSections.entries()) {
+      const heading = headings[index];
+      // 从标题元素内部查找，天然保证按钮在 <h2> 之内——按钮被挪到 <h2> 之外时这里会变成 0 个。
+      const buttonsInHeading = Array.from(heading.querySelectorAll('button'));
+      expect(buttonsInHeading).toHaveLength(1);
+      expect(buttonsInHeading[0].getAttribute('aria-label')).toBe(`定位到编辑器的「${section.title}」`);
+      // 按钮只包裹标题文字：标题内不得有落在按钮之外的文本或图标。
+      expect(heading.textContent).toBe(buttonsInHeading[0].textContent);
+    }
+    // 无障碍兜底：必须是带可访问名称的真实 button。条目按钮（Task 4 范围）与区块按钮
+    // 共用同一命名模式，因此只断言不少于区块标题数，不做全等。
+    expect(screen.getAllByRole('button', { name: /^定位到编辑器的「.+」$/ }).length).toBeGreaterThanOrEqual(visibleSections.length);
   });
 });
