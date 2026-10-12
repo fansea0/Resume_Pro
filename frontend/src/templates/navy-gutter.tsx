@@ -18,7 +18,7 @@ import type {
 } from '../types/resume';
 import { ResumeAvatar } from './ResumeAvatar';
 import { ResumeMarkdown, safeUrl } from '../components/ResumeMarkdown';
-import { SECTION_ANCHOR_ATTR, SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
+import { SECTION_ANCHOR_ATTR, EntryLocateButton, ITEM_ANCHOR_ATTR, SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
 
 /**
  * Navy Gutter — 技术岗单栏模板，沿用「左侧深蓝标签栏 + 右侧浅色分区」的
@@ -58,9 +58,9 @@ function NavyGutterTitle({ children, className, onLocate, section }: TitleSlotPr
   );
 }
 
-function NavyGutterEntry({ children, className }: ItemSlotProps) {
+function NavyGutterEntry({ children, className, item }: ItemSlotProps) {
   return (
-    <article className={className} data-resume-entry>
+    <article className={className} data-resume-entry {...(item.id ? { [ITEM_ANCHOR_ATTR]: item.id } : {})}>
       {children}
     </article>
   );
@@ -130,14 +130,14 @@ function NavyGutterTechStack({ className, techStack }: { className?: string; tec
   );
 }
 
-function NavyGutterExperienceItem(section: ResumeSection, item: ExperienceItem) {
+function NavyGutterExperienceItem(section: ResumeSection, item: ExperienceItem, onLocate?: LocateHandler) {
   const range = NavyGutterRange(item.startDate, item.endDate);
   const location = item.showLocation ? item.location : '';
   return (
     <NavyGutterEntry className="template-navy-gutter__entry" item={item} section={section}>
       <NavyGutterEntryHeading className="template-navy-gutter__entry-heading">
         <h3 className="template-navy-gutter__entry-title">
-          {item.company}
+          <EntryLocateButton itemId={item.id} label={item.company} onLocate={onLocate} sectionId={section.id}>{item.company}</EntryLocateButton>
           {item.role && (
             <span className="template-navy-gutter__entry-role">
               <span className="template-navy-gutter__entry-sep" aria-hidden="true">|</span>
@@ -168,7 +168,7 @@ function NavyGutterExperienceItem(section: ResumeSection, item: ExperienceItem) 
   );
 }
 
-function NavyGutterProjectItem(section: ResumeSection, item: ProjectItem) {
+function NavyGutterProjectItem(section: ResumeSection, item: ProjectItem, onLocate?: LocateHandler) {
   const range = NavyGutterRange(item.startDate, item.endDate);
   const location = item.showLocation ? item.location : '';
   const link = item.showLink ? safeUrl(item.link) : '';
@@ -176,7 +176,7 @@ function NavyGutterProjectItem(section: ResumeSection, item: ProjectItem) {
     <NavyGutterEntry className="template-navy-gutter__entry" item={item} section={section}>
       <NavyGutterEntryHeading className="template-navy-gutter__entry-heading">
         <h3 className="template-navy-gutter__entry-title">
-          {item.name}
+          <EntryLocateButton itemId={item.id} label={item.name} onLocate={onLocate} sectionId={section.id}>{item.name}</EntryLocateButton>
           {item.role && (
             <span className="template-navy-gutter__entry-role">
               <span className="template-navy-gutter__entry-sep" aria-hidden="true">|</span>
@@ -218,14 +218,14 @@ function NavyGutterProjectItem(section: ResumeSection, item: ProjectItem) {
   );
 }
 
-function NavyGutterEducationItem(section: ResumeSection, item: EducationItem) {
+function NavyGutterEducationItem(section: ResumeSection, item: EducationItem, onLocate?: LocateHandler) {
   const range = NavyGutterRange(item.startDate, item.endDate);
   const detail = [item.degree, item.college, item.major].filter(Boolean).join(' · ');
   return (
     <NavyGutterEntry className="template-navy-gutter__entry template-navy-gutter__entry--compact" item={item} section={section}>
       <NavyGutterEntryHeading className="template-navy-gutter__entry-heading">
         <h3 className="template-navy-gutter__entry-title">
-          {item.school}
+          <EntryLocateButton itemId={item.id} label={item.school} onLocate={onLocate} sectionId={section.id}>{item.school}</EntryLocateButton>
           {detail && (
             <span className="template-navy-gutter__entry-role">
               <span className="template-navy-gutter__entry-sep" aria-hidden="true">|</span>
@@ -239,12 +239,12 @@ function NavyGutterEducationItem(section: ResumeSection, item: EducationItem) {
   );
 }
 
-function NavyGutterCampusItem(section: ResumeSection, item: CampusItem) {
+function NavyGutterCampusItem(section: ResumeSection, item: CampusItem, onLocate?: LocateHandler) {
   return (
     <NavyGutterEntry className="template-navy-gutter__entry" item={item} section={section}>
       <NavyGutterEntryHeading className="template-navy-gutter__entry-heading">
         <h3 className="template-navy-gutter__entry-title">
-          {item.name}
+          <EntryLocateButton itemId={item.id} label={item.name} onLocate={onLocate} sectionId={section.id}>{item.name}</EntryLocateButton>
           {item.role && (
             <span className="template-navy-gutter__entry-role">
               <span className="template-navy-gutter__entry-sep" aria-hidden="true">|</span>
@@ -319,17 +319,17 @@ export function NavyGutterTemplate({ document, onLocate }: { document: ResumeDoc
     role: NavyGutterRole,
     skills: NavyGutterSkills,
     honours: NavyGutterHonours,
-    item: (section, item) => {
+    item: (section, item, onLocate) => {
       switch (section.type) {
         case 'work':
         case 'internship':
-          return NavyGutterExperienceItem(section, item as ExperienceItem);
+          return NavyGutterExperienceItem(section, item as ExperienceItem, onLocate);
         case 'project':
-          return NavyGutterProjectItem(section, item as ProjectItem);
+          return NavyGutterProjectItem(section, item as ProjectItem, onLocate);
         case 'education':
-          return NavyGutterEducationItem(section, item as EducationItem);
+          return NavyGutterEducationItem(section, item as EducationItem, onLocate);
         case 'campus':
-          return NavyGutterCampusItem(section, item as CampusItem);
+          return NavyGutterCampusItem(section, item as CampusItem, onLocate);
         default:
           return null;
       }

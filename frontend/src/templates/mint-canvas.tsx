@@ -10,7 +10,7 @@ import type {
 import { ResumeAvatar } from './ResumeAvatar';
 import { ResumeMarkdown } from '../components/ResumeMarkdown';
 import { renderInlineMarkdown } from '../components/ResumeInline';
-import { SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
+import { EntryLocateButton, ITEM_ANCHOR_ATTR, SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
 
 /**
  * Mint Canvas — thin border, mint header block, badge section titles and
@@ -165,16 +165,16 @@ function renderInlineChips(text: string): ReactNode {
   );
 }
 
-function MintExperienceItem(_section: ResumeSection, item: ExperienceItem) {
+function MintExperienceItem(section: ResumeSection, item: ExperienceItem, onLocate?: LocateHandler) {
   const hasDate = Boolean(item.startDate || item.endDate);
   return (
-    <article className="template-mint-canvas__entry" data-resume-entry={item.id}>
+    <article className="template-mint-canvas__entry" data-resume-entry={item.id} {...{ [ITEM_ANCHOR_ATTR]: item.id }}>
       <div
         className={`template-mint-canvas__entry-heading${
           item.role ? ' template-mint-canvas__entry-heading--role' : ''
         }`}
       >
-        <h3>{item.company}</h3>
+        <h3><EntryLocateButton itemId={item.id} label={item.company} onLocate={onLocate} sectionId={section.id}>{item.company}</EntryLocateButton></h3>
         {item.role && <span className="template-mint-canvas__role">{item.role}</span>}
         {hasDate && (
           <time className="template-mint-canvas__entry-date">
@@ -206,18 +206,18 @@ function splitTechStack(techStack: string): string[] {
     .filter(Boolean);
 }
 
-function MintProjectItem(_section: ResumeSection, item: ProjectItem) {
+function MintProjectItem(section: ResumeSection, item: ProjectItem, onLocate?: LocateHandler) {
   const hasDate = Boolean(item.startDate || item.endDate);
   const showIntroduction = Boolean(item.showIntroduction && item.introduction);
   const techChips = item.showTechStack ? splitTechStack(item.techStack) : [];
   return (
-    <article className="template-mint-canvas__entry" data-resume-entry={item.id}>
+    <article className="template-mint-canvas__entry" data-resume-entry={item.id} {...{ [ITEM_ANCHOR_ATTR]: item.id }}>
       <div
         className={`template-mint-canvas__entry-heading${
           item.role ? ' template-mint-canvas__entry-heading--role' : ''
         }`}
       >
-        <h3>{item.name}</h3>
+        <h3><EntryLocateButton itemId={item.id} label={item.name} onLocate={onLocate} sectionId={section.id}>{item.name}</EntryLocateButton></h3>
         {item.role && <span className="template-mint-canvas__role">{item.role}</span>}
         {hasDate && (
           <time className="template-mint-canvas__entry-date">
@@ -251,11 +251,11 @@ function MintProjectItem(_section: ResumeSection, item: ProjectItem) {
   );
 }
 
-function MintCampusItem(_section: ResumeSection, item: CampusItem) {
+function MintCampusItem(section: ResumeSection, item: CampusItem, onLocate?: LocateHandler) {
   return (
-    <article className="template-mint-canvas__entry" data-resume-entry={item.id}>
+    <article className="template-mint-canvas__entry" data-resume-entry={item.id} {...{ [ITEM_ANCHOR_ATTR]: item.id }}>
       <div className="template-mint-canvas__entry-heading">
-        <h3>{item.name}</h3>
+        <h3><EntryLocateButton itemId={item.id} label={item.name} onLocate={onLocate} sectionId={section.id}>{item.name}</EntryLocateButton></h3>
         {item.role && <span className="template-mint-canvas__role">{item.role}</span>}
       </div>
       {item.highlightsMarkdown && (
@@ -276,22 +276,22 @@ export function MintCanvasTemplate({ document, onLocate }: { document: ResumeDoc
     title: MintTitle,
     skills: MintSkills,
     honours: MintHonours,
-    item: (section, item) => {
+    item: (section, item, onLocate) => {
       if (section.type === 'work' || section.type === 'internship') {
-        return MintExperienceItem(section, item as ExperienceItem);
+        return MintExperienceItem(section, item as ExperienceItem, onLocate);
       }
       if (section.type === 'project') {
-        return MintProjectItem(section, item as ProjectItem);
+        return MintProjectItem(section, item as ProjectItem, onLocate);
       }
       if (section.type === 'campus') {
-        return MintCampusItem(section, item as CampusItem);
+        return MintCampusItem(section, item as CampusItem, onLocate);
       }
       if (section.type === 'education') {
         const edu = item as { id: string; school: string; startDate: string; endDate: string; degree: string; college: string; major: string };
         return (
-          <article className="template-mint-canvas__entry" data-resume-entry={edu.id}>
+          <article className="template-mint-canvas__entry" data-resume-entry={edu.id} {...{ [ITEM_ANCHOR_ATTR]: edu.id }}>
             <div className="template-mint-canvas__entry-heading">
-              <h3>{edu.school}</h3>
+              <h3><EntryLocateButton itemId={edu.id} label={edu.school} onLocate={onLocate} sectionId={section.id}>{edu.school}</EntryLocateButton></h3>
               {(edu.startDate || edu.endDate) && (
                 <time className="template-mint-canvas__entry-date">
                   {edu.startDate}

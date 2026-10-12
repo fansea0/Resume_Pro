@@ -17,7 +17,7 @@ import type {
 } from '../types/resume';
 import { ResumeAvatar } from './ResumeAvatar';
 import { ResumeMarkdown } from '../components/ResumeMarkdown';
-import { SECTION_ANCHOR_ATTR, SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
+import { SECTION_ANCHOR_ATTR, EntryLocateButton, ITEM_ANCHOR_ATTR, SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
 
 /**
  * Scholarly Serif — Times-family single-column resume.
@@ -86,9 +86,9 @@ function dateRange(start: string, end: string): ReactNode {
   );
 }
 
-function ScholarlyEntry({ children, className }: ItemSlotProps) {
+function ScholarlyEntry({ children, className, item }: ItemSlotProps) {
   return (
-    <article className={className} data-resume-entry>
+    <article className={className} data-resume-entry {...(item.id ? { [ITEM_ANCHOR_ATTR]: item.id } : {})}>
       {children}
     </article>
   );
@@ -114,11 +114,11 @@ function ScholarlyMarkdown({ children, className }: ContentSlotProps) {
   return <div className={className}>{children}</div>;
 }
 
-function ScholarlyExperienceItem(_section: ResumeSection, item: ExperienceItem) {
+function ScholarlyExperienceItem(section: ResumeSection, item: ExperienceItem, onLocate?: LocateHandler) {
   return (
-    <ScholarlyEntry className="template-scholarly-serif__entry" item={item} section={_section}>
+    <ScholarlyEntry className="template-scholarly-serif__entry" item={item} section={section}>
       <ScholarlyEntryHeading className="template-scholarly-serif__entry-heading">
-        <h3 className="template-scholarly-serif__entry-title">{item.company}</h3>
+        <h3 className="template-scholarly-serif__entry-title"><EntryLocateButton itemId={item.id} label={item.company} onLocate={onLocate} sectionId={section.id}>{item.company}</EntryLocateButton></h3>
         {dateRange(item.startDate, item.endDate)}
       </ScholarlyEntryHeading>
       {item.role && <ScholarlyRole className="template-scholarly-serif__role">{item.role}</ScholarlyRole>}
@@ -137,11 +137,11 @@ function ScholarlyExperienceItem(_section: ResumeSection, item: ExperienceItem) 
   );
 }
 
-function ScholarlyProjectItem(_section: ResumeSection, item: ProjectItem) {
+function ScholarlyProjectItem(section: ResumeSection, item: ProjectItem, onLocate?: LocateHandler) {
   return (
-    <ScholarlyEntry className="template-scholarly-serif__entry" item={item} section={_section}>
+    <ScholarlyEntry className="template-scholarly-serif__entry" item={item} section={section}>
       <ScholarlyEntryHeading className="template-scholarly-serif__entry-heading">
-        <h3 className="template-scholarly-serif__entry-title">{item.name}</h3>
+        <h3 className="template-scholarly-serif__entry-title"><EntryLocateButton itemId={item.id} label={item.name} onLocate={onLocate} sectionId={section.id}>{item.name}</EntryLocateButton></h3>
         {dateRange(item.startDate, item.endDate)}
       </ScholarlyEntryHeading>
       {item.role && <ScholarlyRole className="template-scholarly-serif__role">{item.role}</ScholarlyRole>}
@@ -163,11 +163,11 @@ function ScholarlyProjectItem(_section: ResumeSection, item: ProjectItem) {
   );
 }
 
-function ScholarlyEducationItem(_section: ResumeSection, item: EducationItem) {
+function ScholarlyEducationItem(section: ResumeSection, item: EducationItem, onLocate?: LocateHandler) {
   return (
-    <ScholarlyEntry className="template-scholarly-serif__entry" item={item} section={_section}>
+    <ScholarlyEntry className="template-scholarly-serif__entry" item={item} section={section}>
       <ScholarlyEntryHeading className="template-scholarly-serif__entry-heading">
-        <h3 className="template-scholarly-serif__entry-title">{item.school}</h3>
+        <h3 className="template-scholarly-serif__entry-title"><EntryLocateButton itemId={item.id} label={item.school} onLocate={onLocate} sectionId={section.id}>{item.school}</EntryLocateButton></h3>
         {dateRange(item.startDate, item.endDate)}
       </ScholarlyEntryHeading>
       {[item.degree, item.college, item.major].filter(Boolean).length > 0 && (
@@ -179,11 +179,11 @@ function ScholarlyEducationItem(_section: ResumeSection, item: EducationItem) {
   );
 }
 
-function ScholarlyCampusItem(_section: ResumeSection, item: CampusItem) {
+function ScholarlyCampusItem(section: ResumeSection, item: CampusItem, onLocate?: LocateHandler) {
   return (
-    <ScholarlyEntry className="template-scholarly-serif__entry" item={item} section={_section}>
+    <ScholarlyEntry className="template-scholarly-serif__entry" item={item} section={section}>
       <ScholarlyEntryHeading className="template-scholarly-serif__entry-heading">
-        <h3 className="template-scholarly-serif__entry-title">{item.name}</h3>
+        <h3 className="template-scholarly-serif__entry-title"><EntryLocateButton itemId={item.id} label={item.name} onLocate={onLocate} sectionId={section.id}>{item.name}</EntryLocateButton></h3>
       </ScholarlyEntryHeading>
       {item.role && <ScholarlyRole className="template-scholarly-serif__role">{item.role}</ScholarlyRole>}
       {item.highlightsMarkdown && (
@@ -228,17 +228,17 @@ export function ScholarlySerifTemplate({ document, onLocate }: { document: Resum
     role: ScholarlyRole,
     honours: ScholarlyHonours,
     skills: ScholarlySkills,
-    item: (section, item) => {
+    item: (section, item, onLocate) => {
       switch (section.type) {
         case 'work':
         case 'internship':
-          return ScholarlyExperienceItem(section, item as ExperienceItem);
+          return ScholarlyExperienceItem(section, item as ExperienceItem, onLocate);
         case 'project':
-          return ScholarlyProjectItem(section, item as ProjectItem);
+          return ScholarlyProjectItem(section, item as ProjectItem, onLocate);
         case 'education':
-          return ScholarlyEducationItem(section, item as EducationItem);
+          return ScholarlyEducationItem(section, item as EducationItem, onLocate);
         case 'campus':
-          return ScholarlyCampusItem(section, item as CampusItem);
+          return ScholarlyCampusItem(section, item as CampusItem, onLocate);
         default:
           return null;
       }

@@ -2,8 +2,8 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { getTemplate, templateRegistry } from './registry';
-import { SECTION_ANCHOR_ATTR, type LocateHandler } from '../components/ResumeLocate';
-import { createSampleResumeDocument, type ResumeDocument, type TemplateId } from '../types/resume';
+import { ITEM_ANCHOR_ATTR, SECTION_ANCHOR_ATTR, type LocateHandler } from '../components/ResumeLocate';
+import { createSampleResumeDocument, type ResumeDocument, type ResumeSection, type TemplateId } from '../types/resume';
 
 const sampleResume: ResumeDocument = {
   schemaVersion: 2,
@@ -39,6 +39,18 @@ function Renderer({ id, onLocate }: { id: TemplateId; onLocate?: LocateHandler }
   const Entry = getTemplate(id).Renderer;
   return <Entry document={createSampleResumeDocument()} onLocate={onLocate} />;
 }
+
+const sampleSections = createSampleResumeDocument().sections;
+const visibleSections = sampleSections.filter((section) => section.visible);
+/**
+ * 「专业技能」「荣誉奖项」按设计决策只提供区块级定位：它们渲染为内联 chip / `<li>`，
+ * 点击区域过小，套按钮会违反 AGSIN.md 的可用性约束。因此条目级不变量只覆盖经历类区块。
+ */
+const itemSections = sampleSections.filter(
+  (section): section is Extract<ResumeSection, { type: 'work' | 'internship' | 'project' | 'education' | 'campus' }> =>
+    section.type === 'work' || section.type === 'internship' || section.type === 'project' || section.type === 'education' || section.type === 'campus',
+);
+const locateEntryCount = itemSections.reduce((total, section) => total + section.content.items.length, 0);
 
 describe('templateRegistry', () => {
   it('registers the minimal, business, creative, tech, editorial, redline, violet, azure chronicle, mint canvas, scholarly serif, blue sidebar, and navy gutter templates', () => {
@@ -237,7 +249,6 @@ describe('全部模板的区块与标题定位不变量', () => {
   // 本用例不会因为「个数变了」这种错误原因失败。
   it.each(templateRegistry.map((t) => t.id))('%s 的每个区块标题内都有定位按钮', (id) => {
     const { container } = render(<Renderer id={id} onLocate={vi.fn()} />);
-    const visibleSections = createSampleResumeDocument().sections.filter((section) => section.visible);
     const headings = Array.from(container.querySelectorAll('[data-resume-section-title]'));
 
     // 姓名所在的 <h1> 没有 data-resume-section-title，因此这里只数区块标题。
@@ -251,8 +262,20 @@ describe('全部模板的区块与标题定位不变量', () => {
       // 按钮只包裹标题文字：标题内不得有落在按钮之外的文本或图标。
       expect(heading.textContent).toBe(buttonsInHeading[0].textContent);
     }
-    // 无障碍兜底：必须是带可访问名称的真实 button。条目按钮（Task 4 范围）与区块按钮
-    // 共用同一命名模式，因此只断言不少于区块标题数，不做全等。
-    expect(screen.getAllByRole('button', { name: /^定位到编辑器的「.+」$/ }).length).toBeGreaterThanOrEqual(visibleSections.length);
+    // 无障碍兜底：必须是带可访问名称的真实 button。条目按钮与区块按钮共用同一命名模式，
+    // 因此这里断言全等：区块标题数 + 经历类条目数，两者都从文档推导，不写死。
+    // 实测 12 个模板（含 creative / editorial 双栏拆分）均为 8 + 5 = 13 个按钮。
+    expect(screen.getAllByRole('button', { name: /^定位到编辑器的「.+」$/ })).toHaveLength(visibleSections.length + locateEntryCount);
+  });
+});
+
+describe('全部模板的条目定位不变量', () => {
+  it.each(templateRegistry.map((t) => t.id))('%s 的每个经历类条目都有 item id 锚点', (id) => {
+    const { container } = render(<Renderer id={id} />);
+    for (const section of itemSections) {
+      for (const item of section.content.items) {
+        expect(container.querySelector(`[${ITEM_ANCHOR_ATTR}="${item.id}"]`)).not.toBeNull();
+      }
+    }
   });
 });
