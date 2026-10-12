@@ -10,6 +10,7 @@ import type {
 import { ResumeAvatar } from './ResumeAvatar';
 import { ResumeMarkdown } from '../components/ResumeMarkdown';
 import { renderInlineMarkdown } from '../components/ResumeInline';
+import { SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
 
 /**
  * Mint Canvas — thin border, mint header block, badge section titles and
@@ -27,14 +28,14 @@ const sectionIcons: Record<string, string> = {
   honours: 'm10 4 1.3 3 3.2.3-2.4 2.1.7 3.2-2.8-1.6-2.8 1.6.7-3.2-2.4-2.1 3.2-.3z',
 };
 
-function MintTitle({ children, className, section }: TitleSlotProps) {
+function MintTitle({ children, className, onLocate, section }: TitleSlotProps) {
   const iconPath = sectionIcons[section.type];
   return (
     <h2 className={className} data-resume-section-title>
       <span aria-hidden="true" className="template-mint-canvas__badge">
         <svg viewBox="0 0 20 20"><path d={iconPath} /></svg>
       </span>
-      <span className="template-mint-canvas__title-text">{children}</span>
+      <span className="template-mint-canvas__title-text"><SectionLocateButton label={section.title} onLocate={onLocate} sectionId={section.id}>{children}</SectionLocateButton></span>
     </h2>
   );
 }
@@ -266,7 +267,7 @@ function MintCampusItem(_section: ResumeSection, item: CampusItem) {
   );
 }
 
-export function MintCanvasTemplate({ document }: { document: ResumeDocument }) {
+export function MintCanvasTemplate({ document, onLocate }: { document: ResumeDocument; onLocate?: LocateHandler }) {
   const { profile, sections } = document;
   const headerContact = [profile.phone, profile.email, profile.website].filter(Boolean).join('  |  ');
 
@@ -323,6 +324,7 @@ export function MintCanvasTemplate({ document }: { document: ResumeDocument }) {
         <ResumeSections
           sections={sections}
           slots={slots}
+          onLocate={onLocate}
           classNames={{
             section: 'template-mint-canvas__section',
             title: 'template-mint-canvas__section-title',

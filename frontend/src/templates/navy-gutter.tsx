@@ -18,6 +18,7 @@ import type {
 } from '../types/resume';
 import { ResumeAvatar } from './ResumeAvatar';
 import { ResumeMarkdown, safeUrl } from '../components/ResumeMarkdown';
+import { SECTION_ANCHOR_ATTR, SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
 
 /**
  * Navy Gutter — 技术岗单栏模板，沿用「左侧深蓝标签栏 + 右侧浅色分区」的
@@ -39,19 +40,20 @@ function NavyGutterSection({ children, className, section }: SectionSlotProps) {
     <section
       className={`${className ?? ''} template-navy-gutter__section--${section.type}`.trim()}
       data-resume-section={section.type}
+      {...{ [SECTION_ANCHOR_ATTR]: section.id }}
     >
       {children}
     </section>
   );
 }
 
-function NavyGutterTitle({ children, className, section }: TitleSlotProps) {
+function NavyGutterTitle({ children, className, onLocate, section }: TitleSlotProps) {
   return (
     <h2
       className={`${className ?? ''} template-navy-gutter__section-title--${section.type}`.trim()}
       data-resume-section-title
     >
-      <span className="template-navy-gutter__label">{children}</span>
+      <span className="template-navy-gutter__label"><SectionLocateButton label={section.title} onLocate={onLocate} sectionId={section.id}>{children}</SectionLocateButton></span>
     </h2>
   );
 }
@@ -305,7 +307,7 @@ function NavyGutterHeader({ document }: { document: ResumeDocument }) {
   );
 }
 
-export function NavyGutterTemplate({ document }: { document: ResumeDocument }) {
+export function NavyGutterTemplate({ document, onLocate }: { document: ResumeDocument; onLocate?: LocateHandler }) {
   const { sections } = document;
 
   const slots: Parameters<typeof ResumeSections>[0]['slots'] = {
@@ -340,6 +342,7 @@ export function NavyGutterTemplate({ document }: { document: ResumeDocument }) {
       <ResumeSections
         sections={sections}
         slots={slots}
+        onLocate={onLocate}
         classNames={{
           section: 'template-navy-gutter__section',
           title: 'template-navy-gutter__section-title',

@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import type { ResumeDocument, TemplateId } from '../types/resume';
+import type { LocateHandler } from '../components/ResumeLocate';
 import { BusinessTemplate } from './business';
 import { CreativeTemplate } from './creative';
 import { MinimalTemplate } from './minimal';
@@ -21,7 +22,7 @@ export interface ResumeTemplate {
   tags: string[];
   styleDescription: string;
   previewImage: string;
-  Renderer: ComponentType<{ document: ResumeDocument }>;
+  Renderer: ComponentType<{ document: ResumeDocument; onLocate?: LocateHandler }>;
 }
 
 export const templateRegistry: ResumeTemplate[] = [

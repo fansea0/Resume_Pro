@@ -18,6 +18,7 @@ import type {
 } from '../types/resume';
 import { ResumeAvatar } from './ResumeAvatar';
 import { ResumeMarkdown } from '../components/ResumeMarkdown';
+import { SECTION_ANCHOR_ATTR, SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
 
 /**
  * Blue Sidebar — single-column, ATS-clean Chinese resume with a vivid blue
@@ -37,16 +38,16 @@ import { ResumeMarkdown } from '../components/ResumeMarkdown';
 
 function BlueSidebarSection({ children, className, section }: SectionSlotProps) {
   return (
-    <section className={className} data-resume-section={section.type}>
+    <section className={className} data-resume-section={section.type} {...{ [SECTION_ANCHOR_ATTR]: section.id }}>
       {children}
     </section>
   );
 }
 
-function BlueSidebarTitle({ children, className, section }: TitleSlotProps) {
+function BlueSidebarTitle({ children, className, onLocate, section }: TitleSlotProps) {
   return (
     <h2 className={className} data-resume-section-title>
-      <span className="template-blue-sidebar__title-text">{children}</span>
+      <span className="template-blue-sidebar__title-text"><SectionLocateButton label={section.title} onLocate={onLocate} sectionId={section.id}>{children}</SectionLocateButton></span>
     </h2>
   );
 }
@@ -257,7 +258,7 @@ function BlueSidebarHeader({ document }: { document: ResumeDocument }) {
   );
 }
 
-export function BlueSidebarTemplate({ document }: { document: ResumeDocument }) {
+export function BlueSidebarTemplate({ document, onLocate }: { document: ResumeDocument; onLocate?: LocateHandler }) {
   const { sections } = document;
 
   const slots: Parameters<typeof ResumeSections>[0]['slots'] = {
@@ -292,6 +293,7 @@ export function BlueSidebarTemplate({ document }: { document: ResumeDocument }) 
       <ResumeSections
         sections={sections}
         slots={slots}
+        onLocate={onLocate}
         classNames={{
           section: 'template-blue-sidebar__section',
           title: 'template-blue-sidebar__section-title',

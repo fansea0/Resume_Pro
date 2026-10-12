@@ -17,6 +17,7 @@ import type {
 } from '../types/resume';
 import { ResumeAvatar } from './ResumeAvatar';
 import { ResumeMarkdown } from '../components/ResumeMarkdown';
+import { SECTION_ANCHOR_ATTR, SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
 
 /**
  * Scholarly Serif — Times-family single-column resume.
@@ -58,17 +59,17 @@ function ScholarlyHeader({ document }: { document: ResumeDocument }) {
   );
 }
 
-function ScholarlyTitle({ children, className }: TitleSlotProps) {
+function ScholarlyTitle({ children, className, onLocate, section }: TitleSlotProps) {
   return (
     <h2 className={className} data-resume-section-title>
-      <span className="template-scholarly-serif__title-text">{children}</span>
+      <span className="template-scholarly-serif__title-text"><SectionLocateButton label={section.title} onLocate={onLocate} sectionId={section.id}>{children}</SectionLocateButton></span>
     </h2>
   );
 }
 
 function ScholarlySection({ children, className, section }: SectionSlotProps) {
   return (
-    <section className={className} data-resume-section={section.type}>
+    <section className={className} data-resume-section={section.type} {...{ [SECTION_ANCHOR_ATTR]: section.id }}>
       {children}
     </section>
   );
@@ -215,7 +216,7 @@ function ScholarlyHonours({ children, className }: ContentSlotProps) {
   );
 }
 
-export function ScholarlySerifTemplate({ document }: { document: ResumeDocument }) {
+export function ScholarlySerifTemplate({ document, onLocate }: { document: ResumeDocument; onLocate?: LocateHandler }) {
   const { sections } = document;
 
   const slots: Parameters<typeof ResumeSections>[0]['slots'] = {
@@ -250,6 +251,7 @@ export function ScholarlySerifTemplate({ document }: { document: ResumeDocument 
       <ResumeSections
         sections={sections}
         slots={slots}
+        onLocate={onLocate}
         classNames={{
           section: 'template-scholarly-serif__section',
           title: 'template-scholarly-serif__section-title',

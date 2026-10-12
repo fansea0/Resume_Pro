@@ -1,8 +1,9 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { templateRegistry } from './registry';
-import type { ResumeDocument } from '../types/resume';
+import { getTemplate, templateRegistry } from './registry';
+import { SECTION_ANCHOR_ATTR, type LocateHandler } from '../components/ResumeLocate';
+import { createSampleResumeDocument, type ResumeDocument, type TemplateId } from '../types/resume';
 
 const sampleResume: ResumeDocument = {
   schemaVersion: 2,
@@ -33,6 +34,11 @@ const sampleResume: ResumeDocument = {
 };
 
 afterEach(cleanup);
+
+function Renderer({ id, onLocate }: { id: TemplateId; onLocate?: LocateHandler }) {
+  const Entry = getTemplate(id).Renderer;
+  return <Entry document={createSampleResumeDocument()} onLocate={onLocate} />;
+}
 
 describe('templateRegistry', () => {
   it('registers the minimal, business, creative, tech, editorial, redline, violet, azure chronicle, mint canvas, scholarly serif, blue sidebar, and navy gutter templates', () => {
@@ -216,5 +222,20 @@ describe('templateRegistry', () => {
     expect(screen.queryByText('项目介绍')).not.toBeInTheDocument();
     expect(screen.queryByText('项目成绩')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'https://example.com' })).not.toBeInTheDocument();
+  });
+});
+
+describe('全部模板的区块与标题定位不变量', () => {
+  it.each(templateRegistry.map((t) => t.id))('%s 的每个可见区块都有 section id 锚点', (id) => {
+    const { container } = render(<Renderer id={id} />);
+    for (const section of createSampleResumeDocument().sections) {
+      expect(container.querySelector(`[data-resume-section="${section.type}"][${SECTION_ANCHOR_ATTR}="${section.id}"]`)).not.toBeNull();
+    }
+  });
+
+  it.each(templateRegistry.map((t) => t.id))('%s 的每个区块标题内都有定位按钮', (id) => {
+    render(<Renderer id={id} onLocate={vi.fn()} />);
+    const buttons = screen.getAllByRole('button', { name: /^定位到编辑器的「.+」$/ });
+    expect(buttons.length).toBeGreaterThan(0);
   });
 });
