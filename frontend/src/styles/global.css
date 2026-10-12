@@ -519,6 +519,11 @@ body { margin: 0; }
   .resume-preview { background: #fff; min-height: auto; overflow: visible; padding: 0; position: static; }
   .resume-preview > div { box-shadow: none; margin: 0; min-height: auto; width: 210mm; }
   .resume-template { min-height: auto; }
+  /* Section-heading icons (azure-chronicle 蓝圆 / mint-canvas 绿方 / redline 红色下划线) and
+     other colored surfaces only survive printing when the user agent keeps background
+     and foreground colors. Without this, Chrome / Edge / Safari 全部 "经济模式" 都会把彩色背景
+     剥成白底, 同时 SVG 笔色是 #fff, 整组标题图标就视觉消失。 */
+  .resume-template, .resume-template * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 
 /* Experience details are optional resume signals, not isolated form controls. */
