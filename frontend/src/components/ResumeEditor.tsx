@@ -475,7 +475,7 @@ function ExperienceItemsEditor({ section, update }: { section: Extract<ResumeSec
 
 function ProjectItemsEditor({ section, update }: { section: Extract<ResumeSection, { type: 'project' }>; update: (fn: (s: ResumeSection) => ResumeSection) => void }) {
   const change = (id: string, fn: (item: ProjectItem) => ProjectItem) => update(() => ({ ...section, content: { items: updateItems(section.content.items, id, fn) } }));
-  const add = () => update(() => ({ ...section, content: { items: [...section.content.items, { id: nextId(), name: '', role: '', startDate: '', endDate: '', location: '', link: '', introduction: '', achievements: '', highlightsMarkdown: '', showLocation: true, showLink: true, showIntroduction: true, showAchievements: true }] } }));
+  const add = () => update(() => ({ ...section, content: { items: [...section.content.items, { id: nextId(), name: '', role: '', startDate: '', endDate: '', location: '', link: '', introduction: '', techStack: '', achievements: '', highlightsMarkdown: '', showLocation: true, showLink: true, showIntroduction: true, showTechStack: true, showAchievements: true }] } }));
   return <><div className="editor-section__actions"><IconButton icon="add" label="添加项目条目" onClick={add} /></div>{section.content.items.map((item, index) => <div className="editor-card" key={item.id}>
     <div className="editor-fields editor-fields--two">
       <Field label={`项目名称 ${index + 1}`} value={item.name} onChange={(name) => change(item.id, (value) => ({ ...value, name }))} />
@@ -486,6 +486,7 @@ function ProjectItemsEditor({ section, update }: { section: Extract<ResumeSectio
       <Field label={`项目链接 ${index + 1}`} value={item.link} visibility={{ shown: item.showLink, onToggle: () => change(item.id, (value) => ({ ...value, showLink: !value.showLink })) }} onChange={(link) => change(item.id, (value) => ({ ...value, link }))} />
     </div>
     <Field label={`项目介绍 ${index + 1}`} multiline value={item.introduction} visibility={{ shown: item.showIntroduction, onToggle: () => change(item.id, (value) => ({ ...value, showIntroduction: !value.showIntroduction })) }} onChange={(introduction) => change(item.id, (value) => ({ ...value, introduction }))} />
+    <Field label={`相关技术 ${index + 1}`} value={item.techStack} visibility={{ shown: item.showTechStack, onToggle: () => change(item.id, (value) => ({ ...value, showTechStack: !value.showTechStack })) }} onChange={(techStack) => change(item.id, (value) => ({ ...value, techStack }))} />
     <Field label={`项目成绩 ${index + 1}`} multiline value={item.achievements} visibility={{ shown: item.showAchievements, onToggle: () => change(item.id, (value) => ({ ...value, showAchievements: !value.showAchievements })) }} onChange={(achievements) => change(item.id, (value) => ({ ...value, achievements }))} />
     <Field label={`列表说明 ${index + 1}`} multiline value={item.highlightsMarkdown} onChange={(highlightsMarkdown) => change(item.id, (value) => ({ ...value, highlightsMarkdown }))} />
     <IconButton icon="delete" label={`删除项目条目 ${index + 1}`} onClick={() => update((current) => {

@@ -25,7 +25,7 @@ const sampleResume: ResumeDocument = {
     { id: 'campus', type: 'campus', title: '校园经历', visible: true, content: { items: [{ id: 'campus-item', name: '产品社', role: '负责人', highlightsMarkdown: '- 组织活动。' }] } },
     { id: 'skills', type: 'skills', title: '专业技能', visible: true, content: { items: [{ id: 'skill', name: '用户研究', note: '熟练' }] } },
     { id: 'education', type: 'education', title: '教育经历', visible: true, content: { items: [{ id: 'education-item', school: '复旦大学', startDate: '2018.09', endDate: '2022.06', degree: '本科', college: '管理学院', major: '信息管理' }] } },
-    { id: 'project', type: 'project', title: '项目经历', visible: true, content: { items: [{ id: 'project-item', name: '增长平台', role: '负责人', startDate: '2023.01', endDate: '2023.06', location: '上海', link: 'https://example.com', introduction: '项目介绍', achievements: '项目成绩', highlightsMarkdown: '- 项目说明', showLocation: true, showLink: true, showIntroduction: true, showAchievements: true }] } },
+    { id: 'project', type: 'project', title: '项目经历', visible: true, content: { items: [{ id: 'project-item', name: '增长平台', role: '负责人', startDate: '2023.01', endDate: '2023.06', location: '上海', link: 'https://example.com', introduction: '项目介绍', techStack: 'Go / Redis', achievements: '项目成绩', highlightsMarkdown: '- 项目说明', showLocation: true, showLink: true, showIntroduction: true, showTechStack: true, showAchievements: true }] } },
     { id: 'internship', type: 'internship', title: '实习经历', visible: true, content: { items: [{ id: 'internship-item', company: '实习公司', role: '实习生', startDate: '2021.01', endDate: '2021.06', location: '上海', achievements: '实习成绩', highlightsMarkdown: '- 实习说明', showLocation: true, showAchievements: true }] } },
     { id: 'work', type: 'work', title: '工作经历', visible: true, content: { items: [{ id: 'work-1', company: '星云科技', role: '产品经理', startDate: '2022.03', endDate: '至今', location: '上海', achievements: '月活提升 30%。', highlightsMarkdown: '- 负责增长产品，月活提升 30%。', showLocation: true, showAchievements: true }] } },
     { id: 'summary', type: 'summary', title: '个人总结', visible: true, content: { markdown: '专注互联网产品增长与用户体验。' } },
@@ -179,7 +179,7 @@ describe('templateRegistry', () => {
     const hidden = {
       ...sampleResume,
       sections: sampleResume.sections.map((section) => section.type === 'project'
-        ? { ...section, content: { items: section.content.items.map((item) => ({ ...item, showLocation: false, showLink: false, showIntroduction: false, showAchievements: false })) } }
+        ? { ...section, content: { items: section.content.items.map((item) => ({ ...item, showLocation: false, showLink: false, showIntroduction: false, showTechStack: false, showAchievements: false })) } }
         : section.type === 'work'
           ? { ...section, content: { items: section.content.items.map((item) => ({ ...item, showLocation: false, showAchievements: false })) } }
           : section),

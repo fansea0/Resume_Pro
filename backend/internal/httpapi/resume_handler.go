@@ -208,7 +208,7 @@ func validInput(input resumeInput) bool {
 var validTemplateIDs = map[string]struct{}{
 	"minimal": {}, "business": {}, "creative": {}, "tech": {},
 	"editorial": {}, "redline": {}, "violet": {}, "azure-chronicle": {},
-	"mint-canvas": {}, "scholarly-serif": {}, "blue-sidebar": {},
+	"mint-canvas": {}, "scholarly-serif": {}, "blue-sidebar": {}, "navy-gutter": {},
 }
 
 // validResumeContent mirrors the v2 ResumeDocument contract used by the editor.
@@ -308,7 +308,7 @@ func validExperienceItem(value any) bool {
 
 func validProjectItem(value any) bool {
 	item, ok := value.(map[string]any)
-	return ok && hasStringFields(item, "id", "name", "role", "startDate", "endDate", "location", "link", "introduction", "achievements", "highlightsMarkdown") && hasBooleanField(item, "showLocation") && hasBooleanField(item, "showLink") && hasBooleanField(item, "showIntroduction") && hasBooleanField(item, "showAchievements")
+	return ok && hasStringFields(item, "id", "name", "role", "startDate", "endDate", "location", "link", "introduction", "techStack", "achievements", "highlightsMarkdown") && hasBooleanField(item, "showLocation") && hasBooleanField(item, "showLink") && hasBooleanField(item, "showIntroduction") && hasBooleanField(item, "showTechStack") && hasBooleanField(item, "showAchievements")
 }
 
 func validEducationItem(value any) bool {

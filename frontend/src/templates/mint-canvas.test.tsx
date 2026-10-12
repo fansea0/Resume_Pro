@@ -58,12 +58,14 @@ const document: ResumeDocument = {
             location: '',
             link: '',
             introduction: '基于 RAG 的内部文档问答机器人。',
+            techStack: 'Spring Boot / Caffeine / MyBatis-Plus',
             achievements: '',
             highlightsMarkdown:
               '- **索引策略**：按文件类型定制分块，检索召回率提升 22%。\n- **二级缓存**：Spring Cache + Caffeine 减少非关键功能 60% 重复查询。',
             showLocation: false,
             showLink: false,
             showIntroduction: true,
+            showTechStack: true,
             showAchievements: false,
           },
         ],
@@ -113,6 +115,113 @@ describe('MintCanvasTemplate', () => {
     expect(chips.length).toBe(4);
     expect(chips[0]).toHaveTextContent('独立设计');
     expect(chips[2]).toHaveTextContent('索引策略');
+  });
+
+  it('puts the project role on the title row and the tech stack right under the introduction', () => {
+    const { container } = render(<MintCanvasTemplate document={document} />);
+    const projectEntry = Array.from(container.querySelectorAll('[data-resume-entry]'))
+      .find((node) => node.textContent?.includes('小芽 RAG 助手'));
+    expect(projectEntry).toBeDefined();
+
+    const heading = projectEntry?.querySelector('.template-mint-canvas__entry-heading');
+    const title = heading?.querySelector('h3')?.textContent;
+    const role = heading?.querySelector('.template-mint-canvas__role')?.textContent;
+    const date = heading?.querySelector('.template-mint-canvas__entry-date')?.textContent;
+    expect(heading?.textContent).toContain('小芽 RAG 助手');
+    expect(heading?.textContent).toContain('项目负责人');
+    expect(heading?.textContent).toContain('2025.03');
+    // Title leads, role sits in the middle slot, date closes the row.
+    expect([title, role, date]).toEqual(['小芽 RAG 助手', '项目负责人', '2025.03 – 2025.05']);
+
+    const subLines = Array.from(projectEntry?.querySelectorAll('.template-mint-canvas__entry-sub, .template-mint-canvas__tech') ?? [])
+      .map((node) => node.textContent ?? '');
+    expect(subLines[0]).toContain('项目介绍：');
+    expect(subLines[0]).toContain('基于 RAG 的内部文档问答机器人。');
+    expect(subLines[1]).toContain('相关技术：');
+
+    const techChips = Array.from(projectEntry?.querySelectorAll('.template-mint-canvas__tech .template-mint-canvas__skill') ?? [])
+      .map((node) => node.textContent ?? '');
+    // A slash keeps a grouped technology inside one chip.
+    expect(techChips).toEqual(['Spring Boot / Caffeine / MyBatis-Plus']);
+  });
+
+  it('splits tech-stack entries on Chinese and ASCII commas only', () => {
+    const withCommas = {
+      ...document,
+      sections: document.sections.map((section) => (
+        section.type === 'project'
+          ? { ...section, content: { items: section.content.items.map((item) => ({ ...item, techStack: 'Go、Redis / Kafka，MySQL, PostgreSQL' })) } }
+          : section
+      )),
+    };
+    const { container } = render(<MintCanvasTemplate document={withCommas} />);
+    const techChips = Array.from(container.querySelectorAll('.template-mint-canvas__tech .template-mint-canvas__skill'))
+      .map((node) => node.textContent ?? '');
+    expect(techChips).toEqual(['Go', 'Redis / Kafka', 'MySQL', 'PostgreSQL']);
+  });
+
+  it('hides the whole tech-stack row when its display switch is off', () => {
+    const hidden = {
+      ...document,
+      sections: document.sections.map((section) => (
+        section.type === 'project'
+          ? { ...section, content: { items: section.content.items.map((item) => ({ ...item, showTechStack: false })) } }
+          : section
+      )),
+    };
+    const { container } = render(<MintCanvasTemplate document={hidden} />);
+    expect(container.querySelectorAll('.template-mint-canvas__tech')).toHaveLength(0);
+    // The introduction keeps its own visibility switch and stays visible.
+    expect(container.querySelectorAll('.template-mint-canvas__meta-label')).toHaveLength(1);
+  });
+
+  it('omits the tech-stack line when the project has none', () => {
+    const withoutTechStack = {
+      ...document,
+      sections: document.sections.map((section) => (
+        section.type === 'project'
+          ? { ...section, content: { items: section.content.items.map((item) => ({ ...item, techStack: '' })) } }
+          : section
+      )),
+    };
+    const { container } = render(<MintCanvasTemplate document={withoutTechStack} />);
+    expect(container.querySelectorAll('.template-mint-canvas__tech')).toHaveLength(0);
+  });
+
+  it('renders inline Markdown in bullets, the introduction and achievements without leaking asterisks', () => {
+    const rich = {
+      ...document,
+      sections: document.sections.map((section) => (
+        section.type === 'project'
+          ? {
+            ...section,
+            content: {
+              items: section.content.items.map((item) => ({
+                ...item,
+                introduction: '负责 **检索链路** 与 *召回* 优化。',
+                achievements: '耗时下降 **30%**。',
+                highlightsMarkdown: '- **索引策略**：分块后 **召回率** 提升 22%。\n- 普通 **加粗** 与 *斜体* 文本',
+                showAchievements: true,
+              })),
+            },
+          }
+          : section
+      )),
+    };
+    const { container } = render(<MintCanvasTemplate document={rich} />);
+    const projectEntry = Array.from(container.querySelectorAll('[data-resume-entry]'))
+      .find((node) => node.textContent?.includes('小芽 RAG 助手')) as HTMLElement;
+    const markdown = projectEntry.querySelector('.template-mint-canvas__markdown') as HTMLElement;
+    // The chip keyword keeps its own treatment while the tail renders Markdown.
+    expect(markdown.querySelector('.template-mint-canvas__chip')?.textContent).toBe('索引策略');
+    expect(markdown.querySelector('li strong')?.textContent).toBe('召回率');
+    expect(markdown.querySelector('li em')?.textContent).toBe('斜体');
+    expect(markdown.textContent).not.toContain('*');
+
+    expect(projectEntry.querySelector('.template-mint-canvas__entry-sub strong')?.textContent).toBe('检索链路');
+    expect(projectEntry.querySelector('.template-mint-canvas__achievement strong')?.textContent).toBe('30%');
+    expect(projectEntry.querySelector('.template-mint-canvas__entry-sub')?.textContent).not.toContain('*');
+    expect(projectEntry.querySelector('.template-mint-canvas__achievement')?.textContent).not.toContain('*');
   });
 
   it('renders experience, project, skills, and honours content with the template landmark', () => {

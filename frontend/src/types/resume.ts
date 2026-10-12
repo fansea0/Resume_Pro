@@ -9,7 +9,8 @@ export type TemplateId =
   | 'azure-chronicle'
   | 'mint-canvas'
   | 'scholarly-serif'
-  | 'blue-sidebar';
+  | 'blue-sidebar'
+  | 'navy-gutter';
 
 export interface ResumeProfile {
   fullName: string;
@@ -72,11 +73,13 @@ export interface ProjectItem {
   location: string;
   link: string;
   introduction: string;
+  techStack: string;
   achievements: string;
   highlightsMarkdown: string;
   showLocation: boolean;
   showLink: boolean;
   showIntroduction: boolean;
+  showTechStack: boolean;
   showAchievements: boolean;
 }
 
@@ -251,11 +254,13 @@ export function createSampleResumeDocument(): ResumeDocument {
       location: '上海',
       link: '',
       introduction: '面向内容创作者的 AI 灵感生成与改写工具，覆盖选题、提纲和初稿三个核心场景。',
+      techStack: 'Next.js / TypeScript / GPT-4o / Vercel AI SDK',
       achievements: '工具周使用频次提升 26%，满意度达 4.7/5。',
       highlightsMarkdown: '- 完成竞品研究、用户访谈与 MVP 定义，制定按场景分层的提示词与交互方案。',
       showLocation: true,
       showLink: false,
       showIntroduction: true,
+      showTechStack: true,
       showAchievements: true,
     },
   ];

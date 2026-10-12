@@ -12,9 +12,9 @@ const sections: ResumeSection[] = [
     id: 'project', type: 'project', title: '项目经历', visible: true,
     content: { items: [{
       id: 'project-1', name: '简历平台', role: '项目负责人', startDate: '2025.01', endDate: '2025.06',
-      location: '杭州', link: 'https://example.com', introduction: '这是项目介绍', achievements: '获校赛一等奖',
+      location: '杭州', link: 'https://example.com', introduction: '这是项目介绍', techStack: 'React / Go', achievements: '获校赛一等奖',
       highlightsMarkdown: '- **实现**项目编辑', showLocation: false, showLink: false,
-      showIntroduction: false, showAchievements: false,
+      showIntroduction: false, showTechStack: false, showAchievements: false,
     }] },
   },
   {

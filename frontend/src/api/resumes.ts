@@ -79,10 +79,11 @@ function isExperienceSection(value: unknown, type: 'work' | 'internship'): boole
 
 function isProjectItem(value: unknown): boolean {
   return isRecord(value)
-    && hasStringFields(value, ['id', 'name', 'role', 'startDate', 'endDate', 'location', 'link', 'introduction', 'achievements', 'highlightsMarkdown'])
+    && hasStringFields(value, ['id', 'name', 'role', 'startDate', 'endDate', 'location', 'link', 'introduction', 'techStack', 'achievements', 'highlightsMarkdown'])
     && typeof value.showLocation === 'boolean'
     && typeof value.showLink === 'boolean'
     && typeof value.showIntroduction === 'boolean'
+    && typeof value.showTechStack === 'boolean'
     && typeof value.showAchievements === 'boolean';
 }
 
@@ -174,6 +175,27 @@ function upgradeV2AvatarFields(value: unknown): unknown {
   };
 }
 
+/** Documents saved before the project tech-stack line existed lack both fields. */
+function upgradeProjectTechStackFields(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value.sections)) return value;
+  let changed = false;
+  const sections = value.sections.map((section) => {
+    if (!isRecord(section) || section.type !== 'project' || !isRecord(section.content) || !Array.isArray(section.content.items)) {
+      return section;
+    }
+    const items = section.content.items.map((item) => {
+      if (!isRecord(item)) return item;
+      const hasTechStack = Object.prototype.hasOwnProperty.call(item, 'techStack');
+      const hasShowTechStack = Object.prototype.hasOwnProperty.call(item, 'showTechStack');
+      if (hasTechStack && hasShowTechStack) return item;
+      changed = true;
+      return { ...item, ...(hasTechStack ? {} : { techStack: '' }), ...(hasShowTechStack ? {} : { showTechStack: true }) };
+    });
+    return { ...section, content: { ...section.content, items } };
+  });
+  return changed ? { ...value, sections } : value;
+}
+
 function isLegacyExperience(value: unknown): value is Record<string, unknown> {
   return isRecord(value)
     && hasStringFields(value, ['id', 'company', 'role', 'startDate', 'endDate'])
@@ -232,11 +254,13 @@ function migrateLegacyDocument(value: unknown): ResumeDocument | null {
     location: '',
     link: item.link as string,
     introduction: item.description as string,
+    techStack: '',
     achievements: '',
     highlightsMarkdown: highlightsToMarkdown(item.highlights as string[]),
     showLocation: false,
     showLink: Boolean(item.link),
     showIntroduction: Boolean(item.description),
+    showTechStack: false,
     showAchievements: false,
   }));
 
@@ -306,7 +330,7 @@ export function documentFromStored(resume: StoredResume): ResumeDocument {
   }
 
   if (!isTemplateId(resume.templateId)) throw new Error('invalid stored resume content');
-  const upgradedContent = upgradeV2AvatarFields(content);
+  const upgradedContent = upgradeProjectTechStackFields(upgradeV2AvatarFields(content));
   const document = isResumeContent(upgradedContent) ? upgradedContent : migrateLegacyDocument(content);
   if (!document) throw new Error('invalid stored resume content');
 

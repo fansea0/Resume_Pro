@@ -263,6 +263,7 @@ func TestResumeCreateAndUpdateRequireCompleteV2Content(t *testing.T) {
 		`{"schemaVersion":2,"title":"Valid","templateId":"minimal","profile":{"fullName":"","headline":"","email":"","phone":"","location":"","website":""},"sections":[{"id":"bad","type":"unknown","title":"Bad","visible":true,"content":{}}]}`,
 		`{"schemaVersion":2,"title":"Valid","templateId":"minimal","profile":{"fullName":"","headline":"","email":"","phone":"","location":"","website":""},"sections":[{"id":"work","type":"work","title":"工作经历","visible":true,"content":{"items":[{"id":"work-1","company":"公司","role":"开发","startDate":"2024.01","endDate":"至今","location":"","achievements":"","highlightsMarkdown":""}]}}]}`,
 		`{"schemaVersion":2,"title":"Valid","templateId":"minimal","profile":{"fullName":"","headline":"","email":"","phone":"","location":"","website":""},"sections":[{"id":"project","type":"project","title":"项目经历","visible":"true","content":{"items":[]}}]}`,
+		`{"schemaVersion":2,"title":"Valid","templateId":"minimal","profile":{"fullName":"","headline":"","email":"","phone":"","location":"","website":""},"sections":[{"id":"project","type":"project","title":"项目经历","visible":true,"content":{"items":[{"id":"project-1","name":"项目","role":"负责人","startDate":"2024.01","endDate":"至今","location":"","link":"","introduction":"介绍","achievements":"成绩","highlightsMarkdown":"","showLocation":true,"showLink":true,"showIntroduction":true,"showTechStack":true,"showAchievements":true}]}}]}`,
 	}
 	for _, content := range invalidContents {
 		body := `{"title":"Valid","templateId":"minimal","content":` + content + `}`
@@ -279,7 +280,7 @@ func TestResumeCreateAcceptsEverySelectableTemplate(t *testing.T) {
 	router, session := testRouter(t)
 	for _, templateID := range []string{
 		"minimal", "business", "creative", "tech", "editorial", "redline", "violet", "azure-chronicle",
-		"mint-canvas", "scholarly-serif", "blue-sidebar",
+		"mint-canvas", "scholarly-serif", "blue-sidebar", "navy-gutter",
 	} {
 		t.Run(templateID, func(t *testing.T) {
 			response := requestJSON(t, router, http.MethodPost, "/api/resumes", validResumeRequest("Valid "+templateID, templateID), session)
@@ -443,7 +444,7 @@ func validV2ResumeContent(title, templateID string) string {
 		`{"id":"summary","type":"summary","title":"个人总结","visible":true,"content":{"markdown":"总结"}},`+
 		`{"id":"work","type":"work","title":"工作经历","visible":true,"content":{"items":[{"id":"work-1","company":"公司","role":"工程师","startDate":"2024.01","endDate":"至今","location":"上海","achievements":"交付","highlightsMarkdown":"- 说明","showLocation":true,"showAchievements":true}]}},`+
 		`{"id":"internship","type":"internship","title":"实习经历","visible":true,"content":{"items":[{"id":"intern-1","company":"实习公司","role":"实习生","startDate":"2023.01","endDate":"2023.06","location":"上海","achievements":"交付","highlightsMarkdown":"- 说明","showLocation":false,"showAchievements":false}]}},`+
-		`{"id":"project","type":"project","title":"项目经历","visible":true,"content":{"items":[{"id":"project-1","name":"项目","role":"负责人","startDate":"2024.01","endDate":"至今","location":"上海","link":"https://example.com","introduction":"介绍","achievements":"成绩","highlightsMarkdown":"- 说明","showLocation":true,"showLink":true,"showIntroduction":true,"showAchievements":true}]}},`+
+		`{"id":"project","type":"project","title":"项目经历","visible":true,"content":{"items":[{"id":"project-1","name":"项目","role":"负责人","startDate":"2024.01","endDate":"至今","location":"上海","link":"https://example.com","introduction":"介绍","techStack":"Go / Redis","achievements":"成绩","highlightsMarkdown":"- 说明","showLocation":true,"showLink":true,"showIntroduction":true,"showTechStack":true,"showAchievements":true}]}},`+
 		`{"id":"education","type":"education","title":"教育经历","visible":true,"content":{"items":[{"id":"education-1","school":"学校","startDate":"2020.09","endDate":"2024.06","degree":"本科","college":"学院","major":"专业"}]}},`+
 		`{"id":"skills","type":"skills","title":"专业技能","visible":true,"content":{"items":[{"id":"skill-1","name":"Go","note":"熟悉"}]}},`+
 		`{"id":"campus","type":"campus","title":"校园经历","visible":true,"content":{"items":[{"id":"campus-1","name":"社团","role":"负责人","highlightsMarkdown":"- 说明"}]}},`+

@@ -156,9 +156,22 @@ describe('ResumeEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: '添加项目条目' }));
 
     const project = latestDocument(onChange).sections[0].content.items[0];
-    expect(project).toMatchObject({ showLocation: true, showLink: true, showIntroduction: true, showAchievements: true });
-    ['隐藏地点 1', '隐藏项目链接 1', '隐藏项目介绍 1', '隐藏项目成绩 1'].forEach((label) => fireEvent.click(screen.getByRole('button', { name: label })));
-    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ showLocation: false, showLink: false, showIntroduction: false, showAchievements: false });
+    expect(project).toMatchObject({ showLocation: true, showLink: true, showIntroduction: true, showTechStack: true, showAchievements: true });
+    ['隐藏地点 1', '隐藏项目链接 1', '隐藏项目介绍 1', '隐藏相关技术 1', '隐藏项目成绩 1'].forEach((label) => fireEvent.click(screen.getByRole('button', { name: label })));
+    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ showLocation: false, showLink: false, showIntroduction: false, showTechStack: false, showAchievements: false });
+  });
+
+  it('edits the project tech stack on its own single-line field', () => {
+    const onChange = vi.fn();
+    render(<StatefulEditor document={createEmptyResumeDocument()} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加项目经历区块' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加项目条目' }));
+
+    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ techStack: '' });
+    const field = screen.getByLabelText('相关技术 1');
+    expect(field.tagName).toBe('INPUT');
+    fireEvent.change(field, { target: { value: 'Go / Redis / MyBatis-Plus' } });
+    expect(latestDocument(onChange).sections[0].content.items[0]).toMatchObject({ techStack: 'Go / Redis / MyBatis-Plus' });
   });
 
   it('deletes a project item by its stable ID', () => {
@@ -339,14 +352,16 @@ describe('ResumeEditor', () => {
     first.content.items = [{
       id: 'first', name: '甲', role: '', startDate: '', endDate: '', location: '', link: '',
       introduction: '甲介绍', achievements: '', highlightsMarkdown: '', showLocation: true,
-      showLink: true, showIntroduction: true, showAchievements: true,
+      techStack: '',
+      showLink: true, showIntroduction: true, showTechStack: true, showAchievements: true,
     }];
     const second = createProjectSection('duplicate-project');
     second.title = '重复项目乙';
     second.content.items = [{
       id: 'second', name: '乙', role: '', startDate: '', endDate: '', location: '', link: '',
       introduction: '乙介绍', achievements: '', highlightsMarkdown: '', showLocation: true,
-      showLink: true, showIntroduction: true, showAchievements: true,
+      techStack: '',
+      showLink: true, showIntroduction: true, showTechStack: true, showAchievements: true,
     }];
     const onBeforeAiRewrite = vi.fn().mockResolvedValue(true);
     render(<ResumeEditor
@@ -369,7 +384,8 @@ describe('ResumeEditor', () => {
     replacement.content.items = [{
       id: 'replacement', name: '替换后的项目', role: '', startDate: '', endDate: '', location: '', link: '',
       introduction: '项目内容', achievements: '', highlightsMarkdown: '', showLocation: true,
-      showLink: true, showIntroduction: true, showAchievements: true,
+      techStack: '',
+      showLink: true, showIntroduction: true, showTechStack: true, showAchievements: true,
     }];
     let emit!: (event: SSEEvent) => void;
     streamRewriteMock.mockImplementation((_resumeId, _request, onEvent) => {
@@ -420,11 +436,13 @@ describe('ResumeEditor', () => {
       location: '上海',
       link: 'https://first.example.com',
       introduction: '甲原介绍',
+      techStack: '',
       achievements: '甲原成果',
       highlightsMarkdown: '甲原亮点',
       showLocation: true,
       showLink: true,
       showIntroduction: true,
+      showTechStack: true,
       showAchievements: true,
     }];
     const second = createProjectSection('project-second');
@@ -440,11 +458,13 @@ describe('ResumeEditor', () => {
         location: '北京',
         link: 'https://second.example.com',
         introduction: '乙原介绍',
+        techStack: '',
         achievements: '乙原成果',
         highlightsMarkdown: '乙原亮点',
         showLocation: false,
         showLink: true,
         showIntroduction: true,
+        showTechStack: true,
         showAchievements: false,
       },
       {
@@ -456,11 +476,13 @@ describe('ResumeEditor', () => {
         location: '深圳',
         link: '',
         introduction: '第三原介绍',
+        techStack: '',
         achievements: '第三原成果',
         highlightsMarkdown: '第三原亮点',
         showLocation: true,
         showLink: false,
         showIntroduction: true,
+        showTechStack: true,
         showAchievements: true,
       },
     ];

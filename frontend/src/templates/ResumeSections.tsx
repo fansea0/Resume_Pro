@@ -1,5 +1,6 @@
 import type { ComponentType, ReactNode } from 'react';
 import { ResumeMarkdown, safeUrl } from '../components/ResumeMarkdown';
+import { renderInlineMarkdown } from '../components/ResumeInline';
 import type {
   CampusItem,
   ExperienceItem,
@@ -172,7 +173,7 @@ function ExperienceEntry({
         startDate={item.startDate}
       /></EntryHeading>
       {item.role && <Role className={classNames?.role}>{item.role}</Role>}
-      {item.showAchievements && item.achievements && <p className={classNames?.achievements}>{item.achievements}</p>}
+      {item.showAchievements && item.achievements && <p className={classNames?.achievements}>{renderInlineMarkdown(item.achievements)}</p>}
       {item.highlightsMarkdown && <div className={classNames?.markdown}><ResumeMarkdown markdown={item.highlightsMarkdown} /></div>}
     </Entry>
   );
@@ -208,8 +209,8 @@ function ProjectEntry({
       /></EntryHeading>
       {item.role && <Role className={classNames?.role}>{item.role}</Role>}
       {item.showLink && safeLink && <a className={classNames?.link} href={safeLink}>{item.link}</a>}
-      {item.showIntroduction && item.introduction && <p className={classNames?.introduction}>{item.introduction}</p>}
-      {item.showAchievements && item.achievements && <p className={classNames?.achievements}>{item.achievements}</p>}
+      {item.showIntroduction && item.introduction && <p className={classNames?.introduction}>{renderInlineMarkdown(item.introduction)}</p>}
+      {item.showAchievements && item.achievements && <p className={classNames?.achievements}>{renderInlineMarkdown(item.achievements)}</p>}
       {item.highlightsMarkdown && <div className={classNames?.markdown}><ResumeMarkdown markdown={item.highlightsMarkdown} /></div>}
     </Entry>
   );

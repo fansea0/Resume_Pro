@@ -133,6 +133,52 @@ describe('documentFromStored', () => {
     expect(restored.profile.avatarStorageKey).toBe('');
   });
 
+  it('upgrades stored project items saved before the tech-stack line existed', () => {
+    const document = createSampleResumeDocument();
+    const withoutTechStack = {
+      ...document,
+      sections: document.sections.map((section) => (
+        section.type === 'project'
+          ? {
+            ...section,
+            content: {
+              items: section.content.items.map((item) => {
+                const legacy = { ...item };
+                delete (legacy as Partial<typeof item>).techStack;
+                delete (legacy as Partial<typeof item>).showTechStack;
+                return legacy;
+              }),
+            },
+          }
+          : section
+      )),
+    };
+
+    const restored = documentFromStored(stored(withoutTechStack));
+    const project = restored.sections.find((section) => section.type === 'project');
+    expect(project?.content.items[0].techStack).toBe('');
+    expect(project?.content.items[0].showTechStack).toBe(true);
+  });
+
+  it('rejects stored project items whose tech-stack value is not a string', () => {
+    const document = createSampleResumeDocument();
+    const corrupt = {
+      ...document,
+      sections: document.sections.map((section) => (
+        section.type === 'project'
+          ? {
+            ...section,
+            content: {
+              items: section.content.items.map((item) => ({ ...item, techStack: 42 })),
+            },
+          }
+          : section
+      )),
+    };
+
+    expect(() => documentFromStored(stored(corrupt))).toThrow('invalid stored resume content');
+  });
+
   it('rejects malformed avatar field types in v2 content', () => {
     const document = createSampleResumeDocument();
     const corruptAvatarUrl = {

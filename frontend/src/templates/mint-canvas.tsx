@@ -9,6 +9,7 @@ import type {
 } from '../types/resume';
 import { ResumeAvatar } from './ResumeAvatar';
 import { ResumeMarkdown } from '../components/ResumeMarkdown';
+import { renderInlineMarkdown } from '../components/ResumeInline';
 
 /**
  * Mint Canvas — thin border, mint header block, badge section titles and
@@ -148,17 +149,17 @@ function renderInlineChips(text: string): ReactNode {
   // Match either **markdown-bold** keyword or a plain keyword, followed by
   // a Chinese (：) or ASCII (:) colon, then the rest of the line.
   const match = text.match(/^\s*(?:\*\*([^*\n]{1,16})\*\*|([^：:\n]{1,16}))\s*[：:]\s*(.*)$/);
-  if (!match) return text;
+  if (!match) return renderInlineMarkdown(text);
   const keyword = (match[1] ?? match[2] ?? '').trim();
   const rest = match[3];
   // Only treat as chip when there's actual follow-up text and the keyword
   // looks like a label rather than a URL or numeric.
-  if (!keyword || !rest || /^[\d./-]+$/.test(keyword)) return text;
+  if (!keyword || !rest || /^[\d./-]+$/.test(keyword)) return renderInlineMarkdown(text);
   return (
     <>
       <span className="template-mint-canvas__chip">{keyword}</span>
       <span className="template-mint-canvas__chip-sep">：</span>
-      <span>{rest}</span>
+      {renderInlineMarkdown(rest)}
     </>
   );
 }
@@ -183,7 +184,7 @@ function MintExperienceItem(_section: ResumeSection, item: ExperienceItem) {
         )}
       </div>
       {item.showAchievements && item.achievements && (
-        <p className="template-mint-canvas__achievement">{item.achievements}</p>
+        <p className="template-mint-canvas__achievement">{renderInlineMarkdown(item.achievements)}</p>
       )}
       {item.highlightsMarkdown && (
         <div className="template-mint-canvas__markdown">{renderHighlightsWithChips(item.highlightsMarkdown)}</div>
@@ -192,9 +193,22 @@ function MintExperienceItem(_section: ResumeSection, item: ExperienceItem) {
   );
 }
 
+/**
+ * Split a tech-stack line into skill-style chips. Only 、 and , separate
+ * technologies; a slash stays inside one chip so grouped entries such as
+ * "Java / Spring Boot" keep their meaning.
+ */
+function splitTechStack(techStack: string): string[] {
+  return techStack
+    .split(/[、,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function MintProjectItem(_section: ResumeSection, item: ProjectItem) {
   const hasDate = Boolean(item.startDate || item.endDate);
   const showIntroduction = Boolean(item.showIntroduction && item.introduction);
+  const techChips = item.showTechStack ? splitTechStack(item.techStack) : [];
   return (
     <article className="template-mint-canvas__entry" data-resume-entry={item.id}>
       <div
@@ -213,10 +227,21 @@ function MintProjectItem(_section: ResumeSection, item: ProjectItem) {
         )}
       </div>
       {showIntroduction && (
-        <p className="template-mint-canvas__entry-sub">{item.introduction}</p>
+        <p className="template-mint-canvas__entry-sub">
+          <span className="template-mint-canvas__meta-label">项目介绍：</span>
+          {renderInlineMarkdown(item.introduction)}
+        </p>
+      )}
+      {techChips.length > 0 && (
+        <p className="template-mint-canvas__tech">
+          <span className="template-mint-canvas__meta-label">相关技术：</span>
+          {techChips.map((tech, techIndex) => (
+            <span className="template-mint-canvas__skill" key={`${tech}-${techIndex}`}>{tech}</span>
+          ))}
+        </p>
       )}
       {item.showAchievements && item.achievements && (
-        <p className="template-mint-canvas__achievement">{item.achievements}</p>
+        <p className="template-mint-canvas__achievement">{renderInlineMarkdown(item.achievements)}</p>
       )}
       {item.highlightsMarkdown && (
         <div className="template-mint-canvas__markdown">{renderHighlightsWithChips(item.highlightsMarkdown)}</div>

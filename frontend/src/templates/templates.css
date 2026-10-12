@@ -284,7 +284,29 @@
 }
 .template-mint-canvas__entry-heading h3 { color: var(--mint-ink); font-size: 1rem; margin: 0 0 .2rem; }
 .template-mint-canvas__entry-date { color: var(--mint-muted); flex: 0 0 auto; font-size: .78rem; white-space: nowrap; }
-.template-mint-canvas__entry-sub { color: var(--mint-muted); font-size: .84rem; margin: 0 0 .35rem; }
+/* Project introduction reads as body copy, not as muted metadata. */
+.template-mint-canvas__entry-sub { color: var(--mint-text); font-size: .87rem; margin: 0 0 .8mm; }
+/* Shared bold label for the project introduction and tech-stack rows. */
+.template-mint-canvas__meta-label {
+  color: var(--mint-ink);
+  font-size: .82rem;
+  font-weight: 700;
+  margin-right: .6mm;
+}
+.template-mint-canvas__tech {
+  align-items: baseline;
+  color: var(--mint-text);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: .82rem;
+  gap: 1.4mm 2mm;
+  margin: 0 0 1.6mm;
+}
+/* Project tech chips read as annotations, so they sit below the skill chips. */
+.template-mint-canvas__tech .template-mint-canvas__skill {
+  font-size: .75rem;
+  padding: .5mm 1.8mm;
+}
 .template-mint-canvas__role { color: var(--mint-muted); font-size: .84rem; margin: 0 0 .25rem; }
 /* Role shares the title row: title left, role centred, date right. */
 .template-mint-canvas__entry-heading--role { gap: .6rem; }
@@ -305,6 +327,13 @@
   padding: 1.2mm 2.4mm;
 }
 .template-mint-canvas__markdown { color: var(--mint-text); font-size: .88rem; }
+/* Inline Markdown emphasis stays legible without competing with the chip labels. */
+.template-mint-canvas__markdown strong,
+.template-mint-canvas__entry-sub strong,
+.template-mint-canvas__tech strong,
+.template-mint-canvas__achievement strong { color: var(--mint-ink); font-weight: 700; }
+.template-mint-canvas__markdown em,
+.template-mint-canvas__entry-sub em { font-style: italic; }
 .template-mint-canvas__markdown p { margin: 0 0 1.2mm; }
 .template-mint-canvas__gap { height: 1.2mm; }
 .template-mint-canvas__list { margin: 0 0 1.2mm; padding-left: 1.15rem; }

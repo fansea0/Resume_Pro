@@ -17,7 +17,7 @@ const MAX_RESUME_STRING_BYTES = 20_000;
 const encoder = new TextEncoder();
 const templateIds = new Set<TemplateId>([
   'minimal', 'business', 'creative', 'tech', 'editorial', 'redline', 'violet', 'azure-chronicle',
-  'mint-canvas', 'scholarly-serif', 'blue-sidebar',
+  'mint-canvas', 'scholarly-serif', 'blue-sidebar', 'navy-gutter',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -87,7 +87,11 @@ function sanitizeProjectItem(value: unknown): ProjectItem | undefined {
   const booleans = requiredBooleans(value, [
     'showLocation', 'showLink', 'showIntroduction', 'showAchievements',
   ]);
-  return strings && booleans ? { ...strings, ...booleans } as unknown as ProjectItem : undefined;
+  // The project tech-stack line is newer than the generator schema, so treat a
+  // missing value as empty instead of discarding the whole project item.
+  const techStack = typeof value.techStack === 'string' ? value.techStack : '';
+  const showTechStack = typeof value.showTechStack === 'boolean' ? value.showTechStack : true;
+  return strings && booleans ? { ...strings, ...booleans, techStack, showTechStack } as unknown as ProjectItem : undefined;
 }
 
 function sanitizeEducationItem(value: unknown): EducationItem | undefined {
