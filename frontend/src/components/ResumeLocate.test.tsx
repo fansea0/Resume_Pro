@@ -28,6 +28,8 @@ describe('ResumeLocate', () => {
     const button = screen.getByRole('button', { name: '定位到编辑器的「项目经历」' });
     expect(button.tagName).toBe('BUTTON');
     expect(button).toHaveAttribute('type', 'button');
+    // `resume-locate` 是交给样式任务的硬契约，改名会让预览标题退回原生 button 外观。
+    expect(button).toHaveClass('resume-locate');
     fireEvent.click(button);
     expect(onLocate).toHaveBeenCalledWith({ sectionId: 'section-1' });
   });
@@ -35,7 +37,9 @@ describe('ResumeLocate', () => {
   it('条目按钮点击后同时发出区块与条目 id', () => {
     const onLocate = vi.fn();
     render(<h3><EntryLocateButton itemId="item-7" label="AI 创作副驾" sectionId="section-1" onLocate={onLocate}>AI 创作副驾</EntryLocateButton></h3>);
-    fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「AI 创作副驾」' }));
+    const button = screen.getByRole('button', { name: '定位到编辑器的「AI 创作副驾」' });
+    expect(button).toHaveClass('resume-locate');
+    fireEvent.click(button);
     expect(onLocate).toHaveBeenCalledWith({ sectionId: 'section-1', itemId: 'item-7' });
   });
 
@@ -45,8 +49,20 @@ describe('ResumeLocate', () => {
     expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('项目经历');
   });
 
+  it('条目按钮缺少 onLocate 时同样只渲染纯文本', () => {
+    render(<h3><EntryLocateButton itemId="item-7" label="AI 创作副驾" sectionId="section-1">AI 创作副驾</EntryLocateButton></h3>);
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('AI 创作副驾');
+  });
+
   it('保留标题语义层级：按钮在 h2 / h3 内部', () => {
-    render(<h2><SectionLocateButton label="A" onLocate={vi.fn()} sectionId="section-1">A</SectionLocateButton></h2>);
+    render(
+      <>
+        <h2><SectionLocateButton label="A" onLocate={vi.fn()} sectionId="section-1">A</SectionLocateButton></h2>
+        <h3><EntryLocateButton itemId="item-7" label="B" sectionId="section-1" onLocate={vi.fn()}>B</EntryLocateButton></h3>
+      </>,
+    );
     expect(screen.getByRole('heading', { level: 2 }).querySelector('button')).not.toBeNull();
+    expect(screen.getByRole('heading', { level: 3 }).querySelector('button')).not.toBeNull();
   });
 });
