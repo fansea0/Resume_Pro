@@ -18,6 +18,9 @@
 - **必须保留现有的 `data-resume-section={section.type}` 属性**。`registry.test.tsx`、`ResumeSections.test.tsx` 多处依赖该选择器，替换会打破现有测试。新增 id 属性必须与它并存。
 - 提交信息使用中文 tag：`feat:` / `fix:` / `refactor:` / `test:` / `docs:`（见 `AGSIN.md`）。
 - 测试命令：`cd frontend && npx vitest run`；构建校验：`cd frontend && npm run build`。
+- **测试里用 `fireEvent`（来自 `@testing-library/react`），不要用 `@testing-library/user-event`——该包未安装，且不得新增依赖。**
+- **vitest 没开 `globals`，所以 RTL 的自动 cleanup 不生效。** 每个新增/修改的测试文件都要显式写 `afterEach(cleanup)`，否则 DOM 会在用例间累积导致莫名其妙的失败。仓库既有测试文件都是这么做的，沿用即可。
+- **任何新组件的 props 必须在 Interfaces 与测试代码中保持一致。** 写测试时逐个核对必填 prop，不要凭直觉省略。
 - 代码风格沿用现有前端：单引号、无分号结尾、2 空格缩进、JSX 属性按字母序（现有代码普遍如此）。
 - 无障碍要求（`AGSIN.md`）：按钮必须有 `aria-label`、键盘焦点样式、足够点击面积。
 - **不要把定位控件做成覆盖区块的透明遮罩**——那会拦截预览正文的文字选中与项目链接点击。只包裹标题文本。
@@ -276,17 +279,17 @@ describe('ResumeSections 定位锚点', () => {
     expect(container.querySelector(`[${ITEM_ANCHOR_ATTR}="sample-project-copilot"]`)).not.toBeNull();
   });
 
-  it('标题内是原生按钮，点击发出区块级目标', async () => {
+  it('标题内是原生按钮，点击发出区块级目标', () => {
     const onLocate = vi.fn();
     render(<ResumeSections onLocate={onLocate} sections={sampleSections} />);
-    await userEvent.click(screen.getByRole('button', { name: '定位到编辑器的「项目经历」' }));
+    fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「项目经历」' }));
     expect(onLocate).toHaveBeenCalledWith({ sectionId: 'sample-project' });
   });
 
-  it('条目标题内是原生按钮，点击发出条目级目标', async () => {
+  it('条目标题内是原生按钮，点击发出条目级目标', () => {
     const onLocate = vi.fn();
     render(<ResumeSections onLocate={onLocate} sections={sampleSections} />);
-    await userEvent.click(screen.getByRole('button', { name: '定位到编辑器的「AI 创作副驾」' }));
+    fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「AI 创作副驾」' }));
     expect(onLocate).toHaveBeenCalledWith({ sectionId: 'sample-project', itemId: 'sample-project-copilot' });
   });
 
@@ -306,7 +309,11 @@ describe('ResumeSections 定位锚点', () => {
 在该文件顶部补齐 import（若尚未引入）：
 
 ```tsx
+import { fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, cleanup } from 'vitest';
 import { ITEM_ANCHOR_ATTR, SECTION_ANCHOR_ATTR } from '../components/ResumeLocate';
+
+afterEach(cleanup);
 ```
 
 并确保 `sampleSections` 变量已存在（若测试文件用的是别的名字，改为实际变量名；建议直接用 `createSampleResumeDocument().sections`）。
@@ -934,7 +941,7 @@ describe('预览定位路由', () => {
     Element.prototype.scrollIntoView = vi.fn();
     await renderAuthenticatedEditor();
     const button = await screen.findByRole('button', { name: '定位到编辑器的「项目经历」' });
-    await userEvent.click(button);
+    fireEvent.click(button);
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
     delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
   });
@@ -943,9 +950,9 @@ describe('预览定位路由', () => {
     Element.prototype.scrollIntoView = vi.fn();
     await renderAuthenticatedEditor();
     const button = await screen.findByRole('button', { name: '定位到编辑器的「项目经历」' });
-    await userEvent.click(button);
+    fireEvent.click(button);
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1));
-    await userEvent.click(button);
+    fireEvent.click(button);
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(2));
     delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
   });
