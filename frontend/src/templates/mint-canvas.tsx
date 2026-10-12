@@ -164,11 +164,17 @@ function renderInlineChips(text: string): ReactNode {
 }
 
 function MintExperienceItem(_section: ResumeSection, item: ExperienceItem) {
+  const hasDate = Boolean(item.startDate || item.endDate);
   return (
     <article className="template-mint-canvas__entry" data-resume-entry={item.id}>
-      <div className="template-mint-canvas__entry-heading">
+      <div
+        className={`template-mint-canvas__entry-heading${
+          item.role ? ' template-mint-canvas__entry-heading--role' : ''
+        }`}
+      >
         <h3>{item.company}</h3>
-        {(item.startDate || item.endDate) && (
+        {item.role && <span className="template-mint-canvas__role">{item.role}</span>}
+        {hasDate && (
           <time className="template-mint-canvas__entry-date">
             {item.startDate}
             {item.startDate && item.endDate ? ' – ' : ''}
@@ -176,7 +182,6 @@ function MintExperienceItem(_section: ResumeSection, item: ExperienceItem) {
           </time>
         )}
       </div>
-      {item.role && <p className="template-mint-canvas__role">{item.role}</p>}
       {item.showAchievements && item.achievements && (
         <p className="template-mint-canvas__achievement">{item.achievements}</p>
       )}
@@ -188,11 +193,18 @@ function MintExperienceItem(_section: ResumeSection, item: ExperienceItem) {
 }
 
 function MintProjectItem(_section: ResumeSection, item: ProjectItem) {
+  const hasDate = Boolean(item.startDate || item.endDate);
+  const showIntroduction = Boolean(item.showIntroduction && item.introduction);
   return (
     <article className="template-mint-canvas__entry" data-resume-entry={item.id}>
-      <div className="template-mint-canvas__entry-heading">
+      <div
+        className={`template-mint-canvas__entry-heading${
+          item.role ? ' template-mint-canvas__entry-heading--role' : ''
+        }`}
+      >
         <h3>{item.name}</h3>
-        {(item.startDate || item.endDate) && (
+        {item.role && <span className="template-mint-canvas__role">{item.role}</span>}
+        {hasDate && (
           <time className="template-mint-canvas__entry-date">
             {item.startDate}
             {item.startDate && item.endDate ? ' – ' : ''}
@@ -200,11 +212,9 @@ function MintProjectItem(_section: ResumeSection, item: ProjectItem) {
           </time>
         )}
       </div>
-      <div className="template-mint-canvas__entry-sub">
-        {item.role && <span className="template-mint-canvas__role">{item.role}</span>}
-        {item.role && item.introduction && <span className="template-mint-canvas__sep"> · </span>}
-        {item.showIntroduction && item.introduction && <span>{item.introduction}</span>}
-      </div>
+      {showIntroduction && (
+        <p className="template-mint-canvas__entry-sub">{item.introduction}</p>
+      )}
       {item.showAchievements && item.achievements && (
         <p className="template-mint-canvas__achievement">{item.achievements}</p>
       )}

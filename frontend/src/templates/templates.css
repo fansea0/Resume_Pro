@@ -286,6 +286,15 @@
 .template-mint-canvas__entry-date { color: var(--mint-muted); flex: 0 0 auto; font-size: .78rem; white-space: nowrap; }
 .template-mint-canvas__entry-sub { color: var(--mint-muted); font-size: .84rem; margin: 0 0 .35rem; }
 .template-mint-canvas__role { color: var(--mint-muted); font-size: .84rem; margin: 0 0 .25rem; }
+/* Role shares the title row: title left, role centred, date right. */
+.template-mint-canvas__entry-heading--role { gap: .6rem; }
+.template-mint-canvas__entry-heading--role > .template-mint-canvas__role {
+  flex: 1 1 auto;
+  margin: 0;
+  min-width: 0;
+  text-align: center;
+}
+.template-mint-canvas__entry-heading--role > h3 { flex: 0 1 auto; margin: 0 0 .2rem; }
 .template-mint-canvas__achievement {
   background: var(--mint-bg);
   border-radius: 1.4mm;
@@ -701,6 +710,7 @@
   .template-mint-canvas__avatar { height: 5.5rem; width: 5.5rem; }
   .template-mint-canvas__body { padding: 1.2rem 1.5rem 1.5rem; }
   .template-mint-canvas__entry-heading { flex-direction: column; gap: .15rem; }
+  .template-mint-canvas__entry-heading--role > .template-mint-canvas__role { flex: 0 0 auto; text-align: left; }
   .template-mint-canvas__section-title::after { display: none; }
   .template-scholarly-serif { font-size: 10pt; padding: 1.2rem 1.4rem; }
   .template-scholarly-serif__entry-heading { align-items: flex-start; flex-direction: column; gap: 0; }
