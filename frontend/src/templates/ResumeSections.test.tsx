@@ -1,7 +1,13 @@
-import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ResumeSections } from './ResumeSections';
-import type { ResumeSection } from '../types/resume';
+import { createSampleResumeDocument, type ResumeSection } from '../types/resume';
+import { ITEM_ANCHOR_ATTR, SECTION_ANCHOR_ATTR } from '../components/ResumeLocate';
+
+// vitest 未开启 globals，@testing-library/react 不会自动清理，需显式 cleanup。
+afterEach(cleanup);
+
+const sampleSections = createSampleResumeDocument().sections;
 
 const sections: ResumeSection[] = [
   {
@@ -170,5 +176,44 @@ describe('ResumeSections', () => {
     );
 
     expect(screen.getByRole('link', { name: 'https://example.com' })).toHaveAttribute('href', 'https://example.com');
+  });
+});
+
+describe('ResumeSections 定位锚点', () => {
+  it('默认区块槽输出 section id 锚点，并保留既有 type 属性', () => {
+    const { container } = render(<ResumeSections sections={sampleSections} />);
+    const node = container.querySelector('[data-resume-section="project"]');
+    expect(node).toHaveAttribute(SECTION_ANCHOR_ATTR, 'sample-project');
+    expect(node).toHaveAttribute('data-resume-section', 'project');
+  });
+
+  it('默认条目槽输出 item id 锚点', () => {
+    const { container } = render(<ResumeSections sections={sampleSections} />);
+    expect(container.querySelector(`[${ITEM_ANCHOR_ATTR}="sample-project-copilot"]`)).not.toBeNull();
+  });
+
+  it('标题内是原生按钮，点击发出区块级目标', () => {
+    const onLocate = vi.fn();
+    render(<ResumeSections onLocate={onLocate} sections={sampleSections} />);
+    fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「项目经历」' }));
+    expect(onLocate).toHaveBeenCalledWith({ sectionId: 'sample-project' });
+  });
+
+  it('条目标题内是原生按钮，点击发出条目级目标', () => {
+    const onLocate = vi.fn();
+    render(<ResumeSections onLocate={onLocate} sections={sampleSections} />);
+    fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「AI 创作副驾」' }));
+    expect(onLocate).toHaveBeenCalledWith({ sectionId: 'sample-project', itemId: 'sample-project-copilot' });
+  });
+
+  it('没有 onLocate 时标题保持纯文本，布局与改动前一致', () => {
+    render(<ResumeSections sections={sampleSections} />);
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('summary 区块无条目锚点', () => {
+    const { container } = render(<ResumeSections sections={sampleSections} />);
+    const summary = container.querySelector('[data-resume-section="summary"]');
+    expect(summary?.querySelectorAll(`[${ITEM_ANCHOR_ATTR}]`).length).toBe(0);
   });
 });

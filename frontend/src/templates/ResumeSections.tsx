@@ -1,5 +1,6 @@
 import type { ComponentType, ReactNode } from 'react';
 import { ResumeMarkdown, safeUrl } from '../components/ResumeMarkdown';
+import { EntryLocateButton, ITEM_ANCHOR_ATTR, SECTION_ANCHOR_ATTR, SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
 import { renderInlineMarkdown } from '../components/ResumeInline';
 import type {
   CampusItem,
@@ -31,20 +32,23 @@ type ClassNameKey =
 export interface SectionSlotProps {
   children: ReactNode;
   className?: string;
+  onLocate?: LocateHandler;
   section: ResumeSection;
 }
 
 export interface TitleSlotProps {
   children: ReactNode;
   className?: string;
+  onLocate?: LocateHandler;
   section: ResumeSection;
 }
 
 export interface ItemSlotProps {
   children: ReactNode;
   className?: string;
+  onLocate?: LocateHandler;
   section: ResumeSection;
-  item: unknown;
+  item: { id?: string };
 }
 
 export interface ContentSlotProps {
@@ -73,12 +77,13 @@ export interface ResumeSectionsSlots {
   role: ComponentType<ContentSlotProps>;
   honours: ComponentType<HonoursSlotProps>;
   skills: ComponentType<SkillsSlotProps>;
-  item: (section: ResumeSection, item: ExperienceItem | ProjectItem | CampusItem | Extract<ResumeSection, { type: 'education' }>['content']['items'][number]) => ReactNode;
+  item: (section: ResumeSection, item: ExperienceItem | ProjectItem | CampusItem | Extract<ResumeSection, { type: 'education' }>['content']['items'][number], onLocate?: LocateHandler) => ReactNode;
 }
 
 export interface ResumeSectionsProps {
   sections: ResumeSection[];
   classNames?: Partial<Record<ClassNameKey, string>>;
+  onLocate?: LocateHandler;
   slots?: Partial<ResumeSectionsSlots>;
 }
 
@@ -92,15 +97,15 @@ function assertNever(value: never): never {
 }
 
 function DefaultSection({ children, className, section }: SectionSlotProps) {
-  return <section className={className} data-resume-section={section.type}>{children}</section>;
+  return <section className={className} data-resume-section={section.type} {...{ [SECTION_ANCHOR_ATTR]: section.id }}>{children}</section>;
 }
 
-function DefaultTitle({ children, className }: TitleSlotProps) {
-  return <h2 className={className} data-resume-section-title>{children}</h2>;
+function DefaultTitle({ children, className, onLocate, section }: TitleSlotProps) {
+  return <h2 className={className} data-resume-section-title><SectionLocateButton label={section.title} onLocate={onLocate} sectionId={section.id}>{children}</SectionLocateButton></h2>;
 }
 
-function DefaultEntry({ children, className }: ItemSlotProps) {
-  return <article className={className}>{children}</article>;
+function DefaultEntry({ children, className, item }: ItemSlotProps) {
+  return <article className={className} {...(item.id ? { [ITEM_ANCHOR_ATTR]: item.id } : {})}>{children}</article>;
 }
 
 function DefaultMeta({ children, className }: ContentSlotProps) {
@@ -154,6 +159,7 @@ function ExperienceEntry({
   Meta,
   Role,
   EntryHeading,
+  onLocate,
 }: {
   item: ExperienceItem;
   section: Extract<ResumeSection, { type: 'work' | 'internship' }>;
@@ -162,10 +168,11 @@ function ExperienceEntry({
   Meta: ComponentType<ContentSlotProps>;
   Role: ComponentType<ContentSlotProps>;
   EntryHeading: ComponentType<ContentSlotProps>;
+  onLocate?: LocateHandler;
 }) {
   return (
-    <Entry className={classNames?.entry} item={item} section={section}>
-      <EntryHeading className={classNames?.entryHeading}><h3>{item.company}</h3><Metadata
+    <Entry className={classNames?.entry} item={item} onLocate={onLocate} section={section}>
+      <EntryHeading className={classNames?.entryHeading}><h3><EntryLocateButton itemId={item.id} label={item.company} onLocate={onLocate} sectionId={section.id}>{item.company}</EntryLocateButton></h3><Metadata
         Meta={Meta}
         classNames={classNames}
         endDate={item.endDate}
@@ -187,6 +194,7 @@ function ProjectEntry({
   Meta,
   Role,
   EntryHeading,
+  onLocate,
 }: {
   item: ProjectItem;
   section: Extract<ResumeSection, { type: 'project' }>;
@@ -195,12 +203,13 @@ function ProjectEntry({
   Meta: ComponentType<ContentSlotProps>;
   Role: ComponentType<ContentSlotProps>;
   EntryHeading: ComponentType<ContentSlotProps>;
+  onLocate?: LocateHandler;
 }) {
   const safeLink = safeUrl(item.link);
 
   return (
-    <Entry className={classNames?.entry} item={item} section={section}>
-      <EntryHeading className={classNames?.entryHeading}><h3>{item.name}</h3><Metadata
+    <Entry className={classNames?.entry} item={item} onLocate={onLocate} section={section}>
+      <EntryHeading className={classNames?.entryHeading}><h3><EntryLocateButton itemId={item.id} label={item.name} onLocate={onLocate} sectionId={section.id}>{item.name}</EntryLocateButton></h3><Metadata
         Meta={Meta}
         classNames={classNames}
         endDate={item.endDate}
@@ -222,16 +231,18 @@ function CampusEntry({
   classNames,
   Entry,
   Role,
+  onLocate,
 }: {
   item: CampusItem;
   section: Extract<ResumeSection, { type: 'campus' }>;
   classNames: ResumeSectionsProps['classNames'];
   Entry: ComponentType<ItemSlotProps>;
   Role: ComponentType<ContentSlotProps>;
+  onLocate?: LocateHandler;
 }) {
   return (
-    <Entry className={joinClassNames(classNames?.entry, classNames?.campus)} item={item} section={section}>
-      <h3>{item.name}</h3>
+    <Entry className={joinClassNames(classNames?.entry, classNames?.campus)} item={item} onLocate={onLocate} section={section}>
+      <h3><EntryLocateButton itemId={item.id} label={item.name} onLocate={onLocate} sectionId={section.id}>{item.name}</EntryLocateButton></h3>
       {item.role && <Role className={classNames?.role}>{item.role}</Role>}
       {item.highlightsMarkdown && <div className={classNames?.markdown}><ResumeMarkdown markdown={item.highlightsMarkdown} /></div>}
     </Entry>
@@ -239,7 +250,7 @@ function CampusEntry({
 }
 
 /** Renders visible resume sections strictly in their persisted array order. */
-export function ResumeSections({ sections, classNames, slots }: ResumeSectionsProps) {
+export function ResumeSections({ sections, classNames, onLocate, slots }: ResumeSectionsProps) {
   const Section = slots?.section ?? DefaultSection;
   const Title = slots?.title ?? DefaultTitle;
   const Entry = slots?.entry ?? DefaultEntry;
@@ -265,7 +276,7 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
           case 'work':
           case 'internship':
             content = section.content.items.map((item) => (
-              slots?.item ? slots.item(section, item) : <ExperienceEntry
+              slots?.item ? slots.item(section, item, onLocate) : <ExperienceEntry
                 Entry={Entry}
                 Meta={Meta}
                 Role={Role}
@@ -273,13 +284,14 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
                 classNames={classNames}
                 item={item}
                 key={item.id}
+                onLocate={onLocate}
                 section={section}
               />
             ));
             break;
           case 'project':
             content = section.content.items.map((item) => (
-              slots?.item ? slots.item(section, item) : <ProjectEntry
+              slots?.item ? slots.item(section, item, onLocate) : <ProjectEntry
                 Entry={Entry}
                 Meta={Meta}
                 Role={Role}
@@ -287,14 +299,15 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
                 classNames={classNames}
                 item={item}
                 key={item.id}
+                onLocate={onLocate}
                 section={section}
               />
             ));
             break;
           case 'education':
             content = section.content.items.map((item) => (
-              slots?.item ? slots.item(section, item) : <Entry className={classNames?.entry} item={item} key={item.id} section={section}>
-                <EntryHeading className={classNames?.entryHeading}><h3>{item.school}</h3><Metadata Meta={Meta} classNames={classNames} endDate={item.endDate} startDate={item.startDate} /></EntryHeading>
+              slots?.item ? slots.item(section, item, onLocate) : <Entry className={classNames?.entry} item={item} key={item.id} onLocate={onLocate} section={section}>
+                <EntryHeading className={classNames?.entryHeading}><h3><EntryLocateButton itemId={item.id} label={item.school} onLocate={onLocate} sectionId={section.id}>{item.school}</EntryLocateButton></h3><Metadata Meta={Meta} classNames={classNames} endDate={item.endDate} startDate={item.startDate} /></EntryHeading>
                 {[item.degree, item.college, item.major].filter(Boolean).length > 0 && (
                   <Role className={classNames?.role}>{[item.degree, item.college, item.major].filter(Boolean).join(' · ')}</Role>
                 )}
@@ -308,7 +321,7 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
             break;
           case 'campus':
             content = section.content.items.map((item) => (
-              slots?.item ? slots.item(section, item) : <CampusEntry Entry={Entry} Role={Role} classNames={classNames} item={item} key={item.id} section={section} />
+              slots?.item ? slots.item(section, item, onLocate) : <CampusEntry Entry={Entry} Role={Role} classNames={classNames} item={item} key={item.id} onLocate={onLocate} section={section} />
             ));
             break;
           case 'honours':
@@ -325,8 +338,8 @@ export function ResumeSections({ sections, classNames, slots }: ResumeSectionsPr
         }
 
         return (
-          <Section className={classNames?.section} key={section.id} section={section}>
-            <Title className={classNames?.title} section={section}>{section.title}</Title>
+          <Section className={classNames?.section} key={section.id} onLocate={onLocate} section={section}>
+            <Title className={classNames?.title} onLocate={onLocate} section={section}>{section.title}</Title>
             {content}
           </Section>
         );
