@@ -4,13 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useLocateTarget, HIGHLIGHT_DURATION_MS } from './useLocateTarget';
 import type { LocateRequest } from '../components/ResumeLocate';
 
-function Panel({ request }: { request?: LocateRequest }) {
+function Panel({ request, sectionId = 'section-1' }: { request?: LocateRequest; sectionId?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   useLocateTarget(request, ref);
   return (
     <div ref={ref}>
       {/* 刻意不加 open：验证 hook 会主动展开折叠的区块 */}
-      <details data-editor-section-id="section-1"><summary>项目经历</summary>
+      <details data-editor-section-id={sectionId}><summary>项目经历</summary>
         <div className="editor-card" data-editor-item-id="item-7">条目</div>
       </details>
     </div>
@@ -109,6 +109,37 @@ describe('useLocateTarget', () => {
 
     expect(details.classList.contains('is-located')).toBe(true);
     expect(scrollIntoView).toHaveBeenCalledTimes(2);
+  });
+
+  it('连续定位时旧的定时器不会提前抹掉新高亮', () => {
+    const { container, rerender } = render(<Panel request={{ sectionId: 'section-1', nonce: 1 }} />);
+    const details = container.querySelector('details') as HTMLElement;
+
+    // 第一次请求的定时器在 t=1600ms 到期，这里故意在其之前发起第二次请求
+    act(() => { vi.advanceTimersByTime(500); });
+    rerender(<Panel request={{ sectionId: 'section-1', nonce: 2 }} />);
+    expect(details.classList.contains('is-located')).toBe(true);
+
+    // t≈1700ms：第一次请求的定时器若未被清理，会在此抹掉第二次请求的高亮
+    act(() => { vi.advanceTimersByTime(1200); });
+    expect(details.classList.contains('is-located')).toBe(true);
+    // 第二次请求自己的 1600ms 从 t=500 起算，应到 t≈2100ms 之后才移除
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(details.classList.contains('is-located')).toBe(false);
+  });
+
+  it('itemId 指向不存在的条目时回退到区块锚点', () => {
+    const { container } = render(<Panel request={{ sectionId: 'section-1', itemId: 'item-404', nonce: 1 }} />);
+
+    expect(container.querySelector('details')?.classList.contains('is-located')).toBe(true);
+    expect(container.querySelector('[data-editor-item-id="item-7"]')?.classList.contains('is-located')).toBe(false);
+  });
+
+  it('id 含引号与方括号时仍按属性取值命中，不受选择器语法影响', () => {
+    const hostile = 'x"] .is-located';
+    const { container } = render(<Panel request={{ sectionId: hostile, nonce: 1 }} sectionId={hostile} />);
+
+    expect(container.querySelector('details')?.classList.contains('is-located')).toBe(true);
   });
 
   it('scrollIntoView 不存在时静默降级，不抛异常', () => {
