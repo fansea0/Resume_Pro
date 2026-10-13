@@ -31,8 +31,9 @@
 
 这一节是调查现有代码后得到的、会改变实现方式的事实。**不要凭直觉重做这些调查。**
 
-1. **`entry` 槽在 4 个模板中当前不可达。** `ResumeSections.tsx` 中每个条目分支都是 `slots?.item ? slots.item(...) : <Entry .../>` 的形态。`blue-sidebar`、`navy-gutter`、`scholarly-serif`、`tech` 同时提供了 `item` 槽，因此它们的 `entry` 覆盖组件（`BlueSidebarEntry` / `NavyGutterEntry` / `ScholarlyEntry` / `tech` 内联 `Entry`）**根本不会被渲染**。
-   → 结论：**不要去改这 4 个死代码 `entry` 槽**，锚点加在它们的 `item` 渲染器上即可。删死代码不在本计划范围内。
+1. **`entry` 槽在 4 个模板中作为槽覆盖不可达，但其中 3 个组件本身是活的。** `ResumeSections.tsx` 中每个条目分支都是 `slots?.item ? slots.item(...) : <Entry .../>` 的形态。`blue-sidebar`、`navy-gutter`、`scholarly-serif`、`tech` 同时提供了 `item` 槽，因此它们的 `entry` **槽覆盖**永远不会被渲染。
+   但经 Task 4 实测复核：`BlueSidebarEntry` / `NavyGutterEntry` / `ScholarlyEntry` 同时也是各自 `item` 渲染器返回的**根元素**（live root），所以锚点必须加在这些组件的 `<article>` 上——这正是"在条目函数根节点上追加锚点"的落点。只有 `tech` 的内联 `Entry` 是纯死代码（其三个 item 分支都直接返回 `<div>`）。
+   → 结论：加在 live root 上；`tech` 的内联 `Entry` 不要动；死代码删除属于后续重构，不在本计划范围。
 
 2. **12 个模板精确分布：**
    - 走 `DefaultEntry`（只需改 `ResumeSections.tsx` 一个文件）：`minimal`、`creative`、`editorial`、`redline`、`violet`、`azure-chronicle`
@@ -543,7 +544,7 @@ git commit -m "feat: 模板补齐区块定位锚点与标题定位按钮"
 - Consumes: Task 1 的 `ITEM_ANCHOR_ATTR` 与 `EntryLocateButton`；Task 2 扩展后的 `slots.item(section, item, onLocate)` 签名。
 - Produces: 6 个自带 `item` 槽的模板全部输出条目锚点与条目标题按钮。
 
-> **只改 `item` 渲染路径。** `blue-sidebar` / `navy-gutter` / `scholarly-serif` / `tech` 的 `entry` 槽当前不可达（它们都提供了 `item`，`ResumeSections` 里 `slots?.item ? … : <Entry/>` 永远走前者）。不要去改那四个死代码组件。
+> **`entry` 槽覆盖不可达 ≠ 组件是死代码。** `blue-sidebar` / `navy-gutter` / `scholarly-serif` / `tech` 都提供了 `item` 槽，所以 `ResumeSections` 里 `slots?.item ? … : <Entry/>` 永远走前者，**槽覆盖**不生效。但 `BlueSidebarEntry` / `NavyGutterEntry` / `ScholarlyEntry` 同时是各自 item 渲染器返回的**根元素**，锚点必须加在它们根部的 `<article>` 上（Fragment 无法携带 DOM 属性；额外包一层 `<div>` 会破坏 `.template-*-__entry` 的 CSS 选择器与 `mint-canvas.test.tsx` 的 `data-resume-entry` 查询）。只有 `tech` 的内联 `Entry` 是纯死代码，不要动。
 
 - [ ] **Step 1: 加入条目锚点不变量测试并确认失败**
 
