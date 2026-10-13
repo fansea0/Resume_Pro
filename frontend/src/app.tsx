@@ -6,6 +6,7 @@ import { ResumeEditor } from './components/ResumeEditor';
 import { ResumeDrafts } from './components/ResumeDrafts';
 import { ResumeLibrary } from './components/ResumeLibrary';
 import { ResumePreview } from './components/ResumePreview';
+import type { LocateRequest, LocateTarget } from './components/ResumeLocate';
 import { TemplateGallery } from './components/TemplateGallery';
 import { TemplateAdmin } from './components/TemplateAdmin';
 import { TargetJobsPage } from './pages/TargetJobsPage';
@@ -71,11 +72,20 @@ export default function App() {
   const [disabledTemplateIds, setDisabledTemplateIds] = useState<typeof resume.templateId[]>([]);
   const [targetJobsModalOpen, setTargetJobsModalOpen] = useState(false);
   const [templateReplacementMode, setTemplateReplacementMode] = useState(false);
+  // 定位请求存在 state 里：无关重渲染拿到的是同一个对象引用，useLocateTarget 的 effect 不会重放。
+  // 若改成每次渲染新建对象，用户每敲一个字编辑器都会被拽回被定位的区块。
+  const [locateRequest, setLocateRequest] = useState<LocateRequest>();
+  const locateNonce = useRef(0);
   const previewRef = useRef<HTMLDivElement>(null);
   const resumeAutosaveRef = useRef<ResumeAutosaveHandle | null>(null);
   const isMounted = useRef(false);
   const sessionEpoch = useRef(0);
   const templateStatusRequestVersion = useRef(0);
+
+  // nonce 自增：连点同一目标时对象内容相同，靠引用变化让 effect 重放。
+  const handleLocate = useCallback((target: LocateTarget) => {
+    setLocateRequest({ ...target, nonce: ++locateNonce.current });
+  }, []);
 
   const loadTemplateStatus = useCallback(async () => {
     const requestVersion = ++templateStatusRequestVersion.current;
@@ -100,6 +110,9 @@ export default function App() {
     setSelectedResumeId(null);
     setDraftReadError(false);
     setTargetJobsModalOpen(false);
+    // 定位请求必须跟租户状态一起清：编辑器带 key 重新挂载时 effect 会跑一次，
+    // 残留请求会让下一个会话一进编辑器就被拽走并闪一次高亮。
+    setLocateRequest(undefined);
     setView(nextView);
     window.history.replaceState({ appView: nextView }, '', pathForView(nextView));
   }, []);
@@ -145,6 +158,14 @@ export default function App() {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  // 离开编辑器视图就丢弃未消费的定位请求。编辑器随视图切换卸载重挂载，useLocateTarget 的
+  // effect 会在新实例挂载时再跑一次；残留请求会让用户刚进编辑器就被拽到一个他早已离开的
+  // 目标并闪一次高亮（点区块标题 → 模板主页 → 选模板即可复现）。
+  // 放在这里而不是 navigateToView 里，是为了同时覆盖 navigateToView 与 popstate 两条切换路径。
+  useEffect(() => {
+    if (view !== 'editor') setLocateRequest(undefined);
+  }, [view]);
 
   const navigateToView = (nextView: AppView) => {
     const path = pathForView(nextView);
@@ -250,9 +271,9 @@ export default function App() {
               <span>当前模板：{currentTemplate?.name ?? resume.templateId}</span>
             </div>
             <ResumeLibrary autosaveHandleRef={resumeAutosaveRef} document={resume} selectedId={selectedResumeId} onSelectedIdChange={changeSelectedResumeForSession} onChange={changeResumeForSession} onRestoreSample={() => changeResumeForSession(createSampleResumeDocument())} onSelect={changeResumeForSession} previewRef={previewRef} />
-            <ResumeEditor document={resume} resumeId={selectedResumeId ?? undefined} onBeforeAiRewrite={(snapshot) => resumeAutosaveRef.current?.flush(snapshot) ?? Promise.resolve(false)} onChange={changeResumeForSession} />
+            <ResumeEditor document={resume} locateRequest={locateRequest} resumeId={selectedResumeId ?? undefined} onBeforeAiRewrite={(snapshot) => resumeAutosaveRef.current?.flush(snapshot) ?? Promise.resolve(false)} onChange={changeResumeForSession} />
           </aside>
-          <ResumePreview document={resume} ref={previewRef} />
+          <ResumePreview document={resume} onLocate={handleLocate} ref={previewRef} />
         </div>
       )}
     </main>

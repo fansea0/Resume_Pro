@@ -502,7 +502,23 @@ body { margin: 0; }
 @media (min-width: 1024px) { .template-gallery__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .app-shell { padding: .75rem .9rem 3rem; } .app-header { align-items: flex-start; flex-direction: column; margin-bottom: 1.5rem; padding-bottom: .75rem; } .app-header__actions { align-items: flex-start; gap: .65rem; } .account-menu { gap: .5rem; } .template-gallery__heading { text-align: left; } .template-admin__card { grid-template-columns: 76px minmax(0, 1fr); } .template-admin__card > div { align-items: start; grid-template-columns: 1fr; } .template-admin__card button { justify-self: start; } .editor-fields--two, .editor-card--inline { grid-template-columns: 1fr; } .resume-preview { margin-inline: -.75rem; padding: .75rem; } .resume-drafts { gap: 1.15rem; } .resume-drafts__header { padding-bottom: .9rem; } .resume-drafts__empty { align-items: start; grid-template-columns: 1fr; padding: 1rem; } .resume-drafts__steps { display: grid; gap: .3rem; } .resume-drafts__empty button { justify-self: start; } .resume-drafts__item { align-items: start; gap: .75rem; grid-template-columns: 2.75rem minmax(0, 1fr); min-height: 0; padding: .9rem; } .resume-drafts__index { min-height: 3.5rem; } .resume-drafts__item button { grid-column: 2; justify-self: start; } .resume-drafts__metadata { display: grid; gap: .25rem; } .target-jobs__header { align-items: start; } .target-jobs__item { align-items: start; grid-template-columns: 1fr; padding: 1rem 1rem 1rem 1.2rem; } .target-jobs__actions { justify-content: flex-end; } .target-job-form__optional-fields { grid-template-columns: 1fr; } .target-job-dialog__backdrop, .ai-generate-modal__backdrop { align-items: end; padding: 0; } .target-job-dialog, .ai-generate-modal { border-radius: 16px 16px 0 0; max-height: 92dvh; } .target-job-confirm { border-radius: 16px 16px 0 0; } .target-job-picker__item { align-items: start; grid-template-columns: 1fr; } .target-job-picker__item > button { justify-self: start; } .ai-generate-modal__header { padding-inline: 1.15rem; } .ai-generate-modal__description, .ai-generate-modal__form, .ai-generate-modal__result { padding-inline: 1.15rem; } .ai-generate-modal__target-row { align-items: start; flex-direction: column; } .ai-generate-modal__resume-summary dl { grid-template-columns: 1fr; } .ai-generate-modal__actions { justify-content: stretch; } .ai-generate-modal__actions button { flex: 1 1 auto; } .ai-suggestion-panel__backdrop { align-items: end; } .ai-suggestion-panel { border-left: 0; border-radius: 18px 18px 0 0; box-shadow: 0 -18px 48px rgba(17, 37, 68, .24); max-height: 92dvh; max-width: none; width: 100%; } .ai-suggestion-panel__header { padding: 1rem; } .ai-suggestion-panel__status { padding-inline: 1rem; } .ai-suggestion-panel__progress { grid-template-columns: repeat(5, minmax(6.2rem, 1fr)); overflow-x: auto; padding-inline: .8rem; } .ai-suggestion-panel__progress-step { min-width: 6.2rem; } .ai-suggestion-panel__content { padding-inline: .8rem; } .ai-suggestion-panel__field { grid-template-columns: 1fr; } .ai-suggestion-panel__actions { justify-content: stretch; padding-inline: .8rem; } .ai-suggestion-panel__actions button { flex: 1 1 0; } }
 
+/* 预览定位：标题被包进按钮，但必须与原标题视觉完全一致（透明底、无边框、继承字体）。
+   刻意不加 data-html2canvas-ignore —— 那会让 html2canvas 整块跳过按钮，把标题文字从导出的 PNG 里抹掉。
+   也不在任何上下文（含 print）隐藏它。规则必须排在下面两个媒体查询之前，
+   同优先级下靠后的 print / reduced-motion 规则才能覆盖这里的声明。 */
+.resume-locate { appearance: none; background: none; border: 0; color: inherit; cursor: pointer; font: inherit; letter-spacing: inherit; line-height: inherit; margin: 0; padding: 0; text-align: inherit; text-decoration: inherit; }
+.resume-locate:hover { text-decoration: underline; text-underline-offset: .18em; }
+.resume-locate:focus-visible { outline: 3px solid #0071e3; outline-offset: 2px; }
+[data-editor-section-id], [data-editor-item-id] { scroll-margin-top: 1rem; }
+/* 不在这里写 border-radius：高亮落在 .editor-card（自带 8px 圆角）与 .editor-section
+   （无圆角、靠一条直 border-top 分隔）两种宿主上，由各自形状决定，避免给方形区块凭空加圆角。 */
+.is-located { animation: editor-located-flash 1.6s ease-out; }
+@keyframes editor-located-flash { 0%, 100% { background-color: transparent; box-shadow: none; } 15%, 60% { background-color: #eaf2ff; box-shadow: 0 0 0 3px #0071e3; } }
+
 @media (prefers-reduced-motion: reduce) {
+  .resume-locate { transition: none; }
+  .resume-locate:hover { text-decoration: none; }
+  .is-located { animation: none; background-color: #eaf2ff; box-shadow: 0 0 0 3px #0071e3; }
   .resume-drafts__item, .resume-drafts button { transition: none; }
   .resume-drafts__item:hover, .resume-drafts button:hover { transform: none; }
   .ai-suggestion-panel__pulse { animation: none; }
@@ -524,6 +540,12 @@ body { margin: 0; }
      and foreground colors. Without this, Chrome / Edge / Safari 全部 "经济模式" 都会把彩色背景
      剥成白底, 同时 SVG 笔色是 #fff, 整组标题图标就视觉消失。 */
   .resume-template, .resume-template * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* 打印时把定位按钮复位成普通标题文字：不能隐藏，否则标题会从纸面上消失。
+     `all: unset` 不会改字体——unset 对可继承属性取 inherit，而 font 的每个长属性都可继承，
+     本来就继承模板标题字体。焦点环必须另起一条：:focus-visible 是 (0,2,0)，压得过下面 (0,1,0)
+     的 .resume-locate，媒体查询又不额外加权，只能靠同特异度 + 更靠后生效。屏幕上的焦点环不受影响。 */
+  .resume-locate { all: unset; cursor: default; }
+  .resume-locate:focus-visible { outline: none; }
 }
 
 /* Experience details are optional resume signals, not isolated form controls. */

@@ -18,6 +18,7 @@ import type {
 } from '../types/resume';
 import { ResumeAvatar } from './ResumeAvatar';
 import { ResumeMarkdown } from '../components/ResumeMarkdown';
+import { SECTION_ANCHOR_ATTR, EntryLocateButton, ITEM_ANCHOR_ATTR, SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
 
 /**
  * Blue Sidebar — single-column, ATS-clean Chinese resume with a vivid blue
@@ -37,23 +38,23 @@ import { ResumeMarkdown } from '../components/ResumeMarkdown';
 
 function BlueSidebarSection({ children, className, section }: SectionSlotProps) {
   return (
-    <section className={className} data-resume-section={section.type}>
+    <section className={className} data-resume-section={section.type} {...{ [SECTION_ANCHOR_ATTR]: section.id }}>
       {children}
     </section>
   );
 }
 
-function BlueSidebarTitle({ children, className, section }: TitleSlotProps) {
+function BlueSidebarTitle({ children, className, onLocate, section }: TitleSlotProps) {
   return (
     <h2 className={className} data-resume-section-title>
-      <span className="template-blue-sidebar__title-text">{children}</span>
+      <span className="template-blue-sidebar__title-text"><SectionLocateButton label={section.title} onLocate={onLocate} sectionId={section.id}>{children}</SectionLocateButton></span>
     </h2>
   );
 }
 
-function BlueSidebarEntry({ children, className }: ItemSlotProps) {
+function BlueSidebarEntry({ children, className, item }: ItemSlotProps) {
   return (
-    <article className={className} data-resume-entry>
+    <article className={className} data-resume-entry {...(item.id ? { [ITEM_ANCHOR_ATTR]: item.id } : {})}>
       {children}
     </article>
   );
@@ -110,12 +111,12 @@ function BlueSidebarHonours({ children, className }: ContentSlotProps) {
   );
 }
 
-function BlueSidebarExperienceItem(_section: ResumeSection, item: ExperienceItem) {
+function BlueSidebarExperienceItem(section: ResumeSection, item: ExperienceItem, onLocate?: LocateHandler) {
   return (
-    <BlueSidebarEntry className="template-blue-sidebar__entry" item={item} section={_section}>
+    <BlueSidebarEntry className="template-blue-sidebar__entry" item={item} section={section}>
       <BlueSidebarEntryHeading className="template-blue-sidebar__entry-heading">
         <h3 className="template-blue-sidebar__entry-title">
-          {item.company}
+          <EntryLocateButton itemId={item.id} label={item.company} onLocate={onLocate} sectionId={section.id}>{item.company}</EntryLocateButton>
           {item.role && (
             <span className="template-blue-sidebar__entry-role-inline"> · {item.role}</span>
           )}
@@ -148,11 +149,11 @@ function BlueSidebarExperienceItem(_section: ResumeSection, item: ExperienceItem
   );
 }
 
-function BlueSidebarProjectItem(_section: ResumeSection, item: ProjectItem) {
+function BlueSidebarProjectItem(section: ResumeSection, item: ProjectItem, onLocate?: LocateHandler) {
   return (
-    <BlueSidebarEntry className="template-blue-sidebar__entry" item={item} section={_section}>
+    <BlueSidebarEntry className="template-blue-sidebar__entry" item={item} section={section}>
       <BlueSidebarEntryHeading className="template-blue-sidebar__entry-heading">
-        <h3 className="template-blue-sidebar__entry-title">{item.name}</h3>
+        <h3 className="template-blue-sidebar__entry-title"><EntryLocateButton itemId={item.id} label={item.name} onLocate={onLocate} sectionId={section.id}>{item.name}</EntryLocateButton></h3>
         {(item.startDate || item.endDate) && (
           <time className="template-blue-sidebar__date">
             {item.startDate}
@@ -180,14 +181,14 @@ function BlueSidebarProjectItem(_section: ResumeSection, item: ProjectItem) {
   );
 }
 
-function BlueSidebarEducationItem(_section: ResumeSection, item: EducationItem) {
+function BlueSidebarEducationItem(section: ResumeSection, item: EducationItem, onLocate?: LocateHandler) {
   const meta = [item.startDate && item.endDate ? `${item.startDate} – ${item.endDate}` : (item.startDate || item.endDate)]
     .filter(Boolean)
     .join('');
   return (
-    <BlueSidebarEntry className="template-blue-sidebar__entry" item={item} section={_section}>
+    <BlueSidebarEntry className="template-blue-sidebar__entry" item={item} section={section}>
       <BlueSidebarEntryHeading className="template-blue-sidebar__entry-heading">
-        <h3 className="template-blue-sidebar__entry-title">{item.school}</h3>
+        <h3 className="template-blue-sidebar__entry-title"><EntryLocateButton itemId={item.id} label={item.school} onLocate={onLocate} sectionId={section.id}>{item.school}</EntryLocateButton></h3>
         {meta && <time className="template-blue-sidebar__date">{meta}</time>}
       </BlueSidebarEntryHeading>
       {[item.degree, item.college, item.major].filter(Boolean).length > 0 && (
@@ -199,11 +200,11 @@ function BlueSidebarEducationItem(_section: ResumeSection, item: EducationItem) 
   );
 }
 
-function BlueSidebarCampusItem(_section: ResumeSection, item: CampusItem) {
+function BlueSidebarCampusItem(section: ResumeSection, item: CampusItem, onLocate?: LocateHandler) {
   return (
-    <BlueSidebarEntry className="template-blue-sidebar__entry" item={item} section={_section}>
+    <BlueSidebarEntry className="template-blue-sidebar__entry" item={item} section={section}>
       <BlueSidebarEntryHeading className="template-blue-sidebar__entry-heading">
-        <h3 className="template-blue-sidebar__entry-title">{item.name}</h3>
+        <h3 className="template-blue-sidebar__entry-title"><EntryLocateButton itemId={item.id} label={item.name} onLocate={onLocate} sectionId={section.id}>{item.name}</EntryLocateButton></h3>
         {item.role && <span className="template-blue-sidebar__role-inline">{item.role}</span>}
       </BlueSidebarEntryHeading>
       {item.highlightsMarkdown && (
@@ -257,7 +258,7 @@ function BlueSidebarHeader({ document }: { document: ResumeDocument }) {
   );
 }
 
-export function BlueSidebarTemplate({ document }: { document: ResumeDocument }) {
+export function BlueSidebarTemplate({ document, onLocate }: { document: ResumeDocument; onLocate?: LocateHandler }) {
   const { sections } = document;
 
   const slots: Parameters<typeof ResumeSections>[0]['slots'] = {
@@ -269,17 +270,17 @@ export function BlueSidebarTemplate({ document }: { document: ResumeDocument }) 
     role: BlueSidebarRole,
     skills: BlueSidebarSkills,
     honours: BlueSidebarHonours,
-    item: (section, item) => {
+    item: (section, item, onLocate) => {
       switch (section.type) {
         case 'work':
         case 'internship':
-          return BlueSidebarExperienceItem(section, item as ExperienceItem);
+          return BlueSidebarExperienceItem(section, item as ExperienceItem, onLocate);
         case 'project':
-          return BlueSidebarProjectItem(section, item as ProjectItem);
+          return BlueSidebarProjectItem(section, item as ProjectItem, onLocate);
         case 'education':
-          return BlueSidebarEducationItem(section, item as EducationItem);
+          return BlueSidebarEducationItem(section, item as EducationItem, onLocate);
         case 'campus':
-          return BlueSidebarCampusItem(section, item as CampusItem);
+          return BlueSidebarCampusItem(section, item as CampusItem, onLocate);
         default:
           return null;
       }
@@ -292,6 +293,7 @@ export function BlueSidebarTemplate({ document }: { document: ResumeDocument }) 
       <ResumeSections
         sections={sections}
         slots={slots}
+        onLocate={onLocate}
         classNames={{
           section: 'template-blue-sidebar__section',
           title: 'template-blue-sidebar__section-title',

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { HIGHLIGHT_DURATION_MS } from '../hooks/useLocateTarget';
 
 const stylesheet = readFileSync('src/styles/global.css', 'utf8');
 
@@ -74,5 +75,131 @@ describe('drafts workbench styles', () => {
     expect(stylesheet).toMatch(/\.ai-suggestion-panel__sr-only\s*\{[^}]*clip:\s*rect\(0, 0, 0, 0\)/);
     expect(stylesheet).toMatch(/@media \(max-width: 640px\)\s*\{[\s\S]*?\.ai-suggestion-panel__backdrop\s*\{[^}]*align-items:\s*end/);
     expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.ai-suggestion-panel__pulse/);
+  });
+});
+
+describe('预览定位样式', () => {
+  /** 取出单条规则文本，断言其中的具体声明，而不是只断言选择器出现过。 */
+  const rule = (source, pattern) => source.match(pattern)?.[0] ?? '';
+
+  /**
+   * 按花括号配平取出媒体查询块的正文。
+   * `/@media print[\s\S]*?…/` 这种前缀不设边界，规则一旦被提出块外仍会匹配上，
+   * 于是"打印时……"的测试就验不到打印。这里先物理截出块，块外的东西一律看不见。
+   * 之所以不直接用 `(?:[^{}]*\{[^}]*\})*?` 的正则：它只能整条消费规则，
+   * 匹配不到逗号并列选择器中间的 `.resume-workspace__editor`。
+   */
+  function mediaBlockBody(atRule) {
+    const at = stylesheet.indexOf(atRule);
+    if (at < 0) return '';
+    const open = stylesheet.indexOf('{', at);
+    let depth = 0;
+    for (let i = open; i < stylesheet.length; i += 1) {
+      if (stylesheet[i] === '{') depth += 1;
+      else if (stylesheet[i] === '}') {
+        depth -= 1;
+        if (depth === 0) return stylesheet.slice(open + 1, i);
+      }
+    }
+    return '';
+  }
+
+  const printBlock = mediaBlockBody('@media print');
+  const reducedBlock = mediaBlockBody('@media (prefers-reduced-motion: reduce)');
+
+  const locateRule = rule(stylesheet, /\.resume-locate\s*\{[^}]*\}/);
+  const focusRule = rule(stylesheet, /\.resume-locate:focus-visible\s*\{[^}]*\}/);
+  const locatedRule = rule(stylesheet, /\.is-located\s*\{[^}]*\}/);
+  const flashOn = rule(stylesheet, /@keyframes editor-located-flash\s*\{[\s\S]*?15%,\s*60%\s*\{[^}]*\}/);
+  const flashOff = rule(stylesheet, /@keyframes editor-located-flash\s*\{[\s\S]*?0%,\s*100%\s*\{[^}]*\}/);
+  const scrollRule = rule(stylesheet, /\[data-editor-section-id\][^{]*\[data-editor-item-id\]\s*\{[^}]*\}/);
+  // 以下三条都只在各自媒体查询块内取，规则被提到块外即为空串，断言随之失败。
+  const reducedLocatedRule = rule(reducedBlock, /\.is-located\s*\{[^}]*\}/);
+  const reducedLocateRule = rule(reducedBlock, /\.resume-locate\s*\{[^}]*\}/);
+  const printLocateRule = rule(printBlock, /\.resume-locate\s*\{[^}]*\}/);
+  const printFocusRule = rule(printBlock, /\.resume-locate:focus-visible\s*\{[^}]*\}/);
+
+  it('定位按钮复用继承字体且无边框背景', () => {
+    expect(locateRule).toMatch(/background:\s*none/);
+    expect(locateRule).toMatch(/border:\s*0/);
+    expect(locateRule).toMatch(/font:\s*inherit/);
+    expect(locateRule).toMatch(/color:\s*inherit/);
+    expect(locateRule).toMatch(/letter-spacing:\s*inherit/);
+    expect(locateRule).toMatch(/line-height:\s*inherit/);
+    expect(locateRule).toMatch(/text-align:\s*inherit/);
+    expect(locateRule).toMatch(/margin:\s*0/);
+    expect(locateRule).toMatch(/padding:\s*0/);
+    // 原生按钮外观（appearance: auto）在部分浏览器会自己画一层底与边，必须显式去掉。
+    expect(locateRule).toMatch(/appearance:\s*none/);
+  });
+
+  it('定位按钮保持指针手势', () => {
+    expect(locateRule).toMatch(/cursor:\s*pointer/);
+  });
+
+  it('定位按钮在任何上下文都不被隐藏，否则导出的 PNG 会丢掉标题文字', () => {
+    expect(locateRule).not.toMatch(/display:\s*none/);
+    expect(stylesheet).not.toMatch(/\.resume-locate[^{]*\{[^}]*display:\s*none/);
+    expect(stylesheet).not.toMatch(/\.resume-locate[^{]*\{[^}]*visibility:\s*hidden/);
+    expect(stylesheet).not.toMatch(/\.resume-locate[^{]*\{[^}]*font-size:\s*0/);
+  });
+
+  it('定位按钮具备可见焦点样式', () => {
+    expect(focusRule).toMatch(/outline:\s*3px solid/);
+    expect(focusRule).toMatch(/outline-offset:\s*2px/);
+    expect(focusRule).not.toMatch(/outline:\s*(none|0)\b/);
+  });
+
+  it('编辑器锚点留出滚动留白', () => {
+    expect(scrollRule).toMatch(/\[data-editor-section-id\]/);
+    expect(scrollRule).toMatch(/\[data-editor-item-id\]/);
+    expect(scrollRule).toMatch(/scroll-margin-top:\s*1rem/);
+  });
+
+  it('定位高亮有 is-located 样式，且闪烁时长与 hook 的移除延时一致', () => {
+    expect(locatedRule).toMatch(/animation:\s*editor-located-flash/);
+    // 圆角交给宿主自己：.editor-card 自带 8px，.editor-section 无圆角且有直 border-top，
+    // 高亮不得给方形区块凭空加圆角。
+    expect(locatedRule).not.toMatch(/border-radius/);
+    expect(stylesheet).toMatch(/\.editor-card\s*\{[^}]*border-radius:\s*8px/);
+    expect(flashOn).toMatch(/background-color:\s*#eaf2ff/);
+    expect(flashOn).toMatch(/box-shadow:\s*0 0 0 3px #0071e3/);
+    // 动画必须回到透明态，否则 class 被移除后高亮会被"冻"在编辑器里。
+    expect(flashOff).toMatch(/background-color:\s*transparent/);
+    expect(flashOff).toMatch(/box-shadow:\s*none/);
+    const seconds = locatedRule.match(/animation:\s*editor-located-flash\s+([\d.]+)s/)?.[1];
+    expect(Number(seconds) * 1000).toBe(HIGHLIGHT_DURATION_MS);
+  });
+
+  it('减弱动效时定位按钮不做过渡且高亮为静态描边', () => {
+    expect(reducedLocateRule).toMatch(/transition:\s*none/);
+    expect(reducedLocatedRule).toMatch(/animation:\s*none/);
+    expect(reducedLocatedRule).toMatch(/background-color:\s*#eaf2ff/);
+    expect(reducedLocatedRule).toMatch(/box-shadow:\s*0 0 0 3px #0071e3/);
+  });
+
+  it('打印时复位定位按钮，标题文字不被抹掉', () => {
+    expect(printLocateRule).toMatch(/all:\s*unset/);
+    expect(printLocateRule).toMatch(/cursor:\s*default/);
+    // 断言只在 print 块内成立：把这条规则提到块外，printLocateRule 即为空串。
+    expect(printBlock).not.toMatch(/\.resume-locate[^{]*\{[^}]*display:\s*none/);
+    expect(printBlock).not.toMatch(/\.resume-locate[^{]*\{[^}]*visibility:\s*hidden/);
+  });
+
+  it('焦点环只对纸面失效，屏幕焦点样式原样保留', () => {
+    const focusRules = stylesheet.match(/\.resume-locate:focus-visible\s*\{[^}]*\}/g) ?? [];
+    // 必须恰好两条：屏幕那条 + print 那条。少一条说明有人把焦点环整个删了来"解决"打印问题。
+    expect(focusRules).toHaveLength(2);
+    expect(focusRules[0]).toMatch(/outline:\s*3px solid #0071e3/);
+    expect(focusRules[0]).toMatch(/outline-offset:\s*2px/);
+    // 同特异度 (0,2,0)，靠后者生效，所以复位必须排在屏幕规则之后。
+    expect(focusRules[1]).toMatch(/outline:\s*none/);
+    // 且这条复位只存在于 print 内。
+    expect(printFocusRule).toMatch(/outline:\s*none/);
+  });
+
+  it('打印时编辑器侧（含定位高亮）整体不参与打印', () => {
+    expect(rule(printBlock, /[^{}]*\.resume-workspace__editor[^{}]*\{[^}]*\}/))
+      .toMatch(/display:\s*none\s*!important/);
   });
 });

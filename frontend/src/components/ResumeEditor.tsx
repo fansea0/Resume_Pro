@@ -31,9 +31,13 @@ import {
 } from '../types/resume';
 import { AiSuggestionPanel } from './AiSuggestionPanel';
 import { TargetJobCard } from './TargetJobCard';
+import { useLocateTarget } from '../hooks/useLocateTarget';
+import { EDITOR_ITEM_ANCHOR_ATTR, EDITOR_SECTION_ANCHOR_ATTR, type LocateRequest } from './ResumeLocate';
 
 interface ResumeEditorProps {
   document: ResumeDocument;
+  /** 预览侧标题点击后由 app.tsx 投递的定位请求；编辑器只消费，不发出。 */
+  locateRequest?: LocateRequest;
   resumeId?: number;
   onBeforeAiRewrite?: (snapshot: ResumeDocument) => Promise<boolean>;
   onChange: (document: ResumeDocument) => void;
@@ -135,8 +139,13 @@ function Field({ label, value, onChange, multiline = false, inputId, placeholder
   );
 }
 
-function DetailsSection({ title, open = false, children }: { title: string; open?: boolean; children: ReactNode }) {
-  return <details className="editor-section" open={open}><summary><span className="editor-section__title">{title}</span></summary><div className="editor-section__content">{children}</div></details>;
+/**
+ * `anchorId` 只给真正的文档区块用（「基本信息」「添加区块」这类容器不传）：
+ * 它会成为 <details> 上的定位锚点。锚点放在 details 本身而不是 summary，
+ * 这样折叠状态下 hook 也能先展开 <details> 再滚动。
+ */
+function DetailsSection({ title, open = false, anchorId, children }: { title: string; open?: boolean; anchorId?: string; children: ReactNode }) {
+  return <details className="editor-section" open={open} {...(anchorId ? { [EDITOR_SECTION_ANCHOR_ATTR]: anchorId } : {})}><summary><span className="editor-section__title">{title}</span></summary><div className="editor-section__content">{children}</div></details>;
 }
 
 const sectionFactories: Record<ResumeSectionType, (id: string) => ResumeSection> = {
@@ -235,7 +244,10 @@ function mergeRewrite(section: RewriteableResumeSection, rewrite: RewriteContent
   return mergeExperienceRewrite(section, rewrite as ExperienceRewriteContent);
 }
 
-export function ResumeEditor({ document, resumeId, onBeforeAiRewrite, onChange }: ResumeEditorProps) {
+export function ResumeEditor({ document, locateRequest, resumeId, onBeforeAiRewrite, onChange }: ResumeEditorProps) {
+  // 必须是稳定引用：hook 的依赖按引用比较，每次渲染新建会让 effect 反复重放。
+  const rootRef = useRef<HTMLFormElement>(null);
+  useLocateTarget(locateRequest, rootRef);
   const [targetJobState, setTargetJobState] = useState<TargetJobDetailState>(
     document.targetJobId === undefined ? { status: 'unbound' } : { status: 'loading', id: document.targetJobId },
   );
@@ -346,6 +358,7 @@ export function ResumeEditor({ document, resumeId, onBeforeAiRewrite, onChange }
       {...(preparingAi ? { 'aria-busy': true, inert: '' } : {})}
       className="resume-editor"
       onSubmit={(event) => event.preventDefault()}
+      ref={rootRef}
     >
       <DetailsSection open title="基本信息">
         <ResumePhotoField profile={document.profile} resumeId={resumeId} onChange={(profile) => onChange({ ...document, profile })} />
@@ -432,7 +445,7 @@ function SectionCard({ section, index, sectionCount, onUpdate, onMove, onPolish,
 }) {
   const update = (updateSection: (section: ResumeSection) => ResumeSection) => onUpdate(section.id, updateSection);
   const label = section.title;
-  return <DetailsSection open title={label}>
+  return <DetailsSection anchorId={section.id} open title={label}>
     <div className="editor-card__heading">
       <Field label={`区块标题 ${index + 1}`} value={section.title} onChange={(title) => update((current) => ({ ...current, title }))} />
       <div className="editor-section__actions">
@@ -459,7 +472,7 @@ function ExperienceItemsEditor({ section, update }: { section: Extract<ResumeSec
   const itemLabel = section.type === 'work' ? '工作' : '实习';
   const change = (id: string, fn: (item: ExperienceItem) => ExperienceItem) => update((current) => ({ ...section, content: { items: updateItems(section.content.items, id, fn) } }));
   const add = () => update((current) => ({ ...section, content: { items: [...section.content.items, { id: nextId(), company: '', role: '', startDate: '', endDate: '', location: '', achievements: '', highlightsMarkdown: '', showLocation: true, showAchievements: true }] } }));
-  return <><div className="editor-section__actions"><IconButton icon="add" label={`添加${itemLabel}条目`} onClick={add} /></div>{section.content.items.map((item, index) => <div className="editor-card" key={item.id}>
+  return <><div className="editor-section__actions"><IconButton icon="add" label={`添加${itemLabel}条目`} onClick={add} /></div>{section.content.items.map((item, index) => <div {...{ [EDITOR_ITEM_ANCHOR_ATTR]: item.id }} className="editor-card" key={item.id}>
     <div className="editor-fields editor-fields--two">
       <Field label={`公司 ${index + 1}`} value={item.company} onChange={(company) => change(item.id, (value) => ({ ...value, company }))} />
       <Field label={`职位 ${index + 1}`} value={item.role} onChange={(role) => change(item.id, (value) => ({ ...value, role }))} />
@@ -476,7 +489,7 @@ function ExperienceItemsEditor({ section, update }: { section: Extract<ResumeSec
 function ProjectItemsEditor({ section, update }: { section: Extract<ResumeSection, { type: 'project' }>; update: (fn: (s: ResumeSection) => ResumeSection) => void }) {
   const change = (id: string, fn: (item: ProjectItem) => ProjectItem) => update(() => ({ ...section, content: { items: updateItems(section.content.items, id, fn) } }));
   const add = () => update(() => ({ ...section, content: { items: [...section.content.items, { id: nextId(), name: '', role: '', startDate: '', endDate: '', location: '', link: '', introduction: '', techStack: '', achievements: '', highlightsMarkdown: '', showLocation: true, showLink: true, showIntroduction: true, showTechStack: true, showAchievements: true }] } }));
-  return <><div className="editor-section__actions"><IconButton icon="add" label="添加项目条目" onClick={add} /></div>{section.content.items.map((item, index) => <div className="editor-card" key={item.id}>
+  return <><div className="editor-section__actions"><IconButton icon="add" label="添加项目条目" onClick={add} /></div>{section.content.items.map((item, index) => <div {...{ [EDITOR_ITEM_ANCHOR_ATTR]: item.id }} className="editor-card" key={item.id}>
     <div className="editor-fields editor-fields--two">
       <Field label={`项目名称 ${index + 1}`} value={item.name} onChange={(name) => change(item.id, (value) => ({ ...value, name }))} />
       <Field label={`项目角色 ${index + 1}`} value={item.role} onChange={(role) => change(item.id, (value) => ({ ...value, role }))} />
@@ -497,7 +510,7 @@ function ProjectItemsEditor({ section, update }: { section: Extract<ResumeSectio
 }
 
 function SimpleItemsEditor<T extends { id: string }>({ addLabel, items, addItem, removeItem, children, itemsClassName, cardClassName }: { addLabel: string; items: T[]; addItem: () => void; removeItem: (id: string) => void; children: (item: T, index: number) => ReactNode; itemsClassName?: string; cardClassName?: string }) {
-  return <><div className="editor-section__actions"><IconButton icon="add" label={addLabel} onClick={addItem} /></div><div className={itemsClassName}>{items.map((item, index) => <div className={`editor-card${cardClassName ? ` ${cardClassName}` : ''}`} key={item.id}>{children(item, index)}<IconButton icon="delete" label={`删除条目 ${index + 1}`} onClick={() => removeItem(item.id)} /></div>)}</div></>;
+  return <><div className="editor-section__actions"><IconButton icon="add" label={addLabel} onClick={addItem} /></div><div className={itemsClassName}>{items.map((item, index) => <div className={`editor-card${cardClassName ? ` ${cardClassName}` : ''}`} key={item.id} {...{ [EDITOR_ITEM_ANCHOR_ATTR]: item.id }}>{children(item, index)}<IconButton icon="delete" label={`删除条目 ${index + 1}`} onClick={() => removeItem(item.id)} /></div>)}</div></>;
 }
 
 function EducationItemsEditor({ section, update }: { section: Extract<ResumeSection, { type: 'education' }>; update: (fn: (s: ResumeSection) => ResumeSection) => void }) {
@@ -509,7 +522,7 @@ function SkillsItemsEditor({ section, update }: { section: Extract<ResumeSection
   const change = (id: string, fn: (item: SkillItem) => SkillItem) => update(() => ({ ...section, content: { items: updateItems(section.content.items, id, fn) } }));
   const remove = (id: string) => update(() => ({ ...section, content: { items: section.content.items.filter((item) => item.id !== id) } }));
   const add = () => update(() => ({ ...section, content: { items: [...section.content.items, { id: nextId(), name: '', note: '' }] } }));
-  return <><div className="editor-section__actions"><IconButton icon="add" label="添加技能" onClick={add} /></div><div className="editor-item-grid editor-item-grid--skills">{section.content.items.map((item, index) => <div className="editor-card editor-card--skill" key={item.id}>
+  return <><div className="editor-section__actions"><IconButton icon="add" label="添加技能" onClick={add} /></div><div className="editor-item-grid editor-item-grid--skills">{section.content.items.map((item, index) => <div {...{ [EDITOR_ITEM_ANCHOR_ATTR]: item.id }} className="editor-card editor-card--skill" key={item.id}>
     <Field actions={<IconButton icon="delete" label={`删除技能 ${index + 1}`} onClick={() => remove(item.id)} />} label={`技能 ${index + 1}`} value={item.name} onChange={(name) => change(item.id, (value) => ({ ...value, name }))} />
     <Field label={`备注 ${index + 1}`} value={item.note} onChange={(note) => change(item.id, (value) => ({ ...value, note }))} />
   </div>)}</div></>;
