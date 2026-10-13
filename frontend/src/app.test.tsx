@@ -424,6 +424,8 @@ describe('预览定位路由', () => {
     listResumes.mockReset();
     getTemplateStatus.mockReset();
     listTargetJobs.mockReset();
+    logout.mockReset();
+    login.mockReset();
     Element.prototype.scrollIntoView = scrollIntoView;
   });
 
@@ -452,7 +454,7 @@ describe('预览定位路由', () => {
     expect(scrollIntoView.mock.instances[0]).toHaveAttribute('data-editor-section-id', 'sample-project');
   });
 
-  it('连续点击同一区块两次都会重新触发滚动（nonce 自增）', async () => {
+  it('重复点击同一区块仍会再次滚动', async () => {
     await renderAuthenticatedEditor();
 
     fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「项目经历」' }));
@@ -474,6 +476,28 @@ describe('预览定位路由', () => {
     fireEvent.change(screen.getByLabelText('姓名'), { target: { value: '林知夏改' } });
     await waitFor(() => expect(screen.getByTestId('resume-preview')).toHaveTextContent('林知夏改'));
 
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it('退出登录换人登录后不会重放上一个会话遗留的定位请求', async () => {
+    logout.mockResolvedValue(undefined);
+    login.mockResolvedValue({ id: 2, email: 'bob@example.com', tenantId: 22, isAdmin: false });
+    await renderAuthenticatedEditor();
+
+    fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「项目经历」' }));
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: '退出登录' }));
+    await screen.findByRole('heading', { name: '欢迎回来' });
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'bob@example.com' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password1234' } });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    await screen.findByTestId('resume-preview');
+
+    // 编辑器带 key={renderedSessionEpoch} 重新挂载，useLocateTarget 的 effect 会在挂载时跑一次；
+    // 残留的请求会让新会话一进编辑器就被拽走并闪一次高亮。
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
   });
 });

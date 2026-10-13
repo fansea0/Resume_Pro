@@ -110,6 +110,9 @@ export default function App() {
     setSelectedResumeId(null);
     setDraftReadError(false);
     setTargetJobsModalOpen(false);
+    // 定位请求必须跟租户状态一起清：编辑器带 key 重新挂载时 effect 会跑一次，
+    // 残留请求会让下一个会话一进编辑器就被拽走并闪一次高亮。
+    setLocateRequest(undefined);
     setView(nextView);
     window.history.replaceState({ appView: nextView }, '', pathForView(nextView));
   }, []);
