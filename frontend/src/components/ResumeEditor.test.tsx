@@ -9,8 +9,16 @@ import {
   createWorkSection,
 } from '../types/resume';
 import { uploadResumeAvatar } from '../api/uploads';
+import { HIGHLIGHT_DURATION_MS } from '../hooks/useLocateTarget';
 import type { SSEEvent } from '../types/ai';
 import type { TargetJob } from '../types/targetJob';
+import type { ResumeSection } from '../types/resume';
+import {
+  EDITOR_ITEM_ANCHOR_ATTR,
+  EDITOR_SECTION_ANCHOR_ATTR,
+  LOCATED_CLASS,
+  type LocateRequest,
+} from './ResumeLocate';
 
 const { createTargetJobMock, getTargetJobMock, listTargetJobsMock, streamRewriteMock } = vi.hoisted(() => ({
   createTargetJobMock: vi.fn(),
@@ -530,5 +538,166 @@ describe('ResumeEditor', () => {
       },
     });
     expect(changed.sections[1].content.items).toHaveLength(2);
+  });
+});
+
+describe('ResumeEditor 定位锚点', () => {
+  const originalScrollIntoView = Element.prototype.scrollIntoView;
+
+  afterEach(() => {
+    vi.useRealTimers();
+    if (originalScrollIntoView === undefined) {
+      delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+    } else {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
+
+  /** 受控文档：输入会触发真实重渲染，用来验证高亮不被 React 的 className 写入抹掉。 */
+  function StatefulLocateEditor({ document, locateRequest, onChange }: {
+    document: ReturnType<typeof createSampleResumeDocument>;
+    locateRequest?: LocateRequest;
+    onChange: ReturnType<typeof vi.fn>;
+  }) {
+    const [current, setCurrent] = useState(document);
+    return <ResumeEditor
+      document={current}
+      locateRequest={locateRequest}
+      onChange={(next) => { setCurrent(next); onChange(next); }}
+    />;
+  }
+
+  function sectionAnchorIds(container: HTMLElement) {
+    return Array.from(container.querySelectorAll<HTMLElement>(`[${EDITOR_SECTION_ANCHOR_ATTR}]`))
+      .map((node) => node.getAttribute(EDITOR_SECTION_ANCHOR_ATTR));
+  }
+
+  /** summary 没有条目，用类型谓词收窄联合类型而不是只 filter 一次。 */
+  function hasItems(section: ResumeSection): section is Extract<ResumeSection, { content: { items: unknown } }> {
+    return 'items' in section.content;
+  }
+
+  it('每个区块的 details 都输出 editor 区块锚点', () => {
+    const document = createSampleResumeDocument();
+    const { container } = render(<ResumeEditor document={document} onChange={vi.fn()} />);
+
+    expect(sectionAnchorIds(container)).toEqual(document.sections.map((section) => section.id));
+  });
+
+  it('「基本信息」与「添加区块」不是文档区块，不输出区块锚点', () => {
+    const document = createSampleResumeDocument();
+    const { container } = render(<ResumeEditor document={document} onChange={vi.fn()} />);
+
+    const details = Array.from(container.querySelectorAll('details'));
+    expect(details).toHaveLength(document.sections.length + 2);
+    const titled = (title: string) => details.filter((node) => node.querySelector('.editor-section__title')?.textContent === title);
+    expect(titled('基本信息')).toHaveLength(1);
+    expect(titled('添加区块')).toHaveLength(1);
+    [...titled('基本信息'), ...titled('添加区块')].forEach((node) => {
+      expect(node.hasAttribute(EDITOR_SECTION_ANCHOR_ATTR)).toBe(false);
+    });
+  });
+
+  it('所有有条目的区块类型都输出 editor 条目锚点', () => {
+    const document = createSampleResumeDocument();
+    const { container } = render(<ResumeEditor document={document} onChange={vi.fn()} />);
+
+    // summary 之外的全部区块类型都要有条目覆盖，避免漏掉某个编辑器的锚点
+    const withItems = document.sections.filter(hasItems);
+    expect(withItems.map((section) => section.type)).toEqual(['work', 'internship', 'project', 'education', 'skills', 'campus', 'honours']);
+    withItems.forEach((section) => {
+      section.content.items.forEach((item) => {
+        expect(container.querySelector(`[${EDITOR_ITEM_ANCHOR_ATTR}="${item.id}"]`)).not.toBeNull();
+      });
+    });
+  });
+
+  it('locateRequest 缺省时渲染不报错，也不滚动不高亮', () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    expect(() => render(<ResumeEditor document={createSampleResumeDocument()} onChange={vi.fn()} />)).not.toThrow();
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(document.querySelector(`.${LOCATED_CLASS}`)).toBeNull();
+  });
+
+  it('收到区块定位请求时滚动并高亮对应 details', () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const { container } = render(<ResumeEditor
+      document={createSampleResumeDocument()}
+      locateRequest={{ sectionId: 'sample-project', nonce: 1 }}
+      onChange={vi.fn()}
+    />);
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+    const located = container.querySelector(`[${EDITOR_SECTION_ANCHOR_ATTR}="sample-project"]`);
+    expect(located?.tagName).toBe('DETAILS');
+    expect(located?.classList.contains(LOCATED_CLASS)).toBe(true);
+    expect(container.querySelectorAll(`.${LOCATED_CLASS}`)).toHaveLength(1);
+  });
+
+  it('收到条目定位请求时命中条目卡片而不是区块 details', () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const { container } = render(<ResumeEditor
+      document={createSampleResumeDocument()}
+      locateRequest={{ itemId: 'sample-project-copilot', sectionId: 'sample-project', nonce: 1 }}
+      onChange={vi.fn()}
+    />);
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    const card = container.querySelector(`[${EDITOR_ITEM_ANCHOR_ATTR}="sample-project-copilot"]`);
+    expect(card?.classList.contains(LOCATED_CLASS)).toBe(true);
+    expect(container.querySelector(`[${EDITOR_SECTION_ANCHOR_ATTR}="sample-project"]`)?.classList.contains(LOCATED_CLASS)).toBe(false);
+  });
+
+  it('区块被用户折叠时定位请求会先展开再滚动', () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const document = createSampleResumeDocument();
+    const onChange = vi.fn();
+    const { container, rerender } = render(<ResumeEditor
+      document={document}
+      locateRequest={{ sectionId: 'sample-education', nonce: 1 }}
+      onChange={onChange}
+    />);
+
+    const details = container.querySelector(`[${EDITOR_SECTION_ANCHOR_ATTR}="sample-education"]`) as HTMLDetailsElement;
+    // React 只在 open 属性变化时才写 DOM，所以手动折叠的状态会保持折叠
+    details.open = false;
+    expect(details.open).toBe(false);
+
+    rerender(<ResumeEditor
+      document={document}
+      locateRequest={{ sectionId: 'sample-education', nonce: 2 }}
+      onChange={onChange}
+    />);
+
+    expect(details.open).toBe(true);
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+  });
+
+  it('定位高亮 1600ms 后被移除，且期间的输入不会提前抹掉高亮', () => {
+    vi.useFakeTimers();
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const onChange = vi.fn();
+    const { container } = render(<StatefulLocateEditor
+      document={createSampleResumeDocument()}
+      locateRequest={{ sectionId: 'sample-project', nonce: 1 }}
+      onChange={onChange}
+    />);
+
+    const located = container.querySelector(`[${EDITOR_SECTION_ANCHOR_ATTR}="sample-project"]`);
+    expect(located?.classList.contains(LOCATED_CLASS)).toBe(true);
+
+    fireEvent.change(within(container.querySelector(`[${EDITOR_ITEM_ANCHOR_ATTR}="sample-work-nova"]`) as HTMLElement).getByLabelText('公司 1'), { target: { value: '新芽科技改名' } });
+    expect(onChange).toHaveBeenCalled();
+    expect(container.querySelector(`[${EDITOR_SECTION_ANCHOR_ATTR}="sample-project"]`)?.classList.contains(LOCATED_CLASS)).toBe(true);
+
+    act(() => { vi.advanceTimersByTime(HIGHLIGHT_DURATION_MS + 10); });
+    expect(container.querySelector(`[${EDITOR_SECTION_ANCHOR_ATTR}="sample-project"]`)?.classList.contains(LOCATED_CLASS)).toBe(false);
   });
 });
