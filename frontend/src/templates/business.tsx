@@ -1,15 +1,24 @@
-import { ResumeSections } from './ResumeSections';
+import { ResumeSections, type SectionSlotProps } from './ResumeSections';
 import { ResumeMarkdown, safeUrl } from '../components/ResumeMarkdown';
 import { SECTION_ANCHOR_ATTR, EntryLocateButton, ITEM_ANCHOR_ATTR, type LocateHandler } from '../components/ResumeLocate';
 import type { ExperienceItem, ProjectItem } from '../types/resume';
 import type { ResumeDocument } from '../types/resume';
 import { ResumeAvatar } from './ResumeAvatar';
 
+/**
+ * 必须定义在模块级。槽位是被当作组件渲染的（`<Section .../>`），写成内联箭头时每次
+ * 渲染都会换身份，React 据此卸载整棵预览子树重建，键盘焦点随之丢失。
+ * 其余 11 个模板的槽组件都在模块级，因此它们的定位按钮能保住焦点。
+ */
+function BusinessSection({ children, className, section }: SectionSlotProps) {
+  return <section className={section.type === 'summary' ? 'template-business__intro' : className} data-resume-section={section.type} {...{ [SECTION_ANCHOR_ATTR]: section.id }}>{children}</section>;
+}
+
 export function BusinessTemplate({ document, onLocate }: { document: ResumeDocument; onLocate?: LocateHandler }) {
   const { profile, sections } = document;
   return <article className="resume-template template-business">
     <header className="template-business__header"><div><p className="template-business__eyebrow">CURRICULUM VITAE</p><h1>{profile.fullName}</h1><p>{profile.headline}</p></div><div className="template-business__header-side"><address>{[profile.email, profile.phone, profile.location, profile.website].filter(Boolean).map((item) => <span key={item}>{item}</span>)}</address><ResumeAvatar className="template-business__avatar" profile={profile} /></div></header>
-    <ResumeSections sections={sections} onLocate={onLocate} slots={{ section: ({ children, className, section }) => <section className={section.type === 'summary' ? 'template-business__intro' : className} data-resume-section={section.type} {...{ [SECTION_ANCHOR_ATTR]: section.id }}>{children}</section>, item: (section, item, onLocate) => {
+    <ResumeSections sections={sections} onLocate={onLocate} slots={{ section: BusinessSection, item: (section, item, onLocate) => {
       if (section.type === 'work' || section.type === 'internship') { const experience = item as ExperienceItem; return <div className="template-business__entry" key={experience.id} {...{ [ITEM_ANCHOR_ATTR]: experience.id }}><div className="template-business__period">{experience.startDate}<br />{experience.endDate}</div><div><h3><EntryLocateButton itemId={experience.id} label={experience.role} onLocate={onLocate} sectionId={section.id}>{experience.role}</EntryLocateButton></h3><p className="template-business__company">{experience.company}</p>{experience.showLocation && experience.location && <p>{experience.location}</p>}{experience.showAchievements && experience.achievements && <p>{experience.achievements}</p>}{experience.highlightsMarkdown && <ResumeMarkdown markdown={experience.highlightsMarkdown} />}</div></div>; }
       if (section.type === 'project') { const project = item as ProjectItem; const link = safeUrl(project.link); return <div className="template-business__entry" key={project.id} {...{ [ITEM_ANCHOR_ATTR]: project.id }}><div className="template-business__period">{project.startDate}<br />{project.endDate}</div><div><h3><EntryLocateButton itemId={project.id} label={project.name} onLocate={onLocate} sectionId={section.id}>{project.name}</EntryLocateButton></h3>{project.role && <p>{project.role}</p>}{project.showLocation && project.location && <p>{project.location}</p>}{project.showLink && link && <a href={link}>{project.link}</a>}{project.showIntroduction && project.introduction && <p>{project.introduction}</p>}{project.showAchievements && project.achievements && <p>{project.achievements}</p>}{project.highlightsMarkdown && <ResumeMarkdown markdown={project.highlightsMarkdown} />}</div></div>; }
       const value = item as { id: string; name?: string; school?: string; company?: string; role?: string; startDate?: string; endDate?: string; highlightsMarkdown?: string; degree?: string; college?: string; major?: string };

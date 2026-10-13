@@ -65,4 +65,19 @@ describe('ResumeLocate', () => {
     expect(screen.getByRole('heading', { level: 2 }).querySelector('button')).not.toBeNull();
     expect(screen.getByRole('heading', { level: 3 }).querySelector('button')).not.toBeNull();
   });
+
+  // 预览由 html2canvas 截成 PNG，且未设 ignoreElements。给按钮加上 data-html2canvas-ignore
+  // 会把按钮连同里面的标题文字一起从画布上抹掉——导出结果里所有标题都会消失，而 global.test.js
+  // 的 CSS 断言（display:none / visibility:hidden / font-size:0）抓不到属性这一路。
+  it('定位按钮不得带 data-html2canvas-ignore，否则导出的 PNG 会丢掉全部标题文字', () => {
+    render(
+      <>
+        <h2><SectionLocateButton label="项目经历" onLocate={vi.fn()} sectionId="section-1">项目经历</SectionLocateButton></h2>
+        <h3><EntryLocateButton itemId="item-7" label="AI 创作副驾" sectionId="section-1" onLocate={vi.fn()}>AI 创作副驾</EntryLocateButton></h3>
+      </>,
+    );
+    for (const button of screen.getAllByRole('button')) {
+      expect(button.hasAttribute('data-html2canvas-ignore')).toBe(false);
+    }
+  });
 });

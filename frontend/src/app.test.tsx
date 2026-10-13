@@ -500,4 +500,22 @@ describe('预览定位路由', () => {
     // 残留的请求会让新会话一进编辑器就被拽走并闪一次高亮。
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
   });
+
+  it('离开编辑器视图再回来不会重放上一次会话内的定位请求', async () => {
+    await renderAuthenticatedEditor();
+
+    fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「项目经历」' }));
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+    // 切视图会让编辑器整块卸载，模板主页再选模板时重新挂载，
+    // useLocateTarget 的 effect 会在新实例挂载时再跑一次。
+    fireEvent.click(screen.getByRole('button', { name: '模板主页' }));
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    await screen.findByTestId('resume-preview');
+
+    // 目标 id 稳定（createSampleResumeDocument 用固定 id），残留请求一定能解析成功，
+    // 因此这里真的会被重放——不是"刚好没匹配上"而侥幸通过。
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
 });

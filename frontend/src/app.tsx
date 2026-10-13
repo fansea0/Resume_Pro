@@ -159,6 +159,14 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  // 离开编辑器视图就丢弃未消费的定位请求。编辑器随视图切换卸载重挂载，useLocateTarget 的
+  // effect 会在新实例挂载时再跑一次；残留请求会让用户刚进编辑器就被拽到一个他早已离开的
+  // 目标并闪一次高亮（点区块标题 → 模板主页 → 选模板即可复现）。
+  // 放在这里而不是 navigateToView 里，是为了同时覆盖 navigateToView 与 popstate 两条切换路径。
+  useEffect(() => {
+    if (view !== 'editor') setLocateRequest(undefined);
+  }, [view]);
+
   const navigateToView = (nextView: AppView) => {
     const path = pathForView(nextView);
     if (window.location.pathname !== path || view !== nextView) {
