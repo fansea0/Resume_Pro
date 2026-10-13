@@ -510,7 +510,9 @@ body { margin: 0; }
 .resume-locate:hover { text-decoration: underline; text-underline-offset: .18em; }
 .resume-locate:focus-visible { outline: 3px solid #0071e3; outline-offset: 2px; }
 [data-editor-section-id], [data-editor-item-id] { scroll-margin-top: 1rem; }
-.is-located { animation: editor-located-flash 1.6s ease-out; border-radius: 8px; }
+/* 不在这里写 border-radius：高亮落在 .editor-card（自带 8px 圆角）与 .editor-section
+   （无圆角、靠一条直 border-top 分隔）两种宿主上，由各自形状决定，避免给方形区块凭空加圆角。 */
+.is-located { animation: editor-located-flash 1.6s ease-out; }
 @keyframes editor-located-flash { 0%, 100% { background-color: transparent; box-shadow: none; } 15%, 60% { background-color: #eaf2ff; box-shadow: 0 0 0 3px #0071e3; } }
 
 @media (prefers-reduced-motion: reduce) {
@@ -539,8 +541,11 @@ body { margin: 0; }
      剥成白底, 同时 SVG 笔色是 #fff, 整组标题图标就视觉消失。 */
   .resume-template, .resume-template * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   /* 打印时把定位按钮复位成普通标题文字：不能隐藏，否则标题会从纸面上消失。
-     `all: unset` 会连带清掉 font 简写，显式补回 font: inherit 保住模板标题字体。 */
-  .resume-locate { all: unset; cursor: default; font: inherit; }
+     `all: unset` 不会改字体——unset 对可继承属性取 inherit，而 font 的每个长属性都可继承，
+     本来就继承模板标题字体。焦点环必须另起一条：:focus-visible 是 (0,2,0)，压得过下面 (0,1,0)
+     的 .resume-locate，媒体查询又不额外加权，只能靠同特异度 + 更靠后生效。屏幕上的焦点环不受影响。 */
+  .resume-locate { all: unset; cursor: default; }
+  .resume-locate:focus-visible { outline: none; }
 }
 
 /* Experience details are optional resume signals, not isolated form controls. */
