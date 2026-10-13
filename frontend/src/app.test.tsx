@@ -413,3 +413,67 @@ describe('application authentication gate', () => {
     expect(await screen.findByRole('heading', { name: '我的草稿' })).toBeInTheDocument();
   });
 });
+
+describe('预览定位路由', () => {
+  // jsdom 既没有 scrollIntoView 也没有 matchMedia，这里补前者；后者由 hook 自行降级。
+  const scrollIntoView = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getCurrentUser.mockReset();
+    listResumes.mockReset();
+    getTemplateStatus.mockReset();
+    listTargetJobs.mockReset();
+    Element.prototype.scrollIntoView = scrollIntoView;
+  });
+
+  afterEach(() => {
+    delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  /** 复用本文件既有的 mock 装配：登录成功后从模板主页进入编辑器视图。 */
+  async function renderAuthenticatedEditor() {
+    getCurrentUser.mockResolvedValue({ id: 1, email: 'ada@example.com', tenantId: 3, isAdmin: false });
+    listResumes.mockResolvedValue([]);
+    getTemplateStatus.mockResolvedValue({ disabledTemplateIds: [] });
+    listTargetJobs.mockResolvedValue([]);
+    render(<App />);
+    await screen.findByRole('heading', { name: '选择简历模板' });
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    await screen.findByTestId('resume-preview');
+  }
+
+  it('点击预览区块标题后编辑器把对应区块滚入视口', async () => {
+    await renderAuthenticatedEditor();
+
+    fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「项目经历」' }));
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledOnce());
+    expect(scrollIntoView.mock.instances[0]).toHaveAttribute('data-editor-section-id', 'sample-project');
+  });
+
+  it('连续点击同一区块两次都会重新触发滚动（nonce 自增）', async () => {
+    await renderAuthenticatedEditor();
+
+    fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「项目经历」' }));
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    // 必须重新查询：模板把 slots 当组件渲染，内联箭头函数每次渲染都换身份，
+    // 预览子树会重挂载，旧节点已脱离文档。真实用户的第二次点击点的也是当前节点。
+    fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「项目经历」' }));
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(2));
+  });
+
+  it('定位后继续编辑简历不会再次把编辑器拽回该区块', async () => {
+    await renderAuthenticatedEditor();
+
+    fireEvent.click(screen.getByRole('button', { name: '定位到编辑器的「项目经历」' }));
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+    // 任意一次与定位无关的重渲染都必须让 locateRequest 保持同一引用。
+    fireEvent.change(screen.getByLabelText('姓名'), { target: { value: '林知夏改' } });
+    await waitFor(() => expect(screen.getByTestId('resume-preview')).toHaveTextContent('林知夏改'));
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+});

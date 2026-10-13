@@ -6,6 +6,7 @@ import { ResumeEditor } from './components/ResumeEditor';
 import { ResumeDrafts } from './components/ResumeDrafts';
 import { ResumeLibrary } from './components/ResumeLibrary';
 import { ResumePreview } from './components/ResumePreview';
+import type { LocateRequest, LocateTarget } from './components/ResumeLocate';
 import { TemplateGallery } from './components/TemplateGallery';
 import { TemplateAdmin } from './components/TemplateAdmin';
 import { TargetJobsPage } from './pages/TargetJobsPage';
@@ -71,11 +72,20 @@ export default function App() {
   const [disabledTemplateIds, setDisabledTemplateIds] = useState<typeof resume.templateId[]>([]);
   const [targetJobsModalOpen, setTargetJobsModalOpen] = useState(false);
   const [templateReplacementMode, setTemplateReplacementMode] = useState(false);
+  // 定位请求存在 state 里：无关重渲染拿到的是同一个对象引用，useLocateTarget 的 effect 不会重放。
+  // 若改成每次渲染新建对象，用户每敲一个字编辑器都会被拽回被定位的区块。
+  const [locateRequest, setLocateRequest] = useState<LocateRequest>();
+  const locateNonce = useRef(0);
   const previewRef = useRef<HTMLDivElement>(null);
   const resumeAutosaveRef = useRef<ResumeAutosaveHandle | null>(null);
   const isMounted = useRef(false);
   const sessionEpoch = useRef(0);
   const templateStatusRequestVersion = useRef(0);
+
+  // nonce 自增：连点同一目标时对象内容相同，靠引用变化让 effect 重放。
+  const handleLocate = useCallback((target: LocateTarget) => {
+    setLocateRequest({ ...target, nonce: ++locateNonce.current });
+  }, []);
 
   const loadTemplateStatus = useCallback(async () => {
     const requestVersion = ++templateStatusRequestVersion.current;
@@ -250,9 +260,9 @@ export default function App() {
               <span>当前模板：{currentTemplate?.name ?? resume.templateId}</span>
             </div>
             <ResumeLibrary autosaveHandleRef={resumeAutosaveRef} document={resume} selectedId={selectedResumeId} onSelectedIdChange={changeSelectedResumeForSession} onChange={changeResumeForSession} onRestoreSample={() => changeResumeForSession(createSampleResumeDocument())} onSelect={changeResumeForSession} previewRef={previewRef} />
-            <ResumeEditor document={resume} resumeId={selectedResumeId ?? undefined} onBeforeAiRewrite={(snapshot) => resumeAutosaveRef.current?.flush(snapshot) ?? Promise.resolve(false)} onChange={changeResumeForSession} />
+            <ResumeEditor document={resume} locateRequest={locateRequest} resumeId={selectedResumeId ?? undefined} onBeforeAiRewrite={(snapshot) => resumeAutosaveRef.current?.flush(snapshot) ?? Promise.resolve(false)} onChange={changeResumeForSession} />
           </aside>
-          <ResumePreview document={resume} ref={previewRef} />
+          <ResumePreview document={resume} onLocate={handleLocate} ref={previewRef} />
         </div>
       )}
     </main>
