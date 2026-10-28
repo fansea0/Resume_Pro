@@ -252,7 +252,9 @@ function SuggestionCard({
         <span className={`ai-suggestion-panel__severity ai-suggestion-panel__severity--${suggestion.severity}`}>
           {severityLabels[suggestion.severity] ?? suggestion.severity}
         </span>
-        <span className="ai-suggestion-panel__code">{suggestion.code}{suggestion.label ? ` ${suggestion.label}` : ''}</span>
+        <span className="ai-suggestion-panel__code">
+          {suggestion.code ? `${suggestion.code}${suggestion.label ? ` ${suggestion.label}` : ''}` : '表达优化'}
+        </span>
         <span className="ai-suggestion-panel__location">{location} · {fieldLabel(suggestion.target.field)}</span>
       </div>
       {suggestion.issue ? <p className="ai-suggestion-panel__problem">问题：{suggestion.issue}</p> : null}

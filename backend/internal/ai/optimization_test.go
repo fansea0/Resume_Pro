@@ -190,6 +190,23 @@ func TestOptimizationOutputSortsSuggestionsBySeverity(t *testing.T) {
 	assert.Less(t, highIndex, lowIndex)
 }
 
+func TestOptimizationOutputGivesNeutralSeverityToFragmentWithoutIssue(t *testing.T) {
+	_, analysis, _, err := ai.ValidateOptimizationOutput(
+		"summary",
+		json.RawMessage(`{"markdown":"本人有多年开发经验"}`),
+		[]byte(`{
+			"edits":[
+				{"target":{"itemId":null,"field":"markdown"},"newText":"具备多年开发经验","issues":[]}
+			],
+			`+emptyAnalysis+`
+		}`),
+	)
+
+	require.NoError(t, err)
+	assert.Contains(t, string(analysis), `"severity":"medium"`)
+	assert.NotContains(t, string(analysis), `"severity":""`)
+}
+
 func TestOptimizationOutputReportsDensityMetrics(t *testing.T) {
 	_, analysis, _, err := ai.ValidateOptimizationOutput(
 		"work",

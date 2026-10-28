@@ -104,9 +104,14 @@ Deploy the API and client over HTTPS, set `COOKIE_SECURE=true`, and use a high-e
 | `OPENAI_API_KEY` | 无 | 必需；填写所用 OpenAI 兼容服务的 API key。 |
 | `OPENAI_BASE_URL` | `https://api.deepseek.com/v1` | OpenAI 兼容服务的 base URL。 |
 | `OPENAI_MODEL` | `deepseek-chat` | 模型名。 |
-| `AI_MAX_TOKENS` | `2048` | 单次响应 token 上限；无效或非正整数会使用默认值。 |
-| `AI_REQUEST_TIMEOUT` | `30s` | 上游请求超时；无效或非正 duration 会使用默认值。 |
+| `AI_MAX_TOKENS` | `4096` | 单次响应 token 上限；无效或非正整数会使用默认值。 |
+| `AI_REQUEST_TIMEOUT` | `60s` | 上游请求超时；无效或非正 duration 会使用默认值。 |
 | `AI_MAX_RETRIES` | `1` | LLM 输出未通过 schema 校验后的重试次数，允许 `0` 到 `10`；无效值属于配置错误。 |
+| `AI_REASONING_EFFORT` | 无 | 推理模型的思考深度，取值 `low` / `medium` / `high` / `xhigh` / `max`；留空则沿用服务端默认值。 |
+
+`MiniMax-M3.1-Flash` 默认 `max`，会把整个 token 预算烧在隐藏思考上导致正文被截断，配 `AI_REASONING_EFFORT=low` 可解决。
+
+本地开发可以把上述变量写进仓库根目录的 `.env`（参考 `.env.example`），后端启动时会在当前目录和上级目录查找该文件并载入，无需每次手动 `export`。`.env` 已被 `.gitignore` 忽略，不会入库；已经存在于 shell 环境中的同名变量优先于文件内容。
 
 非生产环境未设置 `OPENAI_API_KEY` 时，服务仍可启动，需登录的 AI 路由返回 `503` 和 `{"error":"AI features disabled"}`，其他路由不受影响。无效的 `AI_MAX_RETRIES` 在非生产环境也会禁用 AI；`APP_ENV=production` 时缺少 key 或该变量无效都会导致启动失败。LLM 客户端构造失败则在所有环境中阻止启动。
 

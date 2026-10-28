@@ -12,6 +12,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"resumepro/backend/internal/ai"
 	"resumepro/backend/internal/auth"
+	"resumepro/backend/internal/envfile"
 	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/httpapi"
 	"resumepro/backend/internal/llm"
@@ -44,6 +45,7 @@ var productionAIBootstrap = aiBootstrap{
 
 func main() {
 	logger := logrus.New()
+	loadLocalEnvFile(logger)
 	jwtSecret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
 	if len(jwtSecret) < minimumJWTSecretLength {
 		if os.Getenv("APP_ENV") == "production" {
@@ -92,6 +94,20 @@ func main() {
 
 	if err := httpapi.NewRouter(authRepository, resumeRepository, templates.NewRepository(db), routerConfig).Run(":8080"); err != nil {
 		logger.WithError(err).Fatal("resume API server stopped")
+	}
+}
+
+// loadLocalEnvFile loads a local .env file so that secrets and AI settings do
+// not have to be exported in every shell. Variables already present in the
+// environment always win, so `export OPENAI_API_KEY=...` still overrides it.
+func loadLocalEnvFile(logger *logrus.Logger) {
+	paths, err := envfile.LoadFromPaths([]string{".", ".."})
+	if err != nil {
+		logger.WithError(err).Warn("load local .env file")
+		return
+	}
+	if paths != "" {
+		logger.WithField("path", paths).Info("loaded local .env file")
 	}
 }
 

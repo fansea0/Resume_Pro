@@ -149,8 +149,14 @@ func editTargetSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"itemId": map[string]any{"type": []string{"string", "null"}},
-			"field":  map[string]any{"type": "string"},
+			// some OpenAI-compatible providers reject a JSON Schema union type
+			// such as {"type":["string","null"]}, so the nullable item id is
+			// expressed with anyOf instead.
+			"itemId": map[string]any{"anyOf": []any{
+				map[string]any{"type": "string"},
+				map[string]any{"type": "null"},
+			}},
+			"field": map[string]any{"type": "string"},
 		},
 		"required": []string{"itemId", "field"},
 	}

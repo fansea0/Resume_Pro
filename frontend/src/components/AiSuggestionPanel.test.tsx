@@ -205,6 +205,53 @@ describe('AiSuggestionPanel', () => {
     expect(screen.getByRole('region', { name: '提示' })).toHaveTextContent('已基于既有事实重组叙事。');
   });
 
+  it('falls back to a readable badge for a suggestion without a check code', async () => {
+    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
+      onEvent({
+        kind: 'suggestion',
+        sectionId: 'summary-42',
+        sectionType: 'summary',
+        newContent: {
+          rewrite: { markdown: '具备多年开发经验。' },
+          analysis: {
+            jdAlignment: { status: 'skipped', matchedKeywords: [], excludedKeywords: [], missingKeywords: [] },
+            suggestions: [{
+              id: 'sg-1',
+              code: '',
+              severity: 'medium',
+              target: { field: 'markdown' },
+              issue: '',
+              anchor: '本人有',
+              replacement: '具备',
+              rationale: '',
+              start: 0,
+              end: 3,
+              status: 'applied',
+            }],
+            evidenceRequests: [],
+            warnings: [],
+            density: [],
+          },
+        },
+      } as SSEEvent);
+      onEvent({ kind: 'done' });
+    });
+
+    render(
+      <AiSuggestionPanel
+        onAccept={vi.fn()}
+        onClose={vi.fn()}
+        originalSection={summarySection}
+        resumeId={7}
+        sectionType="summary"
+      />,
+    );
+
+    const suggestions = await screen.findByRole('region', { name: '改写建议' });
+    expect(suggestions).toHaveTextContent('表达优化');
+    expect(suggestions).not.toHaveTextContent('问题：');
+  });
+
   it('applies a single suggestion to the draft and reverts it', async () => {
     streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
       onEvent({

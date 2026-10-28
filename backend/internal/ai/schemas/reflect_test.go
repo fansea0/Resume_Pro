@@ -156,6 +156,41 @@ func TestOptimizationOutputSchemaKeepsS7ExplanationOnly(t *testing.T) {
 	}
 }
 
+func TestOptimizationOutputSchemaAvoidsUnionTypeArrays(t *testing.T) {
+	schemaValue, err := schemas.OptimizationOutputFor("summary")
+	if err != nil {
+		t.Fatalf("OptimizationOutputFor(summary) error: %v", err)
+	}
+
+	// Some OpenAI-compatible providers reject a JSON Schema union type such as
+	// {"type":["string","null"]}, so the model-facing schema must not use one.
+	assertNoUnionTypeArrays(t, "$", schemaValue)
+}
+
+func assertNoUnionTypeArrays(t *testing.T, path string, node any) {
+	t.Helper()
+
+	object, ok := node.(map[string]any)
+	if !ok {
+		return
+	}
+	if declared, present := object["type"]; present {
+		if types, isList := declared.([]any); isList {
+			t.Fatalf("%s type = %#v, want a single type or anyOf", path, types)
+		}
+	}
+	for key, child := range object {
+		switch value := child.(type) {
+		case map[string]any:
+			assertNoUnionTypeArrays(t, path+"."+key, value)
+		case []any:
+			for index, item := range value {
+				assertNoUnionTypeArrays(t, path+"."+key+"["+strconv.Itoa(index)+"]", item)
+			}
+		}
+	}
+}
+
 func TestGenerateJSONSchemaRejectsUnsupportedType(t *testing.T) {
 	got, err := schemas.GenerateJSONSchema(struct{}{})
 	if err == nil {

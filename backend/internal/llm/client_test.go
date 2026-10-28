@@ -31,6 +31,7 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	t.Setenv("AI_MAX_TOKENS", "")
 	t.Setenv("AI_REQUEST_TIMEOUT", "")
 	t.Setenv("AI_MAX_RETRIES", "")
+	t.Setenv("AI_REASONING_EFFORT", "")
 
 	cfg, err := llm.LoadConfigFromEnv()
 
@@ -41,6 +42,30 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	assert.Equal(t, 4096, cfg.MaxTokens)
 	assert.Equal(t, 60*time.Second, cfg.Timeout)
 	assert.Equal(t, 1, cfg.MaxRetries)
+	assert.Equal(t, "", cfg.ReasoningEffort)
+}
+
+func TestLoadConfigFromEnv_ReadsReasoningEffort(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("AI_REASONING_EFFORT", "low")
+
+	cfg, err := llm.LoadConfigFromEnv()
+
+	require.NoError(t, err)
+	assert.Equal(t, "low", cfg.ReasoningEffort)
+}
+
+func TestLoadConfigFromEnv_RejectsInvalidReasoningEffort(t *testing.T) {
+	for _, value := range []string{"none", "LOW ", "extreme"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("OPENAI_API_KEY", "test-key")
+			t.Setenv("AI_REASONING_EFFORT", value)
+
+			_, err := llm.LoadConfigFromEnv()
+
+			assert.ErrorIs(t, err, llm.ErrInvalidReasoning)
+		})
+	}
 }
 
 func TestLoadConfigFromEnv_OverridesDefaults(t *testing.T) {
@@ -50,6 +75,7 @@ func TestLoadConfigFromEnv_OverridesDefaults(t *testing.T) {
 	t.Setenv("AI_MAX_TOKENS", "4096")
 	t.Setenv("AI_REQUEST_TIMEOUT", "45s")
 	t.Setenv("AI_MAX_RETRIES", "3")
+	t.Setenv("AI_REASONING_EFFORT", "medium")
 
 	cfg, err := llm.LoadConfigFromEnv()
 
@@ -60,6 +86,7 @@ func TestLoadConfigFromEnv_OverridesDefaults(t *testing.T) {
 	assert.Equal(t, 4096, cfg.MaxTokens)
 	assert.Equal(t, 45*time.Second, cfg.Timeout)
 	assert.Equal(t, 3, cfg.MaxRetries)
+	assert.Equal(t, "medium", cfg.ReasoningEffort)
 }
 
 func TestLoadConfigFromEnv_RejectsInvalidMaxRetries(t *testing.T) {
@@ -191,4 +218,105 @@ func TestNewChatModel_SerializesStrictJSONSchemaResponseFormat(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, map[string]any{"type": "string"}, properties["markdown"])
 	assert.Equal(t, []any{"markdown"}, requestPayload.ResponseFormat.JSONSchema.Schema["required"])
+}
+
+func TestNewChatModel_SendsReasoningEffortAlongsideResponseFormat(t *testing.T) {
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			http.Error(response, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requests <- body
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(response, `{
+			"id":"chatcmpl-local",
+			"object":"chat.completion",
+			"created":1,
+			"model":"test-model",
+			"choices":[{
+				"index":0,
+				"message":{"role":"assistant","content":"{\"markdown\":\"new\"}"},
+				"finish_reason":"stop"
+			}],
+			"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}
+		}`)
+	}))
+	t.Cleanup(server.Close)
+
+	chatModel, err := llm.NewChatModel(llm.Config{
+		APIKey:          "test-key",
+		BaseURL:         server.URL + "/v1",
+		Model:           "test-model",
+		MaxTokens:       128,
+		Timeout:         time.Second,
+		ReasoningEffort: "low",
+	})
+	require.NoError(t, err)
+
+	_, err = chatModel.Generate(context.Background(), []*schema.Message{
+		{Role: schema.User, Content: "rewrite"},
+	}, llm.WithJSONSchemaResponse(llm.JSONSchemaResponseFormat{
+		Name:   "summary_rewrite",
+		Strict: true,
+		Schema: map[string]any{"type": "object"},
+	}))
+	require.NoError(t, err)
+
+	var requestPayload struct {
+		ResponseFormat  map[string]any `json:"response_format"`
+		ReasoningEffort string         `json:"reasoning_effort"`
+	}
+	require.NoError(t, json.Unmarshal(<-requests, &requestPayload))
+	assert.Equal(t, "low", requestPayload.ReasoningEffort)
+	assert.Equal(t, "json_schema", requestPayload.ResponseFormat["type"])
+}
+
+func TestNewChatModel_OmitsReasoningEffortWhenNotConfigured(t *testing.T) {
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			http.Error(response, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requests <- body
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(response, `{
+			"id":"chatcmpl-local",
+			"object":"chat.completion",
+			"created":1,
+			"model":"test-model",
+			"choices":[{
+				"index":0,
+				"message":{"role":"assistant","content":"{\"markdown\":\"new\"}"},
+				"finish_reason":"stop"
+			}],
+			"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}
+		}`)
+	}))
+	t.Cleanup(server.Close)
+
+	chatModel, err := llm.NewChatModel(llm.Config{
+		APIKey:    "test-key",
+		BaseURL:   server.URL + "/v1",
+		Model:     "test-model",
+		MaxTokens: 128,
+		Timeout:   time.Second,
+	})
+	require.NoError(t, err)
+
+	_, err = chatModel.Generate(context.Background(), []*schema.Message{
+		{Role: schema.User, Content: "rewrite"},
+	}, llm.WithJSONSchemaResponse(llm.JSONSchemaResponseFormat{
+		Name:   "summary_rewrite",
+		Strict: true,
+		Schema: map[string]any{"type": "object"},
+	}))
+	require.NoError(t, err)
+
+	var requestPayload map[string]any
+	require.NoError(t, json.Unmarshal(<-requests, &requestPayload))
+	assert.NotContains(t, requestPayload, "reasoning_effort")
 }

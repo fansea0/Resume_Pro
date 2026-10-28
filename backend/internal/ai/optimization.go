@@ -271,6 +271,10 @@ func (view sectionView) buildFieldSuggestions(
 			Start:       hunk.OriginalStart,
 			End:         hunk.OriginalEnd,
 			Status:      schemas.SuggestionStatusApplied,
+			// A hunk the model did not attach an issue to keeps a neutral
+			// severity: the contract guarantees high, medium or low, and the
+			// severity order must not depend on a missing reason.
+			Severity: schemas.SuggestionSeverityMedium,
 		}
 		if reason := view.checkHunkSafety(hunk, original); reason != "" {
 			suggestion.Status = schemas.SuggestionStatusRejected
