@@ -114,13 +114,13 @@ func TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext(t *testing.T) {
 	fake.ThinkingText = "原始模型推理"
 	fake.StreamChunks = []string{"原始模型分段推理"}
 	fake.FinalJSON = `{
-		"rewrite":{"markdown":"量化交付成果"},
+		"edits":[{
+			"target":{"itemId":null,"field":"markdown"},
+			"newText":"量化交付成果",
+			"issues":[{"code":"S2","label":"弱动词","issue":"替换弱动词","rationale":"删除无信息量修饰语","quote":"量化交付成果"}]
+		}],
 		"analysis":{
-			"jdAlignment":{"status":"applied","matchedKeywords":["稳定性"],"excludedKeywords":[]},
-			"matchedIssues":[
-				{"code":"S2","target":{"field":"markdown"},"resolution":"替换弱动词","status":"fixed"},
-				{"code":"S5","target":{"field":"markdown"},"resolution":"删除无信息量修饰语","status":"fixed"}
-			],
+			"jdAlignment":{"status":"applied","matchedKeywords":["稳定性"],"excludedKeywords":[],"missingKeywords":[]},
 			"evidenceRequests":[{"code":"S1","target":{"field":"markdown"},"reason":"缺少规模","exampleWithPlaceholder":"覆盖 XX 名用户"}],
 			"warnings":[{"code":"S7","resolution":"请结合既有事实检查经历叙事。"}]
 		}
@@ -150,7 +150,7 @@ func TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext(t *testing.T) {
 	assert.JSONEq(t, `{"stage":"jd_alignment_completed","message":"已完成目标岗位关键词对齐。"}`, frames[2].Data)
 	assert.JSONEq(t, `{"stage":"optimization_started","message":"正在优化章节表达。"}`, frames[3].Data)
 	assert.JSONEq(t, `{"stage":"optimization_completed","message":"已生成可审阅的优化建议。"}`, frames[4].Data)
-	assert.JSONEq(t, `{"sectionId":"summary","sectionType":"summary","newContent":{"rewrite":{"markdown":"量化交付成果"},"analysis":{"jdAlignment":{"status":"applied","matchedKeywords":["稳定性"],"excludedKeywords":[]},"matchedIssues":[{"code":"S2","target":{"field":"markdown"},"resolution":"替换弱动词","status":"fixed"},{"code":"S5","target":{"field":"markdown"},"resolution":"删除无信息量修饰语","status":"fixed"}],"evidenceRequests":[{"code":"S1","target":{"field":"markdown"},"reason":"缺少规模","exampleWithPlaceholder":"覆盖 XX 名用户"}],"warnings":[{"code":"S7","resolution":"已基于既有事实重组叙事，未推测空窗、离职或转行原因。"}]}}}`, frames[5].Data)
+	assert.JSONEq(t, `{"sectionId":"summary","sectionType":"summary","newContent":{"rewrite":{"markdown":"量化交付成果"},"analysis":{"jdAlignment":{"status":"applied","matchedKeywords":["稳定性"]},"suggestions":[{"id":"sg-1","code":"S2","label":"弱动词","severity":"high","target":{"field":"markdown"},"issue":"替换弱动词","anchor":"旧总结","replacement":"量化交付成果","rationale":"删除无信息量修饰语","start":0,"end":3,"status":"applied"}],"evidenceRequests":[{"code":"S1","target":{"field":"markdown"},"reason":"缺少规模","exampleWithPlaceholder":"覆盖 XX 名用户"}],"warnings":[{"code":"S7","resolution":"已基于既有事实重组叙事，未推测空窗、离职或转行原因。"}],"density":[{"field":"markdown","chars":3,"lines":1,"bullets":0,"maxBulletChars":0,"overLimit":false}]}}}`, frames[5].Data)
 	var suggestion struct {
 		NewContent struct {
 			Rewrite json.RawMessage `json:"rewrite"`
@@ -186,8 +186,8 @@ func TestAIRewriteStreamsStoredSectionAndMappedTargetJobContext(t *testing.T) {
 func TestAIRewriteSelectsRequestedSectionByIDAndType(t *testing.T) {
 	fake := llmtesting.NewFake()
 	fake.FinalJSON = `{
-		"rewrite":{"markdown":"rewritten second summary"},
-		"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}
+		"edits":[{"target":{"itemId":null,"field":"markdown"},"newText":"rewritten second summary","issues":[]}],
+		"analysis":{"jdAlignment":{"status":"skipped","matchedKeywords":[],"excludedKeywords":[],"missingKeywords":[]},"evidenceRequests":[],"warnings":[]}
 	}`
 	fixture := setupAIAPI(t, ai.NewService(fake, nil, ai.WithMaxRetries(0)))
 	cookie := loginAs(t, fixture.router, "ai-duplicate-section@example.com")
@@ -204,7 +204,8 @@ func TestAIRewriteSelectsRequestedSectionByIDAndType(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	frames := parseSSEFrames(t, response.Body.String())
 	assert.Equal(t, []string{"progress", "progress", "progress", "progress", "progress", "suggestion", "done"}, frameNames(frames))
-	assert.JSONEq(t, `{"sectionId":"summary-second","sectionType":"summary","newContent":{"rewrite":{"markdown":"rewritten second summary"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}}}`, frames[5].Data)
+	assert.Contains(t, frames[5].Data, `"rewrite":{"markdown":"rewritten second summary"}`)
+	assert.Contains(t, frames[5].Data, `"sectionId":"summary-second"`)
 	require.Len(t, fake.RecordedInputs, 1)
 	var promptInput struct {
 		CurrentContent json.RawMessage `json:"currentContent"`
@@ -243,8 +244,8 @@ func TestAIRewriteTreatsMissingOrForeignTargetJobAsNoContext(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := llmtesting.NewFake()
 			fake.FinalJSON = `{
-				"rewrite":{"markdown":"new"},
-				"analysis":{"jdAlignment":{"status":"applied"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}
+				"edits":[{"target":{"itemId":null,"field":"markdown"},"newText":"new","issues":[]}],
+				"analysis":{"jdAlignment":{"status":"applied","matchedKeywords":[],"excludedKeywords":[],"missingKeywords":[]},"evidenceRequests":[],"warnings":[]}
 			}`
 			fixture := setupAIAPI(t, ai.NewService(fake, nil, ai.WithMaxRetries(0)))
 			cookie := loginAs(t, fixture.router, "missing-target@example.com")

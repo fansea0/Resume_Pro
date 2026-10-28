@@ -2,14 +2,15 @@ import {
   useCallback,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 
 import { streamRewrite } from '../api/ai';
 import type {
+  AiSuggestion,
   ExperienceRewriteContent,
   OptimizationAnalysis as OptimizationAnalysisPayload,
   ProjectRewriteContent,
@@ -25,6 +26,7 @@ import type {
   SummarySection,
   WorkSection,
 } from '../types/resume';
+import { applySuggestionsToText } from '../utils/applySuggestions';
 
 type PanelPhase = 'loading' | 'streaming' | 'ready' | 'error';
 type RewriteableResumeSection = SummarySection | WorkSection | InternshipSection | ProjectSection;
@@ -62,298 +64,228 @@ interface PanelState {
 const initialState: PanelState = { phase: 'loading', thinking: '', progress: [] };
 const focusableSelector = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
 
-const frozenExperienceFields = [
-  ['company', '公司'],
-  ['role', '职位'],
-  ['startDate', '开始时间'],
-  ['endDate', '结束时间'],
-  ['location', '地点'],
+const fieldLabels: Record<string, string> = {
+  introduction: '项目介绍',
+  achievements: '业绩贡献',
+  highlightsMarkdown: '经历亮点',
+  markdown: '总结内容',
+};
+
+const severityLabels: Record<string, string> = {
+  high: '高',
+  medium: '中',
+  low: '低',
+};
+
+const errorCodeMessages: Record<string, string> = {
+  TRUNCATED_OUTPUT: 'AI 输出被截断，请重新生成或调大 AI_MAX_TOKENS。',
+  INVALID_RESPONSE: 'AI 返回的结果不符合约定，请重新生成。',
+  LLM_ERROR: 'AI 服务暂时不可用，请稍后重试。',
+  PROMPT_BUILD_FAILED: '提示词构建失败，请稍后重试。',
+};
+
+const dimensionDefinitions = [
+  { key: 'structure', label: '动作与结构', codes: ['S2', 'S3', 'S6'] },
+  { key: 'impact', label: '结果与量化', codes: ['S4'] },
+  { key: 'keyword', label: 'JD 关键词', codes: ['S5'] },
+  { key: 'density', label: '信息密度', codes: ['S10'] },
 ] as const;
 
-const frozenProjectFields = [
-  ['name', '项目名称'],
-  ['role', '项目角色'],
-  ['startDate', '开始时间'],
-  ['endDate', '结束时间'],
-  ['location', '地点'],
-  ['link', '项目链接'],
-] as const;
-
-const rewriteableExperienceFields = [
-  ['achievements', '业绩贡献'],
-  ['highlightsMarkdown', '经历亮点'],
-] as const;
-
-const rewriteableProjectFields = [
-  ['introduction', '项目介绍'],
-  ['achievements', '项目成果'],
-  ['highlightsMarkdown', '项目亮点'],
-] as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+interface DraftField {
+  itemId: string;
+  field: string;
+  next: string;
 }
 
-function normalizeRewriteItem(value: unknown, fields: readonly string[]) {
-  if (!isRecord(value) || typeof value.id !== 'string') return undefined;
-  const normalized: Record<string, string> = { id: value.id };
+function fieldLabel(field: string): string {
+  return fieldLabels[field] ?? field;
+}
+
+function originalFieldText(
+  section: RewriteableResumeSection,
+  target: { itemId?: string; field: string },
+): string | undefined {
+  if (section.type === 'summary') {
+    return target.field === 'markdown' ? section.content.markdown : undefined;
+  }
+  const item = section.content.items.find((candidate) => candidate.id === target.itemId);
+  if (!item) return undefined;
+  if (target.field === 'introduction' && 'introduction' in item) return item.introduction;
+  if (target.field === 'achievements') return item.achievements;
+  if (target.field === 'highlightsMarkdown') return item.highlightsMarkdown;
+  return undefined;
+}
+
+function itemLabel(section: RewriteableResumeSection, itemId: string): string {
+  if (section.type === 'summary') return '个人总结';
+  const index = section.content.items.findIndex((item) => item.id === itemId);
+  if (index < 0) return '当前条目';
+  const item = section.content.items[index];
+  const name = 'company' in item
+    ? item.company || item.role
+    : 'name' in item
+      ? item.name || item.role
+      : '';
+  return `第 ${index + 1} 条${name ? ` · ${name}` : ''}`;
+}
+
+function collectDraftFields(
+  section: RewriteableResumeSection,
+  suggestions: AiSuggestion[],
+  selectedIds: string[],
+): DraftField[] {
+  const groups = new Map<string, { itemId: string; field: string; suggestions: AiSuggestion[] }>();
+  for (const suggestion of suggestions) {
+    if (suggestion.status !== 'applied') continue;
+    if (!selectedIds.includes(suggestion.id)) continue;
+    const itemId = suggestion.target.itemId ?? '';
+    const key = `${itemId}|${suggestion.target.field}`;
+    const group = groups.get(key) ?? { itemId, field: suggestion.target.field, suggestions: [] };
+    group.suggestions.push(suggestion);
+    groups.set(key, group);
+  }
+
+  const fields: DraftField[] = [];
+  for (const group of groups.values()) {
+    const original = originalFieldText(section, { itemId: group.itemId, field: group.field });
+    if (original === undefined) continue;
+    const next = applySuggestionsToText(original, group.suggestions);
+    if (next === original) continue;
+    fields.push({ itemId: group.itemId, field: group.field, next });
+  }
+  return fields;
+}
+
+function buildRewritePayload(
+  section: RewriteableResumeSection,
+  fields: DraftField[],
+): SummaryRewriteContent | ExperienceRewriteContent | ProjectRewriteContent {
+  if (section.type === 'summary') {
+    const field = fields.find((candidate) => candidate.field === 'markdown');
+    return { markdown: field?.next ?? section.content.markdown };
+  }
+  const items = new Map<string, Record<string, string>>();
   for (const field of fields) {
-    if (Object.prototype.hasOwnProperty.call(value, field) && typeof value[field] === 'string') {
-      normalized[field] = value[field];
-    }
+    const entry = items.get(field.itemId) ?? { id: field.itemId };
+    entry[field.field] = field.next;
+    items.set(field.itemId, entry);
   }
-  return normalized;
+  return { items: [...items.values()] } as unknown as ExperienceRewriteContent | ProjectRewriteContent;
 }
 
-function normalizeRewrite<T extends RewriteableSectionType>(
-  sectionType: T,
-  value: unknown,
-): RewriteContentBySectionType[T] | undefined {
-  if (!isRecord(value)) return undefined;
-  if (sectionType === 'summary') {
-    return (typeof value.markdown === 'string' ? { markdown: value.markdown } : undefined) as
-      RewriteContentBySectionType[T] | undefined;
-  }
-  if (!Array.isArray(value.items)) return undefined;
-  const fields = sectionType === 'project'
-    ? rewriteableProjectFields.map(([field]) => field)
-    : rewriteableExperienceFields.map(([field]) => field);
-  const items = value.items
-    .map((item) => normalizeRewriteItem(item, fields))
-    .filter((item): item is Record<string, string> => item !== undefined);
-  return { items } as unknown as RewriteContentBySectionType[T];
-}
+function DimensionOverview({ analysis, suggestions }: {
+  analysis: OptimizationAnalysisPayload;
+  suggestions: AiSuggestion[];
+}) {
+  const applied = suggestions.filter((suggestion) => suggestion.status === 'applied');
+  const overLimit = analysis.density.filter((metric) => metric.overLimit).length;
+  const skipped = analysis.jdAlignment.status === 'skipped';
 
-function displayValue(value: string) {
-  return value === '' ? '（空）' : value;
-}
-
-function FrozenField({ label, value }: { label: string; value: string }) {
   return (
-    <div className="ai-suggestion-panel__field ai-suggestion-panel__field--frozen">
-      <dt>{label}</dt>
-      <dd>{displayValue(value)}</dd>
-    </div>
+    <section aria-label="诊断总览" className="ai-suggestion-panel__dimensions">
+      <h3>诊断总览</h3>
+      <ul>
+        {dimensionDefinitions.map((dimension) => {
+          const count = applied.filter((suggestion) => dimension.codes.includes(suggestion.code as never)).length;
+          let status = '通过';
+          if (dimension.key === 'keyword' && skipped) {
+            status = '未检查（未绑定岗位）';
+          } else if (count > 0) {
+            status = `${count} 处建议`;
+          } else if (dimension.key === 'impact' && analysis.evidenceRequests.length > 0) {
+            status = `待补 ${analysis.evidenceRequests.length} 项数据`;
+          } else if (dimension.key === 'keyword' && (analysis.jdAlignment.missingKeywords?.length ?? 0) > 0) {
+            status = `${analysis.jdAlignment.missingKeywords?.length} 个关键词未覆盖`;
+          } else if (dimension.key === 'density' && overLimit > 0) {
+            status = `${overLimit} 处超限`;
+          }
+          return (
+            <li key={dimension.key}>
+              <span>{dimension.label}</span>
+              <em className={status === '通过' ? 'is-passed' : 'is-flagged'}>{status}</em>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
-function RewriteableField({ label, newValue, oldValue }: {
-  label: string;
-  newValue?: string;
-  oldValue: string;
-}) {
-  if (newValue === undefined || newValue === oldValue) {
+function KeywordAlignment({ analysis }: { analysis: OptimizationAnalysisPayload }) {
+  const { jdAlignment } = analysis;
+  if (jdAlignment.status === 'skipped') {
     return (
-      <div className="ai-suggestion-panel__field">
-        <dt>{label}</dt>
-        <dd className="ai-suggestion-panel__unchanged-value">{displayValue(oldValue)}</dd>
-      </div>
+      <section aria-label="JD 对齐" className="ai-suggestion-panel__analysis-section">
+        <h4>JD 对齐</h4>
+        <p>未绑定目标岗位，未进行 JD 对齐。</p>
+      </section>
     );
   }
-
   return (
-    <details className="ai-suggestion-panel__diff" open>
-      <summary>{label}<span>已更新</span></summary>
+    <section aria-label="JD 对齐" className="ai-suggestion-panel__analysis-section">
+      <h4>JD 对齐</h4>
+      {jdAlignment.matchedKeywords?.length ? <p>已覆盖：{jdAlignment.matchedKeywords.join('、')}</p> : null}
+      {jdAlignment.missingKeywords?.length ? (
+        <p>未覆盖：{jdAlignment.missingKeywords.join('、')}（本节没有事实支撑，AI 不能替你补）</p>
+      ) : null}
+      {jdAlignment.excludedKeywords?.length ? <p>未纳入：{jdAlignment.excludedKeywords.join('、')}</p> : null}
+    </section>
+  );
+}
+
+function SuggestionCard({
+  suggestion,
+  location,
+  densityNote,
+  selected,
+  onToggle,
+}: {
+  suggestion: AiSuggestion;
+  location: string;
+  densityNote?: string;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <li className={`ai-suggestion-panel__suggestion${selected ? ' is-selected' : ''}`}>
+      <div className="ai-suggestion-panel__suggestion-head">
+        <span className={`ai-suggestion-panel__severity ai-suggestion-panel__severity--${suggestion.severity}`}>
+          {severityLabels[suggestion.severity] ?? suggestion.severity}
+        </span>
+        <span className="ai-suggestion-panel__code">{suggestion.code}{suggestion.label ? ` ${suggestion.label}` : ''}</span>
+        <span className="ai-suggestion-panel__location">{location} · {fieldLabel(suggestion.target.field)}</span>
+      </div>
+      {suggestion.issue ? <p className="ai-suggestion-panel__problem">问题：{suggestion.issue}</p> : null}
       <div className="ai-suggestion-panel__diff-values">
         <del className="ai-suggestion-panel__old-value">
-          <span className="ai-suggestion-panel__sr-only">原内容：</span>{displayValue(oldValue)}
+          <span className="ai-suggestion-panel__sr-only">原内容：</span>
+          {suggestion.anchor || '（新增内容）'}
         </del>
         <ins className="ai-suggestion-panel__new-value">
-          <span className="ai-suggestion-panel__sr-only">新内容：</span>{displayValue(newValue)}
+          <span className="ai-suggestion-panel__sr-only">新内容：</span>
+          {suggestion.replacement || '（删除该片段）'}
         </ins>
       </div>
-    </details>
+      {suggestion.rationale ? <p className="ai-suggestion-panel__reason">理由：{suggestion.rationale}</p> : null}
+      {densityNote ? <p className="ai-suggestion-panel__density">{densityNote}</p> : null}
+      <button onClick={onToggle} type="button">{selected ? '撤销' : '应用'}</button>
+    </li>
   );
-}
-
-function FieldGroup({ children, frozen }: { children: ReactNode; frozen?: boolean }) {
-  const label = frozen ? 'Frozen · 保持原样' : 'Rewriteable · AI 建议';
-  return (
-    <section aria-label={label} className={`ai-suggestion-panel__group${frozen ? ' ai-suggestion-panel__group--frozen' : ''}`} role="group">
-      <h3><span aria-hidden="true">{frozen ? '🔒' : '✎'}</span>{label}</h3>
-      {children}
-    </section>
-  );
-}
-
-function OptimizationAnalysis({ analysis }: { analysis: OptimizationAnalysisPayload }) {
-  const { jdAlignment, matchedIssues, evidenceRequests, warnings } = analysis;
-  return (
-    <section aria-label="分析过程" className="ai-suggestion-panel__analysis-result">
-      <h3>分析过程</h3>
-      <section className="ai-suggestion-panel__analysis-section">
-        <h4>JD 对齐</h4>
-        {jdAlignment.status === 'skipped' ? (
-          <p>未绑定目标岗位，未进行 JD 对齐。</p>
-        ) : (
-          <>
-            <p>已完成目标岗位关键词对齐。</p>
-            {jdAlignment.matchedKeywords?.length ? <p>匹配关键词：{jdAlignment.matchedKeywords.join('、')}</p> : null}
-            {jdAlignment.excludedKeywords?.length ? <p>未纳入关键词：{jdAlignment.excludedKeywords.join('、')}</p> : null}
-          </>
-        )}
-      </section>
-      {matchedIssues.length > 0 && (
-        <section className="ai-suggestion-panel__analysis-section">
-          <h4>已修复的问题</h4>
-          <ul className="ai-suggestion-panel__analysis-list">
-            {matchedIssues.map((issue, index) => (
-              <li key={`${issue.code}-${issue.target.itemId ?? ''}-${issue.target.field}-${index}`}>
-                <strong>{issue.code}{issue.label ? ` · ${issue.label}` : ''}</strong>
-                <span>如何修复：{issue.resolution}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {evidenceRequests.length > 0 && (
-        <section className="ai-suggestion-panel__analysis-section">
-          <h4>待补充数据</h4>
-          <ul className="ai-suggestion-panel__evidence-cards">
-            {evidenceRequests.map((request, index) => (
-              <li key={`${request.target.itemId ?? ''}-${request.target.field}-${index}`}>
-                <strong>{request.code} · {request.reason}</strong>
-                <span>示例：{request.exampleWithPlaceholder}</span>
-                <small>不会随采纳写入简历</small>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {warnings.length > 0 && (
-        <section className="ai-suggestion-panel__analysis-section">
-          <h4>提示</h4>
-          <ul className="ai-suggestion-panel__analysis-list">
-            {warnings.map((warning, index) => (
-              <li key={`${warning.code}-${index}`}>
-                <strong>{warning.code}</strong>
-                <span>{warning.resolution}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-    </section>
-  );
-}
-
-function ItemFields({ children, title }: { children: ReactNode; title: string }) {
-  return (
-    <article className="ai-suggestion-panel__item">
-      <h4>{title}</h4>
-      <dl>{children}</dl>
-    </article>
-  );
-}
-
-function SuggestionDiff({ originalSection, rewrite: newContent }: {
-  originalSection: RewriteableResumeSection;
-  rewrite: unknown;
-}) {
-  if (originalSection.type === 'summary') {
-    const rewrite = normalizeRewrite('summary', newContent);
-    if (!rewrite) return <p role="alert">建议内容格式无效，请重新生成。</p>;
-    return (
-      <div className="ai-suggestion-panel__groups">
-        <FieldGroup>
-          <ItemFields title="个人总结">
-            <RewriteableField
-              label="总结内容"
-              newValue={rewrite.markdown}
-              oldValue={originalSection.content.markdown}
-            />
-          </ItemFields>
-        </FieldGroup>
-      </div>
-    );
-  }
-
-  if (
-    originalSection.type === 'work' || originalSection.type === 'internship'
-  ) {
-    const rewrite = normalizeRewrite(originalSection.type, newContent);
-    if (!rewrite) return <p role="alert">建议内容格式无效，请重新生成。</p>;
-    const rewriteById = new Map(rewrite.items.map((item) => [item.id, item]));
-    return (
-      <div className="ai-suggestion-panel__groups">
-        <FieldGroup>
-          {originalSection.content.items.map((item, index) => {
-            const rewrite = rewriteById.get(item.id);
-            return (
-              <ItemFields key={item.id} title={`${index + 1}. ${item.company || item.role || '未命名经历'}`}>
-                {rewriteableExperienceFields.map(([field, label]) => (
-                  <RewriteableField key={field} label={label} newValue={rewrite?.[field]} oldValue={item[field]} />
-                ))}
-              </ItemFields>
-            );
-          })}
-        </FieldGroup>
-      </div>
-    );
-  }
-
-  if (originalSection.type === 'project') {
-    const rewrite = normalizeRewrite('project', newContent);
-    if (!rewrite) return <p role="alert">建议内容格式无效，请重新生成。</p>;
-    const rewriteById = new Map(rewrite.items.map((item) => [item.id, item]));
-    return (
-      <div className="ai-suggestion-panel__groups">
-        <FieldGroup>
-          {originalSection.content.items.map((item, index) => {
-            const rewrite = rewriteById.get(item.id);
-            return (
-              <ItemFields key={item.id} title={`${index + 1}. ${item.name || item.role || '未命名项目'}`}>
-                {rewriteableProjectFields.map(([field, label]) => (
-                  <RewriteableField key={field} label={label} newValue={rewrite?.[field]} oldValue={item[field]} />
-                ))}
-              </ItemFields>
-            );
-          })}
-        </FieldGroup>
-      </div>
-    );
-  }
-
-  return <p role="alert">建议与当前章节不匹配，请重新生成。</p>;
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error && error.message.trim() !== ''
-    ? error.message
-    : 'AI 润色失败，请稍后重试。';
+  if (error instanceof Error && error.message.trim() !== '') return error.message;
+  return 'AI 润色失败，请稍后重试。';
 }
 
 const progressSteps: Array<{ stage: ProgressEvent['stage']; title: string; fallback: string }> = [
   { stage: 'context_loaded', title: '理解上下文', fallback: '读取 JD 与当前简历' },
   { stage: 'jd_alignment_started', title: '分析问题', fallback: '对齐目标岗位关键词' },
   { stage: 'jd_alignment_completed', title: '完成 JD 对齐', fallback: '已完成关键词对照' },
+  { stage: 'contract_repair', title: '修复输出', fallback: '输出未符合约定，正在自动修复' },
   { stage: 'optimization_started', title: '优化表达', fallback: '优化章节表达' },
   { stage: 'optimization_completed', title: '汇总建议', fallback: '生成可采纳的修改' },
 ];
-
-function hasSafeRewrite(
-  originalSection: RewriteableResumeSection,
-  rewrite: SummaryRewriteContent | ExperienceRewriteContent | ProjectRewriteContent,
-) {
-  if (originalSection.type === 'summary') {
-    return 'markdown' in rewrite
-      && rewrite.markdown.trim() !== ''
-      && rewrite.markdown !== originalSection.content.markdown;
-  }
-  if (!('items' in rewrite)) return false;
-  if (originalSection.type === 'project') {
-    const originalItemsByID = new Map(originalSection.content.items.map((item) => [item.id, item]));
-    return (rewrite as ProjectRewriteContent).items.some((item) => {
-      const originalItem = originalItemsByID.get(item.id);
-      return originalItem !== undefined && rewriteableProjectFields.some(([field]) => field in item && item[field] !== originalItem[field]);
-    });
-  }
-  const originalItemsByID = new Map(originalSection.content.items.map((item) => [item.id, item]));
-  return (rewrite as ExperienceRewriteContent).items.some((item) => {
-    const originalItem = originalItemsByID.get(item.id);
-    return originalItem !== undefined && rewriteableExperienceFields.some(([field]) => field in item && item[field] !== originalItem[field]);
-  });
-}
 
 export function AiSuggestionPanel<T extends RewriteableSectionType>({
   onAccept,
@@ -363,6 +295,7 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
   sectionType,
 }: AiSuggestionPanelProps<T>) {
   const [state, setState] = useState<PanelState>(initialState);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const titleId = useId();
   const statusId = useId();
   const backdropRef = useRef<HTMLDivElement>(null);
@@ -390,6 +323,7 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
     const controller = new AbortController();
     abortRef.current = controller;
     setState(initialState);
+    setSelectedIds([]);
 
     if (originalSection.type !== sectionType) {
       setState({ phase: 'error', thinking: '', progress: [], error: '章节类型不匹配，无法生成建议。' });
@@ -436,7 +370,12 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
 
       if (event.kind === 'error') {
         receivedError = true;
-        setState((current) => ({ ...current, phase: 'error', error: event.message, suggestion: undefined }));
+        setState((current) => ({
+          ...current,
+          phase: 'error',
+          error: errorCodeMessages[event.code] ?? event.message,
+          suggestion: undefined,
+        }));
         return;
       }
 
@@ -542,25 +481,38 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
     };
   }, [closePanel]);
 
+  const analysis = state.suggestion?.newContent.analysis;
+  const suggestions = useMemo(() => analysis?.suggestions ?? [], [analysis]);
+  const appliedSuggestions = useMemo(
+    () => suggestions.filter((suggestion) => suggestion.status === 'applied'),
+    [suggestions],
+  );
+  const rejectedSuggestions = useMemo(
+    () => suggestions.filter((suggestion) => suggestion.status === 'rejected'),
+    [suggestions],
+  );
+  const draftFields = useMemo(
+    () => collectDraftFields(originalSection, appliedSuggestions, selectedIds),
+    [appliedSuggestions, originalSection, selectedIds],
+  );
+
+  const toggleSuggestion = (id: string) => {
+    setSelectedIds((current) => (
+      current.includes(id) ? current.filter((candidate) => candidate !== id) : [...current, id]
+    ));
+  };
+
+  const selectAll = () => {
+    setSelectedIds(appliedSuggestions.map((suggestion) => suggestion.id));
+  };
+
   const accept = () => {
-    if (state.phase !== 'ready' || !state.suggestion) return;
-    const rewrite = normalizeRewrite(sectionType, state.suggestion.newContent.rewrite);
-    if (!rewrite || !hasSafeRewrite(originalSection, rewrite)) {
-      setState((current) => ({ ...current, phase: 'error', error: 'AI 返回的建议格式无效。', suggestion: undefined }));
-      return;
-    }
+    if (state.phase !== 'ready' || draftFields.length === 0) return;
     cancelActiveRequest();
-    onAccept(rewrite);
+    onAccept(buildRewritePayload(originalSection, draftFields) as RewriteContentBySectionType[T]);
   };
 
   const latestProgress = state.progress[state.progress.length - 1];
-  const normalizedRewrite = state.suggestion
-    ? normalizeRewrite(sectionType, state.suggestion.newContent.rewrite)
-    : undefined;
-  const canAccept = state.phase === 'ready'
-    && normalizedRewrite !== undefined
-    && hasSafeRewrite(originalSection, normalizedRewrite);
-
   const statusLabel = state.phase === 'loading'
     ? '正在读取目标岗位与当前简历…'
     : state.phase === 'streaming'
@@ -582,8 +534,8 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
       >
         <header className="ai-suggestion-panel__header">
           <div>
-            <p>AI WRITING REVIEW</p>
-            <h2 id={titleId}>AI 润色建议</h2>
+            <p>AI RESUME DIAGNOSIS</p>
+            <h2 id={titleId}>AI 诊断与润色</h2>
           </div>
           <button aria-label="关闭 AI 润色建议" onClick={closePanel} ref={closeButtonRef} title="关闭" type="button">×</button>
         </header>
@@ -592,13 +544,16 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
 
         {(state.phase === 'loading' || state.phase === 'streaming' || state.phase === 'ready') && (
           <section className="ai-suggestion-panel__progress" aria-label="AI 润色进度">
-            {progressSteps.map((step, index) => {
+            {progressSteps.filter((step) => (
+              step.stage !== 'contract_repair'
+              || state.progress.some((progress) => progress.stage === 'contract_repair')
+            )).map((step, index) => {
               const received = state.progress.find((progress) => progress.stage === step.stage);
               const complete = state.phase === 'ready' || received !== undefined;
               const active = !complete && (
                 state.phase === 'loading'
-                ? index === 0
-                : state.phase === 'streaming' && index === state.progress.length
+                  ? index === 0
+                  : state.phase === 'streaming' && index === state.progress.length
               );
               return (
                 <div className={`ai-suggestion-panel__progress-step${complete ? ' is-complete' : active ? ' is-active' : ''}`} key={step.stage}>
@@ -626,24 +581,96 @@ export function AiSuggestionPanel<T extends RewriteableSectionType>({
           </div>
         )}
 
-        {state.suggestion && state.phase === 'ready' && (
+        {state.suggestion && state.phase === 'ready' && analysis && (
           <div className="ai-suggestion-panel__content">
-            <OptimizationAnalysis analysis={state.suggestion.newContent.analysis} />
-            {canAccept ? (
-              <SuggestionDiff originalSection={originalSection} rewrite={state.suggestion.newContent.rewrite} />
-            ) : (
-              <p className="ai-suggestion-panel__preserve-original">保留原文：本次没有可安全采纳的改写。</p>
+            <DimensionOverview analysis={analysis} suggestions={suggestions} />
+            <KeywordAlignment analysis={analysis} />
+
+            <section aria-label="改写建议" className="ai-suggestion-panel__analysis-section">
+              <h4>改写建议{selectedIds.length > 0 ? `（已选 ${selectedIds.length} 条）` : ''}</h4>
+              {appliedSuggestions.length === 0 ? (
+                <p>本次没有可安全采纳的改写，保留原文。</p>
+              ) : (
+                <ul className="ai-suggestion-panel__suggestions">
+                  {appliedSuggestions.map((suggestion) => (
+                    <SuggestionCard
+                      densityNote={densityNoteFor(analysis, suggestion)}
+                      key={suggestion.id}
+                      location={itemLabel(originalSection, suggestion.target.itemId ?? '')}
+                      onToggle={() => toggleSuggestion(suggestion.id)}
+                      selected={selectedIds.includes(suggestion.id)}
+                      suggestion={suggestion}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            {rejectedSuggestions.length > 0 && (
+              <details className="ai-suggestion-panel__rejected">
+                <summary>已跳过 {rejectedSuggestions.length} 条建议</summary>
+                <ul>
+                  {rejectedSuggestions.map((suggestion) => (
+                    <li key={suggestion.id}>
+                      <strong>{suggestion.code || '建议'}</strong>
+                      <span>{suggestion.rejectionReason ?? '未通过安全校验'}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+
+            {analysis.evidenceRequests.length > 0 && (
+              <section aria-label="待补充数据" className="ai-suggestion-panel__analysis-section">
+                <h4>待补充数据</h4>
+                <ul className="ai-suggestion-panel__evidence-cards">
+                  {analysis.evidenceRequests.map((request, index) => (
+                    <li key={`${request.target.itemId ?? ''}-${request.target.field}-${index}`}>
+                      <strong>{request.code} · {request.reason}</strong>
+                      <span>示例：{request.exampleWithPlaceholder}</span>
+                      <small>不会随采纳写入简历</small>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {analysis.warnings.length > 0 && (
+              <section aria-label="提示" className="ai-suggestion-panel__analysis-section">
+                <h4>提示</h4>
+                <ul className="ai-suggestion-panel__analysis-list">
+                  {analysis.warnings.map((warning, index) => (
+                    <li key={`${warning.code}-${index}`}>
+                      <strong>{warning.code}</strong>
+                      <span>{warning.resolution}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             )}
           </div>
         )}
 
         <footer className="ai-suggestion-panel__actions">
-          <button onClick={closePanel} type="button">拒绝</button>
+          <button onClick={closePanel} type="button">关闭</button>
           <button onClick={runRewrite} type="button">重新生成</button>
-          <button disabled={!canAccept} onClick={accept} type="button">采纳</button>
+          <button disabled={appliedSuggestions.length === 0} onClick={selectAll} type="button">全部应用</button>
+          <button disabled={draftFields.length === 0} onClick={accept} type="button">应用到简历</button>
         </footer>
       </aside>
     </div>,
     document.body,
   );
+}
+
+function densityNoteFor(analysis: OptimizationAnalysisPayload, suggestion: AiSuggestion): string | undefined {
+  const metric = analysis.density.find((candidate) => (
+    candidate.field === suggestion.target.field
+    && (candidate.itemId ?? '') === (suggestion.target.itemId ?? '')
+  ));
+  if (!metric || !metric.overLimit) return undefined;
+  if (suggestion.target.field === 'highlightsMarkdown') {
+    return `信息密度：当前最长一条 ${metric.maxBulletChars} 字 / 上限 40 字，共 ${metric.bullets} 条 / 上限 5 条`;
+  }
+  return `信息密度：当前 ${metric.chars} 字 / 上限 60 字，共 ${metric.lines} 行 / 上限 2 行`;
 }

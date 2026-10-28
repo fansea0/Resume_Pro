@@ -45,7 +45,7 @@ const targetJob: TargetJob = {
   createdAt: '2026-08-18T01:00:00Z',
   updatedAt: '2026-08-19T02:00:00Z',
 };
-const emptyOptimizationAnalysis = { jdAlignment: { status: 'skipped' as const }, matchedIssues: [], evidenceRequests: [], warnings: [] };
+const emptyOptimizationAnalysis = { jdAlignment: { status: 'skipped' as const }, suggestions: [], evidenceRequests: [], warnings: [], density: [] };
 
 beforeEach(() => {
   getTargetJobMock.mockResolvedValue(targetJob);
@@ -275,7 +275,7 @@ describe('ResumeEditor', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'AI 润色 个人总结' }));
 
-    expect(await screen.findByRole('dialog', { name: 'AI 润色建议' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'AI 诊断与润色' })).toBeInTheDocument();
     expect(streamRewriteMock).toHaveBeenCalledWith(
       42,
       { sectionId: 'sample-summary', sectionType: 'summary' },
@@ -306,11 +306,11 @@ describe('ResumeEditor', () => {
     expect(screen.getByRole('button', { name: 'AI 润色 个人总结' })).toBeDisabled();
     expect(screen.getByText('正在保存最新简历内容…')).toHaveAttribute('role', 'status');
     expect(streamRewriteMock).not.toHaveBeenCalled();
-    expect(screen.queryByRole('dialog', { name: 'AI 润色建议' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 诊断与润色' })).not.toBeInTheDocument();
 
     await act(async () => { finishSave(true); });
 
-    expect(await screen.findByRole('dialog', { name: 'AI 润色建议' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'AI 诊断与润色' })).toBeInTheDocument();
     expect(streamRewriteMock).toHaveBeenCalledTimes(1);
   });
 
@@ -409,7 +409,7 @@ describe('ResumeEditor', () => {
       resumeId={42}
     />);
     fireEvent.click(screen.getByRole('button', { name: 'AI 润色 个人总结' }));
-    await screen.findByRole('dialog', { name: 'AI 润色建议' });
+    await screen.findByRole('dialog', { name: 'AI 诊断与润色' });
 
     rerender(<ResumeEditor
       document={{ ...initial, sections: [replacement, ...initial.sections.slice(1)] }}
@@ -422,11 +422,26 @@ describe('ResumeEditor', () => {
         kind: 'suggestion',
         sectionId: initial.sections[0].id,
         sectionType: 'summary',
-        newContent: { rewrite: { markdown: '不应应用' }, analysis: emptyOptimizationAnalysis },
+        newContent: {
+          rewrite: { markdown: '不应应用' },
+          analysis: {
+            jdAlignment: { status: 'skipped' },
+            suggestions: [{
+              id: 'sg-1', code: 'S2', label: '弱动词', severity: 'high',
+              target: { field: 'markdown' },
+              issue: '弱动词开头', anchor: '3 年', replacement: '5 年',
+              rationale: '年限需要更准确', start: 0, end: 2, status: 'applied',
+            }],
+            evidenceRequests: [],
+            warnings: [],
+            density: [],
+          },
+        },
       });
       emit({ kind: 'done' });
     });
-    fireEvent.click(await screen.findByRole('button', { name: '采纳' }));
+    fireEvent.click(await screen.findByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: '应用到简历' }));
 
     expect(onChange).not.toHaveBeenCalled();
     expect(await screen.findByRole('alert')).toHaveTextContent('当前区块已变化，未应用 AI 建议');
@@ -514,7 +529,26 @@ describe('ResumeEditor', () => {
             },
             { id: 'unknown-item', introduction: '不应加入文档' },
           ] },
-          analysis: emptyOptimizationAnalysis,
+          analysis: {
+            jdAlignment: { status: 'skipped' },
+            suggestions: [
+              {
+                id: 'sg-1', code: 'S4', label: '成果模糊', severity: 'medium',
+                target: { itemId: 'second-one', field: 'introduction' },
+                issue: '介绍缺少定位', anchor: '乙原', replacement: '乙新',
+                rationale: '突出项目定位', start: 0, end: 2, status: 'applied',
+              },
+              {
+                id: 'sg-2', code: 'S8', label: '冗长啰嗦', severity: 'low',
+                target: { itemId: 'second-two', field: 'highlightsMarkdown' },
+                issue: '亮点啰嗦', anchor: '第三原', replacement: '第三新',
+                rationale: '压缩表达', start: 0, end: 3, status: 'applied',
+              },
+            ],
+            evidenceRequests: [],
+            warnings: [],
+            density: [],
+          },
         },
       } as SSEEvent);
       onEvent({ kind: 'done' });
@@ -524,7 +558,8 @@ describe('ResumeEditor', () => {
     render(<StatefulEditor document={initialDocument} onChange={onChange} resumeId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'AI 润色 项目乙' }));
-    fireEvent.click(await screen.findByRole('button', { name: '采纳' }));
+    fireEvent.click(await screen.findByRole('button', { name: '全部应用' }));
+    fireEvent.click(screen.getByRole('button', { name: '应用到简历' }));
 
     const changed = latestDocument(onChange);
     expect(changed.sections[0]).toEqual(first);
@@ -532,7 +567,7 @@ describe('ResumeEditor', () => {
       ...second,
       content: {
         items: [
-          { ...second.content.items[0], introduction: '乙新介绍', achievements: '' },
+          { ...second.content.items[0], introduction: '乙新介绍' },
           { ...second.content.items[1], highlightsMarkdown: '第三新亮点' },
         ],
       },

@@ -38,8 +38,8 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	assert.Equal(t, "test-key", cfg.APIKey)
 	assert.Equal(t, "https://api.deepseek.com/v1", cfg.BaseURL)
 	assert.Equal(t, "deepseek-chat", cfg.Model)
-	assert.Equal(t, 2048, cfg.MaxTokens)
-	assert.Equal(t, 30*time.Second, cfg.Timeout)
+	assert.Equal(t, 4096, cfg.MaxTokens)
+	assert.Equal(t, 60*time.Second, cfg.Timeout)
 	assert.Equal(t, 1, cfg.MaxRetries)
 }
 
@@ -95,8 +95,8 @@ func TestLoadConfigFromEnv_IgnoresNonPositiveOrMalformedTuningValues(t *testing.
 			cfg, err := llm.LoadConfigFromEnv()
 
 			require.NoError(t, err)
-			assert.Equal(t, 2048, cfg.MaxTokens)
-			assert.Equal(t, 30*time.Second, cfg.Timeout)
+			assert.Equal(t, 4096, cfg.MaxTokens)
+			assert.Equal(t, 60*time.Second, cfg.Timeout)
 		})
 	}
 }

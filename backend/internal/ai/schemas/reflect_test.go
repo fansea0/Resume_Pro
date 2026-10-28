@@ -83,7 +83,7 @@ func TestRewriteSchemaForRejectsUnsupportedSectionType(t *testing.T) {
 	}
 }
 
-func TestOptimizationOutputSchemaForWrapsRewriteAndAnalysisStrictly(t *testing.T) {
+func TestOptimizationOutputSchemaForWrapsEditsAndAnalysisStrictly(t *testing.T) {
 	schemaValue, err := schemas.OptimizationOutputFor("summary")
 	if err != nil {
 		t.Fatalf("OptimizationOutputFor(summary) error: %v", err)
@@ -99,16 +99,16 @@ func TestOptimizationOutputSchemaForWrapsRewriteAndAnalysisStrictly(t *testing.T
 	if schema["additionalProperties"] != false {
 		t.Fatalf("optimization schema additionalProperties = %#v, want false", schema["additionalProperties"])
 	}
-	if !reflect.DeepEqual(schema["required"], []string{"rewrite", "analysis"}) {
-		t.Fatalf("optimization schema required = %#v, want rewrite and analysis", schema["required"])
+	if !reflect.DeepEqual(schema["required"], []string{"edits", "analysis"}) {
+		t.Fatalf("optimization schema required = %#v, want edits and analysis", schema["required"])
 	}
 
 	properties, ok := schema["properties"].(map[string]any)
 	if !ok {
 		t.Fatalf("optimization schema properties = %#v, want map", schema["properties"])
 	}
-	if len(properties) != 2 || properties["rewrite"] == nil || properties["analysis"] == nil {
-		t.Fatalf("optimization schema properties = %#v, want only rewrite and analysis", properties)
+	if len(properties) != 2 || properties["edits"] == nil || properties["analysis"] == nil {
+		t.Fatalf("optimization schema properties = %#v, want only edits and analysis", properties)
 	}
 	assertObjectSchemasAreStrict(t, "$", schema)
 }
@@ -130,25 +130,29 @@ func TestOptimizationOutputSchemaKeepsS7ExplanationOnly(t *testing.T) {
 	}
 	schema := schemaValue.(map[string]any)
 	properties := schema["properties"].(map[string]any)
-	analysis := properties["analysis"].(map[string]any)
-	analysisProperties := analysis["properties"].(map[string]any)
-	issues := analysisProperties["matchedIssues"].(map[string]any)
+	edits := properties["edits"].(map[string]any)
+	editItems := edits["items"].(map[string]any)
+	editProperties := editItems["properties"].(map[string]any)
+	issues := editProperties["issues"].(map[string]any)
 	issueItems := issues["items"].(map[string]any)
 	issueProperties := issueItems["properties"].(map[string]any)
 	issueCodes := issueProperties["code"].(map[string]any)["enum"].([]string)
 	if containsString(issueCodes, "S7") {
-		t.Fatalf("matched issue codes = %#v, must not permit rewrite-targeted S7", issueCodes)
+		t.Fatalf("edit issue codes = %#v, must not permit rewrite-targeted S7", issueCodes)
 	}
+	for _, code := range []string{"S2", "S3", "S4", "S5", "S6", "S8", "S10"} {
+		if !containsString(issueCodes, code) {
+			t.Fatalf("edit issue codes = %#v, want %s support", issueCodes, code)
+		}
+	}
+	analysis := properties["analysis"].(map[string]any)
+	analysisProperties := analysis["properties"].(map[string]any)
 	warnings := analysisProperties["warnings"].(map[string]any)
 	warningItems := warnings["items"].(map[string]any)
 	warningProperties := warningItems["properties"].(map[string]any)
 	warningCodes := warningProperties["code"].(map[string]any)["enum"].([]string)
 	if !containsString(warningCodes, "S7") {
 		t.Fatalf("warning codes = %#v, want S7 explanation support", warningCodes)
-	}
-	issueStatuses := issueProperties["status"].(map[string]any)["enum"].([]string)
-	if !reflect.DeepEqual(issueStatuses, []string{"fixed"}) {
-		t.Fatalf("matched issue status enum = %#v, want only fixed", issueStatuses)
 	}
 }
 

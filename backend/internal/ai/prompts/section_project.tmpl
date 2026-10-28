@@ -7,3 +7,6 @@
 - highlightsMarkdown: 3-5 条 bullet，每条 1 行
 
 要求：每条 bullet 突出「技术选型理由 / 量化结果 / 个人贡献」。
+- 只输出你真正改过的字段：introduction / achievements / highlightsMarkdown 分开作为各自的 edit，newText 给该字段改写后的完整文本。
+- 改写幅度要克制，只改表达，不改事实。
+- 密度上限：introduction 不超过 60 字且不超过 1 行；achievements 不超过 60 字且不超过 2 行；每条 bullet 不超过 40 字；一个条目不超过 5 条 bullet。超出的片段在 newText 里压缩，并在 issues 里记一条 code=S10。

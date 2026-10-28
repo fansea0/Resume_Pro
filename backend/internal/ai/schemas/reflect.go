@@ -21,6 +21,8 @@ func GenerateJSONSchema(v any) (map[string]any, error) {
 }
 
 // RewriteSchemaFor returns the rewrite schema for a supported resume section.
+// The server derives the rewrite from the accepted suggestions, so this schema
+// describes the shape the client receives rather than the model output.
 func RewriteSchemaFor(sectionType string) (any, error) {
 	v, err := rewriteStructFor(sectionType)
 	if err != nil {
@@ -29,21 +31,25 @@ func RewriteSchemaFor(sectionType string) (any, error) {
 	return GenerateJSONSchema(v)
 }
 
-// OptimizationOutputFor returns the strict rewrite-and-analysis response
-// schema for a supported resume section.
+// OptimizationOutputFor returns the strict response schema the model must
+// follow. The model proposes the rewritten text of each field; the server
+// diffs that text against the current content and stays the single source of
+// truth for the resulting resume content.
 func OptimizationOutputFor(sectionType string) (any, error) {
-	rewrite, err := RewriteSchemaFor(sectionType)
-	if err != nil {
+	if _, err := rewriteStructFor(sectionType); err != nil {
 		return nil, err
 	}
 	return map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"rewrite":  rewrite,
+			"edits": map[string]any{
+				"type":  "array",
+				"items": sectionEditSchema(),
+			},
 			"analysis": optimizationAnalysisSchema(),
 		},
-		"required": []string{"rewrite", "analysis"},
+		"required": []string{"edits", "analysis"},
 	}, nil
 }
 
@@ -121,6 +127,50 @@ func projectRewriteSchema() map[string]any {
 	}
 }
 
+// sectionEditSchema is the model-facing shape of one proposed field rewrite.
+func sectionEditSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"target":  editTargetSchema(),
+			"newText": map[string]any{"type": "string"},
+			"issues": map[string]any{
+				"type":  "array",
+				"items": editIssueSchema(),
+			},
+		},
+		"required": []string{"target", "newText", "issues"},
+	}
+}
+
+func editTargetSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"itemId": map[string]any{"type": []string{"string", "null"}},
+			"field":  map[string]any{"type": "string"},
+		},
+		"required": []string{"itemId", "field"},
+	}
+}
+
+func editIssueSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"code":      map[string]any{"type": "string", "enum": []string{"S2", "S3", "S4", "S5", "S6", "S8", "S10"}},
+			"label":     map[string]any{"type": "string"},
+			"issue":     map[string]any{"type": "string"},
+			"rationale": map[string]any{"type": "string"},
+			"quote":     map[string]any{"type": "string"},
+		},
+		"required": []string{"code", "label", "issue", "rationale", "quote"},
+	}
+}
+
 func optimizationAnalysisSchema() map[string]any {
 	return map[string]any{
 		"type":                 "object",
@@ -133,12 +183,9 @@ func optimizationAnalysisSchema() map[string]any {
 					"status":           map[string]any{"type": "string", "enum": []string{"applied", "skipped"}},
 					"matchedKeywords":  stringArraySchema(),
 					"excludedKeywords": stringArraySchema(),
+					"missingKeywords":  stringArraySchema(),
 				},
-				"required": []string{"status"},
-			},
-			"matchedIssues": map[string]any{
-				"type":  "array",
-				"items": issueSchema(),
+				"required": []string{"status", "matchedKeywords", "excludedKeywords", "missingKeywords"},
 			},
 			"evidenceRequests": map[string]any{
 				"type":  "array",
@@ -149,7 +196,7 @@ func optimizationAnalysisSchema() map[string]any {
 				"items": warningSchema(),
 			},
 		},
-		"required": []string{"jdAlignment", "matchedIssues", "evidenceRequests", "warnings"},
+		"required": []string{"jdAlignment", "evidenceRequests", "warnings"},
 	}
 }
 
@@ -166,21 +213,6 @@ func issueTargetSchema() map[string]any {
 			"field":  map[string]any{"type": "string"},
 		},
 		"required": []string{"field"},
-	}
-}
-
-func issueSchema() map[string]any {
-	return map[string]any{
-		"type":                 "object",
-		"additionalProperties": false,
-		"properties": map[string]any{
-			"code":       map[string]any{"type": "string", "enum": []string{"S2", "S3", "S4", "S5", "S6", "S8"}},
-			"label":      map[string]any{"type": "string"},
-			"target":     issueTargetSchema(),
-			"resolution": map[string]any{"type": "string"},
-			"status":     map[string]any{"type": "string", "enum": []string{"fixed"}},
-		},
-		"required": []string{"code", "target", "resolution", "status"},
 	}
 }
 

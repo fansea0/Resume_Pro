@@ -85,7 +85,7 @@ func TestBuildRouterConfigUsesSingleCallOptimizationProtocol(t *testing.T) {
 	chatModel := &sequenceChatModel{
 		FakeChatModel: llmtesting.NewFake(),
 		responses: []string{
-			`{"rewrite":{"markdown":"valid single-call optimization"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}}`,
+			`{"edits":[{"target":{"itemId":null,"field":"markdown"},"newText":"valid single-call optimization","issues":[]}],"analysis":{"jdAlignment":{"status":"skipped","matchedKeywords":[],"excludedKeywords":[],"missingKeywords":[]},"evidenceRequests":[],"warnings":[]}}`,
 		},
 	}
 	config, err := buildRouterConfig(db, resumeRepository, logrus.New(), serverOptions{
@@ -115,7 +115,7 @@ func TestBuildRouterConfigUsesSingleCallOptimizationProtocol(t *testing.T) {
 	assert.Equal(t, "jd_alignment_completed", events[2].Stage)
 	assert.Equal(t, "optimization_started", events[3].Stage)
 	assert.Equal(t, "optimization_completed", events[4].Stage)
-	assert.JSONEq(t, `{"rewrite":{"markdown":"valid single-call optimization"},"analysis":{"jdAlignment":{"status":"skipped"},"matchedIssues":[],"evidenceRequests":[],"warnings":[]}}`, string(events[5].Suggestion))
+	assert.Contains(t, string(events[5].Suggestion), `"rewrite":{"markdown":"valid single-call optimization"}`)
 	assert.Equal(t, 1, chatModel.next, "optimization protocol must use one model call")
 }
 

@@ -39,25 +39,86 @@ type OptimizationOutput struct {
 	Analysis OptimizationAnalysis `json:"analysis"`
 }
 
+// Suggestion status values reported by the server for every suggestion.
+const (
+	// SuggestionStatusApplied marks a suggestion that passed every safety
+	// check and is part of the derived rewrite.
+	SuggestionStatusApplied = "applied"
+	// SuggestionStatusRejected marks a suggestion that was dropped by a
+	// server-side safety check and is therefore not part of the rewrite.
+	SuggestionStatusRejected = "rejected"
+)
+
+// Suggestion severity levels derived by the server from the check code.
+const (
+	SuggestionSeverityHigh   = "high"
+	SuggestionSeverityMedium = "medium"
+	SuggestionSeverityLow    = "low"
+)
+
+// Suggestion codes the model may report. S1 (missing quantification) belongs
+// to evidence requests and S7 (exposure of gaps) belongs to warnings, so
+// neither may appear here.
+const (
+	SuggestionCodeVerbWeak       = "S2"
+	SuggestionCodeDutyStack      = "S3"
+	SuggestionCodeImpactVague    = "S4"
+	SuggestionCodeKeywordMissing = "S5"
+	SuggestionCodePlainSentence  = "S6"
+	SuggestionCodeVerbose        = "S8"
+	SuggestionCodeDensity        = "S10"
+)
+
+// SectionEdit is one model-proposed rewrite of a single field. The model
+// returns the whole rewritten text; the server diffs it against the current
+// content to obtain addressable suggestions.
+type SectionEdit struct {
+	Target  IssueTarget `json:"target"`
+	NewText string      `json:"newText"`
+	Issues  []EditIssue `json:"issues"`
+}
+
+// EditIssue explains one problem found in the edited field.
+type EditIssue struct {
+	Code      string `json:"code"`
+	Label     string `json:"label"`
+	Issue     string `json:"issue"`
+	Rationale string `json:"rationale"`
+	Quote     string `json:"quote"`
+}
+
+// Suggestion is an addressable single-span rewrite recommendation produced by
+// the server. Start and End are rune offsets in the original field text and
+// always address the exact slice kept in Anchor.
+type Suggestion struct {
+	ID              string      `json:"id"`
+	Code            string      `json:"code"`
+	Label           string      `json:"label,omitempty"`
+	Severity        string      `json:"severity"`
+	Target          IssueTarget `json:"target"`
+	Issue           string      `json:"issue"`
+	Anchor          string      `json:"anchor"`
+	Replacement     string      `json:"replacement"`
+	Rationale       string      `json:"rationale"`
+	Start           int         `json:"start"`
+	End             int         `json:"end"`
+	Status          string      `json:"status"`
+	RejectionReason string      `json:"rejectionReason,omitempty"`
+}
+
 type OptimizationAnalysis struct {
 	JDAlignment      JDAlignment       `json:"jdAlignment"`
-	MatchedIssues    []Issue           `json:"matchedIssues"`
+	Suggestions      []Suggestion      `json:"suggestions"`
 	EvidenceRequests []EvidenceRequest `json:"evidenceRequests"`
 	Warnings         []Warning         `json:"warnings"`
+	Density          []DensityMetric   `json:"density,omitempty"`
 }
 
 type JDAlignment struct {
 	Status           string   `json:"status"`
 	MatchedKeywords  []string `json:"matchedKeywords,omitempty"`
 	ExcludedKeywords []string `json:"excludedKeywords,omitempty"`
-}
-
-type Issue struct {
-	Code       string      `json:"code"`
-	Label      string      `json:"label,omitempty"`
-	Target     IssueTarget `json:"target"`
-	Resolution string      `json:"resolution"`
-	Status     string      `json:"status"`
+	MissingKeywords  []string `json:"missingKeywords,omitempty"`
 }
 
 type EvidenceRequest struct {
@@ -75,4 +136,16 @@ type Warning struct {
 type IssueTarget struct {
 	ItemID string `json:"itemId,omitempty"`
 	Field  string `json:"field"`
+}
+
+// DensityMetric reports deterministic information-density measurements for one
+// rewriteable field. It is computed by the server and never by the model.
+type DensityMetric struct {
+	ItemID         string `json:"itemId,omitempty"`
+	Field          string `json:"field"`
+	Chars          int    `json:"chars"`
+	Lines          int    `json:"lines"`
+	Bullets        int    `json:"bullets"`
+	MaxBulletChars int    `json:"maxBulletChars"`
+	OverLimit      bool   `json:"overLimit"`
 }

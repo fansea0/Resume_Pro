@@ -13,11 +13,13 @@ type CallInfo struct {
 }
 
 type CallResult struct {
-	DurationMS   int64
-	TokensIn     int
-	TokensOut    int
-	RetryCount   int
-	SuggestionOK bool
+	DurationMS          int64
+	TokensIn            int
+	TokensOut           int
+	RetryCount          int
+	SuggestionOK        bool
+	SuggestionsApplied  int
+	SuggestionsRejected int
 }
 
 type Hooks struct {
@@ -38,15 +40,17 @@ func NewLogrusHooks(logger *logrus.Logger) *Hooks {
 		},
 		OnCallFinished: func(_ context.Context, info CallInfo, result CallResult) {
 			logger.WithFields(logrus.Fields{
-				"event":         "ai_call_finished",
-				"tenant_id":     info.TenantID,
-				"operation":     info.Operation,
-				"section_type":  info.SectionType,
-				"duration_ms":   result.DurationMS,
-				"tokens_in":     result.TokensIn,
-				"tokens_out":    result.TokensOut,
-				"retry_count":   result.RetryCount,
-				"suggestion_ok": result.SuggestionOK,
+				"event":                "ai_call_finished",
+				"tenant_id":            info.TenantID,
+				"operation":            info.Operation,
+				"section_type":         info.SectionType,
+				"duration_ms":          result.DurationMS,
+				"tokens_in":            result.TokensIn,
+				"tokens_out":           result.TokensOut,
+				"retry_count":          result.RetryCount,
+				"suggestion_ok":        result.SuggestionOK,
+				"suggestions_applied":  result.SuggestionsApplied,
+				"suggestions_rejected": result.SuggestionsRejected,
 			}).Info("AI call finished")
 		},
 		OnCallFailed: func(_ context.Context, info CallInfo, err error) {

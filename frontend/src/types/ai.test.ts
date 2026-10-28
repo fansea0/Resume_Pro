@@ -59,7 +59,7 @@ describe('AI type contracts', () => {
     >();
     expectTypeOf<SSEEvent>().toEqualTypeOf<
       | { kind: 'thinking'; text: string }
-      | { kind: 'progress'; stage: 'context_loaded' | 'jd_alignment_started' | 'jd_alignment_completed' | 'optimization_started' | 'optimization_completed'; message: string }
+      | { kind: 'progress'; stage: 'context_loaded' | 'jd_alignment_started' | 'jd_alignment_completed' | 'optimization_started' | 'optimization_completed' | 'contract_repair'; message: string }
       | SuggestionEvent
       | { kind: 'error'; code: string; message: string }
       | { kind: 'done' }

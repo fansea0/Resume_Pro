@@ -155,10 +155,34 @@ func (s *Service) rewrite(ctx context.Context, ch chan<- Event, in RewriteInput,
 	}
 
 	rewrite, analysis, _, err := ValidateOptimizationOutput(in.SectionType, in.CurrentContent, []byte(response.content))
+	retryCount := 0
+	if err != nil && s.maxRetries > 0 && isRepairableOutputError(err) {
+		if !s.emit(ctx, ch, Event{
+			Kind:    "progress",
+			Stage:   "contract_repair",
+			Message: "输出未符合约定，正在自动修复一次。",
+		}) {
+			return
+		}
+		retryCount++
+		repaired := repairMessages(messages, response.content, err)
+		retryResponse, retryErr := s.streamResponse(ctx, ch, repaired, responseFormat)
+		if retryErr != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			s.fail(ctx, ch, callInfo, "LLM_ERROR", retryErr)
+			return
+		}
+		response.tokensIn += retryResponse.tokensIn
+		response.tokensOut += retryResponse.tokensOut
+		rewrite, analysis, _, err = ValidateOptimizationOutput(in.SectionType, in.CurrentContent, []byte(retryResponse.content))
+	}
 	if err != nil {
-		s.fail(ctx, ch, callInfo, "INVALID_RESPONSE", err)
+		s.fail(ctx, ch, callInfo, outputErrorCode(response.content), err)
 		return
 	}
+
 	if in.TargetJob == nil {
 		analysis, err = normalizeJDAlignmentWithoutTargetJob(analysis)
 		if err != nil {
@@ -166,6 +190,7 @@ func (s *Service) rewrite(ctx context.Context, ch chan<- Event, in RewriteInput,
 			return
 		}
 	}
+	appliedCount, rejectedCount := suggestionCounts(analysis)
 	suggestion, err := json.Marshal(struct {
 		Rewrite  json.RawMessage `json:"rewrite"`
 		Analysis json.RawMessage `json:"analysis"`
@@ -185,11 +210,13 @@ func (s *Service) rewrite(ctx context.Context, ch chan<- Event, in RewriteInput,
 	}
 
 	s.hooks.OnCallFinished(ctx, callInfo, CallResult{
-		DurationMS:   time.Since(startedAt).Milliseconds(),
-		TokensIn:     response.tokensIn,
-		TokensOut:    response.tokensOut,
-		RetryCount:   0,
-		SuggestionOK: true,
+		DurationMS:          time.Since(startedAt).Milliseconds(),
+		TokensIn:            response.tokensIn,
+		TokensOut:           response.tokensOut,
+		RetryCount:          retryCount,
+		SuggestionOK:        true,
+		SuggestionsApplied:  appliedCount,
+		SuggestionsRejected: rejectedCount,
 	})
 	s.sendTerminal(ctx, ch, Event{Kind: "suggestion", Suggestion: suggestion})
 }
@@ -204,6 +231,9 @@ func normalizeJDAlignmentWithoutTargetJob(analysis json.RawMessage) (json.RawMes
 		return nil, fmt.Errorf("decode validated JD alignment: %w", err)
 	}
 	alignment["status"] = json.RawMessage(`"skipped"`)
+	delete(alignment, "matchedKeywords")
+	delete(alignment, "excludedKeywords")
+	delete(alignment, "missingKeywords")
 	normalizedAlignment, err := json.Marshal(alignment)
 	if err != nil {
 		return nil, fmt.Errorf("encode normalized JD alignment: %w", err)
@@ -317,6 +347,42 @@ func (s *Service) buildRewriteMessages(in RewriteInput, sectionTemplate string, 
 		{Role: schema.System, Content: strings.Join(systemParts, "\n")},
 		{Role: schema.User, Content: string(userPayload)},
 	}, nil
+}
+
+// isRepairableOutputError reports whether a validation failure comes from the
+// model output and can therefore be fixed by asking the model once more.
+func isRepairableOutputError(err error) bool {
+	return err != nil && !errors.Is(err, ErrInvalidCurrentContent)
+}
+
+// outputErrorCode distinguishes a truncated response from a contract
+// violation so the client can tell the user what to do next.
+func outputErrorCode(content string) string {
+	if !json.Valid([]byte(strings.TrimSpace(content))) {
+		return "TRUNCATED_OUTPUT"
+	}
+	return "INVALID_RESPONSE"
+}
+
+// suggestionCounts reports how many suggestions were applied and rejected.
+func suggestionCounts(analysis json.RawMessage) (applied int, rejected int) {
+	var payload struct {
+		Suggestions []struct {
+			Status string `json:"status"`
+		} `json:"suggestions"`
+	}
+	if err := json.Unmarshal(analysis, &payload); err != nil {
+		return 0, 0
+	}
+	for _, suggestion := range payload.Suggestions {
+		switch suggestion.Status {
+		case schemas.SuggestionStatusApplied:
+			applied++
+		case schemas.SuggestionStatusRejected:
+			rejected++
+		}
+	}
+	return applied, rejected
 }
 
 func repairMessages(messages []*schema.Message, invalidContent string, validationErr error) []*schema.Message {

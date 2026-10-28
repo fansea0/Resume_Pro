@@ -6,3 +6,6 @@
 - highlightsMarkdown: 3-5 条 bullet，每条 1 行
 
 要求：每条 bullet 必须是「动作 + 对象 + 结果」三要素结构。
+- 只输出你真正改过的字段：achievements 与 highlightsMarkdown 分开作为两个 edit，newText 给该字段改写后的完整文本。
+- 改写幅度要克制，只改表达，不改事实；newText 与原文的差异集中在一两个短语。
+- 密度上限：achievements 不超过 60 字且不超过 2 行；每条 bullet 不超过 40 字；一个条目不超过 5 条 bullet。超出的片段在 newText 里压缩，并在 issues 里记一条 code=S10。

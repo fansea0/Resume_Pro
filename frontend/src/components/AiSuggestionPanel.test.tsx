@@ -2,21 +2,28 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { streamRewrite } from '../api/ai';
-import type { SSEEvent } from '../types/ai';
+import type { AiSuggestion, OptimizationAnalysis, SSEEvent } from '../types/ai';
 import type { InternshipSection, ProjectSection, SummarySection, WorkSection } from '../types/resume';
 import { AiSuggestionPanel } from './AiSuggestionPanel';
 
 vi.mock('../api/ai', () => ({ streamRewrite: vi.fn() }));
 
 const streamRewriteMock = vi.mocked(streamRewrite);
-const emptyAnalysis = { jdAlignment: { status: 'skipped' as const }, matchedIssues: [], evidenceRequests: [], warnings: [] };
+
+const emptyAnalysis: OptimizationAnalysis = {
+  jdAlignment: { status: 'skipped' },
+  suggestions: [],
+  evidenceRequests: [],
+  warnings: [],
+  density: [],
+};
 
 const summarySection: SummarySection = {
   id: 'summary-42',
   type: 'summary',
   title: '个人总结',
   visible: true,
-  content: { markdown: '我负责产品交付。' },
+  content: { markdown: '负责产品交付。' },
 };
 
 const projectSection: ProjectSection = {
@@ -68,6 +75,51 @@ const internshipSection: InternshipSection = {
   title: '实习经历',
 };
 
+const summaryVerbSuggestion: AiSuggestion = {
+  id: 'sg-1',
+  code: 'S2',
+  label: '弱动词',
+  severity: 'high',
+  target: { field: 'markdown' },
+  issue: '用「负责」开头，没有体现你的主导范围',
+  anchor: '负责',
+  replacement: '主导',
+  rationale: '招聘方只读前 3 秒，需要一眼看到动作强度',
+  start: 0,
+  end: 2,
+  status: 'applied',
+};
+
+const workHighlightsSuggestion: AiSuggestion = {
+  id: 'sg-2',
+  code: 'S2',
+  label: '弱动词',
+  severity: 'high',
+  target: { itemId: 'work-alpha', field: 'highlightsMarkdown' },
+  issue: '用「参与」开头',
+  anchor: '参与',
+  replacement: '主导',
+  rationale: '动作更明确',
+  start: 2,
+  end: 4,
+  status: 'applied',
+};
+
+const workAchievementsSuggestion: AiSuggestion = {
+  id: 'sg-3',
+  code: 'S4',
+  label: '成果模糊',
+  severity: 'medium',
+  target: { itemId: 'work-alpha', field: 'achievements' },
+  issue: '只写了职责',
+  anchor: '负责',
+  replacement: '主导',
+  rationale: '突出成果',
+  start: 0,
+  end: 2,
+  status: 'applied',
+};
+
 afterEach(() => {
   streamRewriteMock.mockReset();
   document.body.innerHTML = '';
@@ -100,9 +152,104 @@ describe('AiSuggestionPanel', () => {
     expect(screen.queryByText('不应覆盖已读取上下文。')).not.toBeInTheDocument();
   });
 
-  it('renders server analysis in order and only accepts the rewrite payload without S1 evidence', async () => {
+  it('renders the diagnosis overview, keyword alignment and suggestion cards', async () => {
     streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
-      onEvent({ kind: 'progress', stage: 'context_loaded', message: '已读取上下文。' } as SSEEvent);
+      onEvent({
+        kind: 'suggestion',
+        sectionId: 'summary-42',
+        sectionType: 'summary',
+        newContent: {
+          rewrite: { markdown: '主导产品交付。' },
+          analysis: {
+            jdAlignment: { status: 'applied', matchedKeywords: ['用户增长'], excludedKeywords: ['SQL'], missingKeywords: ['A/B 实验'] },
+            suggestions: [summaryVerbSuggestion],
+            evidenceRequests: [{ code: 'S1', target: { field: 'markdown' }, reason: '缺少规模', exampleWithPlaceholder: '覆盖 XX 名用户' }],
+            warnings: [{ code: 'S7', resolution: '已基于既有事实重组叙事。' }],
+            density: [{ field: 'markdown', chars: 7, lines: 1, bullets: 0, maxBulletChars: 0, overLimit: true }],
+          },
+        },
+      } as SSEEvent);
+      onEvent({ kind: 'done' });
+    });
+
+    render(
+      <AiSuggestionPanel
+        onAccept={vi.fn()}
+        onClose={vi.fn()}
+        originalSection={summarySection}
+        resumeId={7}
+        sectionType="summary"
+      />,
+    );
+
+    const overview = await screen.findByRole('region', { name: '诊断总览' });
+    expect(overview).toHaveTextContent('动作与结构');
+    expect(overview).toHaveTextContent('1 处建议');
+    expect(overview).toHaveTextContent('待补 1 项数据');
+
+    const alignment = screen.getByRole('region', { name: 'JD 对齐' });
+    expect(alignment).toHaveTextContent('用户增长');
+    expect(alignment).toHaveTextContent('A/B 实验');
+
+    const suggestions = screen.getByRole('region', { name: '改写建议' });
+    expect(suggestions).toHaveTextContent('用「负责」开头，没有体现你的主导范围');
+    expect(suggestions).toHaveTextContent('招聘方只读前 3 秒，需要一眼看到动作强度');
+    expect(suggestions).toHaveTextContent('负责');
+    expect(suggestions).toHaveTextContent('主导');
+
+    const evidence = screen.getByRole('region', { name: '待补充数据' });
+    expect(evidence).toHaveTextContent('覆盖 XX 名用户');
+    expect(evidence).toHaveTextContent('不会随采纳写入简历');
+    expect(within(evidence).queryByRole('button')).not.toBeInTheDocument();
+
+    expect(screen.getByRole('region', { name: '提示' })).toHaveTextContent('已基于既有事实重组叙事。');
+  });
+
+  it('applies a single suggestion to the draft and reverts it', async () => {
+    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
+      onEvent({
+        kind: 'suggestion',
+        sectionId: 'work-42',
+        sectionType: 'work',
+        newContent: {
+          rewrite: { items: [{ id: 'work-alpha', highlightsMarkdown: '- 主导需求梳理' }] },
+          analysis: {
+            jdAlignment: { status: 'skipped' },
+            suggestions: [workHighlightsSuggestion],
+            evidenceRequests: [],
+            warnings: [],
+            density: [],
+          },
+        },
+      } as SSEEvent);
+      onEvent({ kind: 'done' });
+    });
+    const onAccept = vi.fn();
+
+    render(
+      <AiSuggestionPanel
+        onAccept={onAccept}
+        onClose={vi.fn()}
+        originalSection={workSection}
+        resumeId={7}
+        sectionType="work"
+      />,
+    );
+
+    const applyButton = await screen.findByRole('button', { name: '应用' });
+    expect(screen.getByRole('button', { name: '应用到简历' })).toBeDisabled();
+
+    fireEvent.click(applyButton);
+    expect(screen.getByRole('button', { name: '撤销' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '应用到简历' }));
+
+    expect(onAccept).toHaveBeenCalledWith({
+      items: [{ id: 'work-alpha', highlightsMarkdown: '- 主导需求梳理' }],
+    });
+  });
+
+  it('reverts the draft when the suggestion is undone', async () => {
+    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
       onEvent({
         kind: 'suggestion',
         sectionId: 'summary-42',
@@ -111,12 +258,10 @@ describe('AiSuggestionPanel', () => {
           rewrite: { markdown: '主导产品交付。' },
           analysis: {
             jdAlignment: { status: 'skipped' },
-            matchedIssues: [
-              { code: 'S2', label: '动词贫瘠', target: { field: 'markdown' }, resolution: '替换弱动词', status: 'fixed' },
-              { code: 'S5', label: '关键词缺失', target: { field: 'markdown' }, resolution: '删除无信息量修饰语', status: 'fixed' },
-            ],
-            evidenceRequests: [{ code: 'S1', target: { field: 'markdown' }, reason: '缺少规模', exampleWithPlaceholder: '覆盖 XX 名用户' }],
-            warnings: [{ code: 'S7', resolution: '请结合既有事实检查经历叙事。' }],
+            suggestions: [summaryVerbSuggestion],
+            evidenceRequests: [],
+            warnings: [],
+            density: [],
           },
         },
       } as SSEEvent);
@@ -134,32 +279,29 @@ describe('AiSuggestionPanel', () => {
       />,
     );
 
-    const analysis = await screen.findByRole('region', { name: '分析过程' });
-    expect(analysis).toHaveTextContent('未绑定目标岗位');
-    expect(analysis).toHaveTextContent('动词贫瘠');
-    expect(analysis).toHaveTextContent('替换弱动词');
-    expect(analysis).toHaveTextContent('关键词缺失');
-    expect(analysis).toHaveTextContent('删除无信息量修饰语');
-    expect(analysis).toHaveTextContent('覆盖 XX 名用户');
-    expect(analysis).toHaveTextContent('不会随采纳写入简历');
-    expect(analysis).toHaveTextContent('请结合既有事实检查经历叙事。');
-    expect(analysis.querySelectorAll('section')).toHaveLength(4);
-    expect(within(analysis).queryByRole('button')).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: '撤销' }));
 
-    fireEvent.click(screen.getByRole('button', { name: '采纳' }));
-    expect(onAccept).toHaveBeenCalledWith({ markdown: '主导产品交付。' });
-    expect(onAccept).not.toHaveBeenCalledWith(expect.objectContaining({ exampleWithPlaceholder: expect.anything() }));
+    expect(screen.getByRole('button', { name: '应用到简历' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '应用到简历' }));
+    expect(onAccept).not.toHaveBeenCalled();
   });
 
-  it('labels an empty rewrite as preserving the original and prevents adoption', async () => {
+  it('applies every available suggestion at once and commits only the changed fields', async () => {
     streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
       onEvent({
         kind: 'suggestion',
-        sectionId: 'summary-42',
-        sectionType: 'summary',
+        sectionId: 'work-42',
+        sectionType: 'work',
         newContent: {
-          rewrite: { markdown: '' },
-          analysis: { jdAlignment: { status: 'skipped' }, matchedIssues: [], evidenceRequests: [], warnings: [] },
+          rewrite: { items: [{ id: 'work-alpha', achievements: '主导产品交付。', highlightsMarkdown: '- 主导需求梳理' }] },
+          analysis: {
+            jdAlignment: { status: 'skipped' },
+            suggestions: [workHighlightsSuggestion, workAchievementsSuggestion],
+            evidenceRequests: [],
+            warnings: [],
+            density: [],
+          },
         },
       } as SSEEvent);
       onEvent({ kind: 'done' });
@@ -170,48 +312,84 @@ describe('AiSuggestionPanel', () => {
       <AiSuggestionPanel
         onAccept={onAccept}
         onClose={vi.fn()}
+        originalSection={workSection}
+        resumeId={7}
+        sectionType="work"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '全部应用' }));
+    fireEvent.click(screen.getByRole('button', { name: '应用到简历' }));
+
+    expect(onAccept).toHaveBeenCalledWith({
+      items: [{ id: 'work-alpha', achievements: '主导产品交付。', highlightsMarkdown: '- 主导需求梳理' }],
+    });
+  });
+
+  it('lists rejected suggestions with their reason', async () => {
+    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
+      onEvent({
+        kind: 'suggestion',
+        sectionId: 'summary-42',
+        sectionType: 'summary',
+        newContent: {
+          rewrite: { markdown: '负责产品交付。' },
+          analysis: {
+            jdAlignment: { status: 'skipped' },
+            suggestions: [{
+              ...summaryVerbSuggestion,
+              id: 'sg-2',
+              status: 'rejected',
+              rejectionReason: '建议引入了原文中没有的数据',
+            }],
+            evidenceRequests: [],
+            warnings: [],
+            density: [],
+          },
+        },
+      } as SSEEvent);
+      onEvent({ kind: 'done' });
+    });
+
+    render(
+      <AiSuggestionPanel
+        onAccept={vi.fn()}
+        onClose={vi.fn()}
         originalSection={summarySection}
         resumeId={7}
         sectionType="summary"
       />,
     );
 
-    expect(await screen.findByText(/保留原文/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '采纳' }));
-    expect(onAccept).not.toHaveBeenCalled();
+    expect(await screen.findByText('已跳过 1 条建议')).toBeInTheDocument();
+    expect(screen.getByText('建议引入了原文中没有的数据')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '改写建议' })).toHaveTextContent('本次没有可安全采纳的改写，保留原文。');
   });
 
-  it.each([
-    { section: summarySection, sectionType: 'summary' as const, rewrite: { markdown: '我负责产品交付。' } },
-    { section: workSection, sectionType: 'work' as const, rewrite: { items: [{ id: 'work-alpha', achievements: '负责产品交付。', highlightsMarkdown: '- 参与需求梳理' }] } },
-    { section: internshipSection, sectionType: 'internship' as const, rewrite: { items: [{ id: 'work-alpha', achievements: '负责产品交付。', highlightsMarkdown: '- 参与需求梳理' }] } },
-    { section: projectSection, sectionType: 'project' as const, rewrite: { items: [{ id: 'project-alpha', introduction: '建设招聘平台。', achievements: '提高了效率。', highlightsMarkdown: '- 完成系统交付' }] } },
-  ])('treats a no-op $sectionType rewrite as preserving the original and prevents adoption', async ({ section, sectionType, rewrite }) => {
+  it('shows the target job alignment state and preserves the original when there is no safe rewrite', async () => {
     streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
       onEvent({
         kind: 'suggestion',
-        sectionId: section.id,
-        sectionType,
-        newContent: { rewrite, analysis: emptyAnalysis },
+        sectionId: 'summary-42',
+        sectionType: 'summary',
+        newContent: { rewrite: { markdown: '' }, analysis: emptyAnalysis },
       } as SSEEvent);
       onEvent({ kind: 'done' });
     });
-    const onAccept = vi.fn();
 
     render(
       <AiSuggestionPanel
-        onAccept={onAccept}
+        onAccept={vi.fn()}
         onClose={vi.fn()}
-        originalSection={section}
+        originalSection={summarySection}
         resumeId={7}
-        sectionType={sectionType}
+        sectionType="summary"
       />,
     );
 
-    expect(await screen.findByText(/保留原文/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '采纳' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: '采纳' }));
-    expect(onAccept).not.toHaveBeenCalled();
+    expect(await screen.findByRole('region', { name: 'JD 对齐' })).toHaveTextContent('未绑定目标岗位');
+    expect(screen.getByRole('region', { name: '改写建议' })).toHaveTextContent('保留原文');
+    expect(screen.getByRole('button', { name: '应用到简历' })).toBeDisabled();
   });
 
   it('requests and renders only the suggestion correlated to the current section id and type', async () => {
@@ -254,78 +432,50 @@ describe('AiSuggestionPanel', () => {
         kind: 'suggestion',
         sectionId: 'summary-42',
         sectionType: 'summary',
-        newContent: { rewrite: { markdown: '主导产品交付，推动上线效率提升 30%。' }, analysis: emptyAnalysis },
+        newContent: {
+          rewrite: { markdown: '主导产品交付。' },
+          analysis: {
+            jdAlignment: { status: 'skipped' },
+            suggestions: [summaryVerbSuggestion],
+            evidenceRequests: [],
+            warnings: [],
+            density: [],
+          },
+        },
       });
       emit?.({ kind: 'done' });
     });
-    expect(await screen.findByText('主导产品交付，推动上线效率提升 30%。')).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: '改写建议' })).toHaveTextContent('负责');
     expect(screen.queryByText('不应显示的内容')).not.toBeInTheDocument();
     act(() => {
       emit?.({ kind: 'thinking', text: '过期分析' });
-      emit?.({
-        kind: 'suggestion',
-        sectionId: 'summary-42',
-        sectionType: 'summary',
-        newContent: { rewrite: { markdown: '过期建议' }, analysis: emptyAnalysis },
-      });
     });
-    expect(screen.queryByText('过期建议')).not.toBeInTheDocument();
-    expect(screen.getByText('主导产品交付，推动上线效率提升 30%。')).toBeInTheDocument();
+    expect(screen.queryByText('过期分析')).not.toBeInTheDocument();
     expect(streamRewriteMock).toHaveBeenCalledWith(
       7,
       { sectionId: 'summary-42', sectionType: 'summary' },
       expect.any(Function),
       expect.any(AbortSignal),
     );
-    expect(screen.getByRole('button', { name: '采纳' })).toBeEnabled();
   });
 
-  it('keeps frozen project fields neutral and highlights only changed rewriteable fields', async () => {
+  it('commits the draft and closes without changing it', async () => {
     streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
       onEvent({
         kind: 'suggestion',
-        sectionId: 'project-42',
-        sectionType: 'project',
+        sectionId: 'summary-42',
+        sectionType: 'summary',
         newContent: {
-          rewrite: { items: [
-            {
-              id: 'project-alpha',
-              introduction: '搭建面向校招的智能招聘平台。',
-              achievements: '提高了效率。',
-            },
-            { id: 'unknown-item', introduction: '不应渲染的条目' },
-          ] },
-          analysis: emptyAnalysis,
+          rewrite: { markdown: '主导产品交付。' },
+          analysis: {
+            jdAlignment: { status: 'skipped' },
+            suggestions: [summaryVerbSuggestion],
+            evidenceRequests: [],
+            warnings: [],
+            density: [],
+          },
         },
-      });
-      onEvent({ kind: 'done' });
-    });
-
-    render(
-      <AiSuggestionPanel
-        onAccept={vi.fn()}
-        onClose={vi.fn()}
-        originalSection={projectSection}
-        resumeId={7}
-        sectionType="project"
-      />,
-    );
-
-    expect((await screen.findAllByText('分析问题')).length).toBeGreaterThan(0);
-    expect(screen.queryByRole('group', { name: 'Frozen · 保持原样' })).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: '分析过程' })).toHaveTextContent('未绑定目标岗位');
-
-    const rewriteable = screen.getByRole('group', { name: 'Rewriteable · AI 建议' });
-    expect(within(rewriteable).getByText('建设招聘平台。')).toHaveClass('ai-suggestion-panel__old-value');
-    expect(within(rewriteable).getByText('搭建面向校招的智能招聘平台。')).toHaveClass('ai-suggestion-panel__new-value');
-    expect(within(rewriteable).getByText('提高了效率。')).toHaveClass('ai-suggestion-panel__unchanged-value');
-    expect(screen.queryByText('不应渲染的条目')).not.toBeInTheDocument();
-  });
-
-  it('accepts the typed rewrite and rejects without changing it', async () => {
-    const rewrite = { markdown: '量化产品交付成果。' };
-    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
-      onEvent({ kind: 'suggestion', sectionId: 'summary-42', sectionType: 'summary', newContent: { rewrite, analysis: emptyAnalysis } });
+      } as SSEEvent);
       onEvent({ kind: 'done' });
     });
     const onAccept = vi.fn();
@@ -340,8 +490,9 @@ describe('AiSuggestionPanel', () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: '采纳' }));
-    expect(onAccept).toHaveBeenCalledWith(rewrite);
+    fireEvent.click(await screen.findByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: '应用到简历' }));
+    expect(onAccept).toHaveBeenCalledWith({ markdown: '主导产品交付。' });
 
     rerender(
       <AiSuggestionPanel
@@ -352,54 +503,9 @@ describe('AiSuggestionPanel', () => {
         sectionType="summary"
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: '拒绝' }));
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
     expect(onClose).toHaveBeenCalledOnce();
     expect(onAccept).toHaveBeenCalledOnce();
-  });
-
-  it('normalizes accepted project rewrites to the runtime allowlist while preserving explicit empty strings', async () => {
-    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
-      onEvent({
-        kind: 'suggestion',
-        sectionId: 'project-42',
-        sectionType: 'project',
-        newContent: {
-          rewrite: { items: [
-            {
-              id: 'project-alpha',
-              introduction: '',
-              achievements: '交付周期缩短 40%。',
-              name: '恶意覆盖项目名',
-              showIntroduction: false,
-              arbitrary: '不在契约内',
-            },
-          ],
-          title: '恶意覆盖章节标题' },
-          analysis: emptyAnalysis,
-        },
-      } as unknown as SSEEvent);
-      onEvent({ kind: 'done' });
-    });
-    const onAccept = vi.fn();
-
-    render(
-      <AiSuggestionPanel
-        onAccept={onAccept}
-        onClose={vi.fn()}
-        originalSection={projectSection}
-        resumeId={7}
-        sectionType="project"
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole('button', { name: '采纳' }));
-    expect(onAccept).toHaveBeenCalledWith({
-      items: [{
-        id: 'project-alpha',
-        introduction: '',
-        achievements: '交付周期缩短 40%。',
-      }],
-    });
   });
 
   it('keeps a completed suggestion ready when the reader fails after done', async () => {
@@ -409,8 +515,17 @@ describe('AiSuggestionPanel', () => {
         kind: 'suggestion',
         sectionId: 'summary-42',
         sectionType: 'summary',
-        newContent: { rewrite: { markdown: '已完成的建议' }, analysis: emptyAnalysis },
-      });
+        newContent: {
+          rewrite: { markdown: '主导产品交付。' },
+          analysis: {
+            jdAlignment: { status: 'skipped' },
+            suggestions: [summaryVerbSuggestion],
+            evidenceRequests: [],
+            warnings: [],
+            density: [],
+          },
+        },
+      } as SSEEvent);
       onEvent({ kind: 'done' });
       return new Promise<void>((_resolve, reject) => {
         rejectStream = reject;
@@ -426,15 +541,14 @@ describe('AiSuggestionPanel', () => {
         sectionType="summary"
       />,
     );
-    expect(await screen.findByText('已完成的建议')).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: '改写建议' })).toHaveTextContent('负责');
 
     await act(async () => {
       rejectStream?.(new Error('reader failed after done'));
     });
 
-    expect(screen.getByText('已完成的建议')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '改写建议' })).toHaveTextContent('负责');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '采纳' })).toBeEnabled();
   });
 
   it('aborts and invalidates the active request before invoking onAccept', async () => {
@@ -447,8 +561,17 @@ describe('AiSuggestionPanel', () => {
         kind: 'suggestion',
         sectionId: 'summary-42',
         sectionType: 'summary',
-        newContent: { rewrite: { markdown: '可采纳建议' }, analysis: emptyAnalysis },
-      });
+        newContent: {
+          rewrite: { markdown: '主导产品交付。' },
+          analysis: {
+            jdAlignment: { status: 'skipped' },
+            suggestions: [summaryVerbSuggestion],
+            evidenceRequests: [],
+            warnings: [],
+            density: [],
+          },
+        },
+      } as SSEEvent);
       onEvent({ kind: 'done' });
       return new Promise<void>(() => undefined);
     });
@@ -467,7 +590,8 @@ describe('AiSuggestionPanel', () => {
         sectionType="summary"
       />,
     );
-    fireEvent.click(await screen.findByRole('button', { name: '采纳' }));
+    fireEvent.click(await screen.findByRole('button', { name: '应用' }));
+    fireEvent.click(screen.getByRole('button', { name: '应用到简历' }));
 
     expect(onAccept).toHaveBeenCalledOnce();
     expect(callbackObservedAbort).toBe(true);
@@ -476,8 +600,8 @@ describe('AiSuggestionPanel', () => {
   });
 
   it.each([
-    { action: '拒绝', accessibleName: '拒绝' },
-    { action: '关闭', accessibleName: '关闭 AI 润色建议' },
+    { action: '关闭', accessibleName: '关闭' },
+    { action: '关闭按钮', accessibleName: '关闭 AI 润色建议' },
   ])('aborts and invalidates before $action invokes onClose', async ({ accessibleName }) => {
     let emit: ((event: SSEEvent) => void) | undefined;
     let requestSignal: AbortSignal | undefined;
@@ -569,7 +693,25 @@ describe('AiSuggestionPanel', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('网络中断');
     fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('AI 返回内容无效');
-    expect(screen.getByRole('button', { name: '采纳' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '应用到简历' })).toBeDisabled();
+  });
+
+  it('explains a truncated model output with an actionable message', async () => {
+    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
+      onEvent({ kind: 'error', code: 'TRUNCATED_OUTPUT', message: 'invalid character' });
+    });
+
+    render(
+      <AiSuggestionPanel
+        onAccept={vi.fn()}
+        onClose={vi.fn()}
+        originalSection={summarySection}
+        resumeId={7}
+        sectionType="summary"
+      />,
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('AI 输出被截断');
   });
 
   it('traps focus, isolates the background, restores focus, and rejects on Escape', async () => {
@@ -592,7 +734,7 @@ describe('AiSuggestionPanel', () => {
       />,
     );
 
-    const dialog = screen.getByRole('dialog', { name: 'AI 润色建议' });
+    const dialog = screen.getByRole('dialog', { name: 'AI 诊断与润色' });
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
     expect(background).toHaveAttribute('aria-hidden', 'true');
     expect(background).toHaveAttribute('inert');
@@ -600,8 +742,8 @@ describe('AiSuggestionPanel', () => {
     opener.focus();
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
     const close = within(dialog).getByRole('button', { name: '关闭 AI 润色建议' });
-    const accept = within(dialog).getByRole('button', { name: '采纳' });
-    accept.focus();
+    const apply = within(dialog).getByRole('button', { name: '应用到简历' });
+    apply.focus();
     fireEvent.keyDown(dialog, { key: 'Tab' });
     expect(close).toHaveFocus();
 
@@ -612,5 +754,35 @@ describe('AiSuggestionPanel', () => {
     expect(background).not.toHaveAttribute('aria-hidden');
     expect(background).not.toHaveAttribute('inert');
     expect(opener).toHaveFocus();
+  });
+
+  it.each([
+    { section: summarySection, sectionType: 'summary' as const },
+    { section: workSection, sectionType: 'work' as const },
+    { section: internshipSection, sectionType: 'internship' as const },
+    { section: projectSection, sectionType: 'project' as const },
+  ])('renders a $sectionType section without an adoptable rewrite', async ({ section, sectionType }) => {
+    streamRewriteMock.mockImplementation(async (_resumeId, _request, onEvent) => {
+      onEvent({
+        kind: 'suggestion',
+        sectionId: section.id,
+        sectionType,
+        newContent: { rewrite: { markdown: '原文' }, analysis: emptyAnalysis },
+      } as unknown as SSEEvent);
+      onEvent({ kind: 'done' });
+    });
+
+    render(
+      <AiSuggestionPanel
+        onAccept={vi.fn()}
+        onClose={vi.fn()}
+        originalSection={section}
+        resumeId={7}
+        sectionType={sectionType}
+      />,
+    );
+
+    expect(await screen.findByRole('region', { name: '改写建议' })).toHaveTextContent('保留原文');
+    expect(screen.getByRole('button', { name: '应用到简历' })).toBeDisabled();
   });
 });

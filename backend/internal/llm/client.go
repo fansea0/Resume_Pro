@@ -18,10 +18,10 @@ var (
 	ErrInvalidMaxRetries = errors.New("AI_MAX_RETRIES must be an integer from 0 to 10")
 	defaultBaseURL       = "https://api.deepseek.com/v1"
 	defaultModel         = "deepseek-chat"
-	defaultMaxTokens     = 2048
+	defaultMaxTokens     = 4096
 	defaultMaxRetries    = 1
 	maxRetriesLimit      = 10
-	defaultTimeout       = 30 * time.Second
+	defaultTimeout       = 60 * time.Second
 )
 
 type Config struct {

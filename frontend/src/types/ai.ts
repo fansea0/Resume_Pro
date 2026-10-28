@@ -43,11 +43,42 @@ export type OptimizationStage =
   | 'jd_alignment_started'
   | 'jd_alignment_completed'
   | 'optimization_started'
-  | 'optimization_completed';
+  | 'optimization_completed'
+  | 'contract_repair';
 
 export interface OptimizationTarget {
   itemId?: string;
   field: string;
+}
+
+export type SuggestionSeverity = 'high' | 'medium' | 'low';
+
+/** 一条可寻址的改写建议，锚点由服务端 diff 计算得出。 */
+export interface AiSuggestion {
+  id: string;
+  code: string;
+  label?: string;
+  severity: SuggestionSeverity;
+  target: OptimizationTarget;
+  issue: string;
+  anchor: string;
+  replacement: string;
+  rationale: string;
+  /** 原文该字段中的 rune 偏移，纯插入时 start === end。 */
+  start: number;
+  end: number;
+  status: 'applied' | 'rejected';
+  rejectionReason?: string;
+}
+
+export interface DensityMetric {
+  itemId?: string;
+  field: string;
+  chars: number;
+  lines: number;
+  bullets: number;
+  maxBulletChars: number;
+  overLimit: boolean;
 }
 
 export interface OptimizationAnalysis {
@@ -55,24 +86,17 @@ export interface OptimizationAnalysis {
     status: 'applied' | 'skipped';
     matchedKeywords?: string[];
     excludedKeywords?: string[];
+    missingKeywords?: string[];
   };
-  matchedIssues: Array<{
-    code: string;
-    label?: string;
-    target: OptimizationTarget;
-    resolution: string;
-    status: 'fixed';
-  }>;
+  suggestions: AiSuggestion[];
   evidenceRequests: Array<{
     code: 'S1';
     target: OptimizationTarget;
     reason: string;
     exampleWithPlaceholder: string;
   }>;
-  warnings: Array<{
-    code: string;
-    resolution: string;
-  }>;
+  warnings: Array<{ code: string; resolution: string }>;
+  density: DensityMetric[];
 }
 
 export interface OptimizationSuggestion<TRewrite> {

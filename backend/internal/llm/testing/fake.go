@@ -14,11 +14,14 @@ import (
 // FakeChatModel is a deterministic, in-memory model for AI tests.
 // It never performs network I/O.
 type FakeChatModel struct {
-	mu                         sync.Mutex
-	RecordedInputs             [][]*schema.Message
-	RecordedCallOptions        []llm.CallOptions
-	StreamChunks               []string
-	FinalJSON                  string
+	mu                  sync.Mutex
+	RecordedInputs      [][]*schema.Message
+	RecordedCallOptions []llm.CallOptions
+	StreamChunks        []string
+	FinalJSON           string
+	// FinalJSONSequence returns a different response per call. The last entry
+	// is reused once the sequence is exhausted.
+	FinalJSONSequence          []string
 	ThinkingText               string
 	ResponseUsage              *schema.TokenUsage
 	ErrToReturn                error
@@ -95,6 +98,10 @@ func (f *FakeChatModel) recordAndSnapshot(input []*schema.Message, options []mod
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if len(f.FinalJSONSequence) > 0 {
+		f.FinalJSON = f.FinalJSONSequence[0]
+		f.FinalJSONSequence = f.FinalJSONSequence[1:]
+	}
 	f.RecordedInputs = append(f.RecordedInputs, input)
 	f.RecordedCallOptions = append(f.RecordedCallOptions, llm.GetCallOptions(options...))
 	if f.ResponseUsage != nil {
