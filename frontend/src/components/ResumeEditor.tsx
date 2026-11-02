@@ -41,6 +41,8 @@ interface ResumeEditorProps {
   resumeId?: number;
   onBeforeAiRewrite?: (snapshot: ResumeDocument) => Promise<boolean>;
   onChange: (document: ResumeDocument) => void;
+  /** 目标岗位卡片「开始 AI 面试」入口；由 app.tsx 决定配置弹窗与导航。 */
+  onStartInterview?: (targetJob: TargetJob) => void;
 }
 
 function nextId() {
@@ -244,7 +246,7 @@ function mergeRewrite(section: RewriteableResumeSection, rewrite: RewriteContent
   return mergeExperienceRewrite(section, rewrite as ExperienceRewriteContent);
 }
 
-export function ResumeEditor({ document, locateRequest, resumeId, onBeforeAiRewrite, onChange }: ResumeEditorProps) {
+export function ResumeEditor({ document, locateRequest, resumeId, onBeforeAiRewrite, onChange, onStartInterview }: ResumeEditorProps) {
   // 必须是稳定引用：hook 的依赖按引用比较，每次渲染新建会让 effect 反复重放。
   const rootRef = useRef<HTMLFormElement>(null);
   useLocateTarget(locateRequest, rootRef);
@@ -375,6 +377,7 @@ export function ResumeEditor({ document, locateRequest, resumeId, onBeforeAiRewr
       <TargetJobCard
         onChange={(id) => onChange({ ...document, targetJobId: id ?? undefined })}
         onRetry={document.targetJobId === undefined ? undefined : () => loadTargetJob(document.targetJobId!)}
+        onStartInterview={onStartInterview}
         targetJob={targetJob}
         targetJobId={document.targetJobId}
         targetJobStatus={targetJobStatus}

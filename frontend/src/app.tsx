@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getCurrentUser, logout, type AuthUser } from './api/auth';
 import { onUnauthorized } from './api/client';
+import { createInterview, type Interview } from './api/interviews';
 import { AuthScreen } from './components/AuthScreen';
 import { ResumeEditor } from './components/ResumeEditor';
 import { ResumeDrafts } from './components/ResumeDrafts';
@@ -10,19 +11,26 @@ import type { LocateRequest, LocateTarget } from './components/ResumeLocate';
 import { TemplateGallery } from './components/TemplateGallery';
 import { TemplateAdmin } from './components/TemplateAdmin';
 import { TargetJobsPage } from './pages/TargetJobsPage';
+import { InterviewChat, type InterviewChatFinishedResult } from './components/InterviewChat';
+import { InterviewConfigModal } from './components/InterviewConfigModal';
+import { InterviewHistory } from './components/InterviewHistory';
+import { InterviewReview } from './components/InterviewReview';
 import type { ResumeAutosaveHandle } from './hooks/useResumeAutosave';
 import { documentFromStored, type StoredResume } from './api/resumes';
 import { getTemplateStatus } from './api/templates';
 import { templateRegistry } from './templates/registry';
 import { createSampleResumeDocument, type TemplateId } from './types/resume';
+import type { InterviewConfig, Interview as InterviewApiModel } from './api/interviews';
+import type { TargetJob } from './types/targetJob';
 
-type AppView = 'gallery' | 'drafts' | 'editor' | 'admin' | 'targetJobs';
+type AppView = 'gallery' | 'drafts' | 'editor' | 'admin' | 'targetJobs' | 'interviews';
 
 function viewFromHistory(pathname: string, state: unknown): AppView {
   if (pathname === '/target-jobs') return 'targetJobs';
+  if (pathname === '/interviews') return 'interviews';
   if (state && typeof state === 'object' && 'appView' in state) {
     const candidate = (state as { appView?: unknown }).appView;
-    if (candidate === 'gallery' || candidate === 'drafts' || candidate === 'editor' || candidate === 'admin') {
+    if (candidate === 'gallery' || candidate === 'drafts' || candidate === 'editor' || candidate === 'admin' || candidate === 'interviews') {
       return candidate;
     }
   }
@@ -30,7 +38,9 @@ function viewFromHistory(pathname: string, state: unknown): AppView {
 }
 
 function pathForView(view: AppView) {
-  return view === 'targetJobs' ? '/target-jobs' : '/';
+  if (view === 'targetJobs') return '/target-jobs';
+  if (view === 'interviews') return '/interviews';
+  return '/';
 }
 
 export default function App() {
@@ -72,6 +82,11 @@ export default function App() {
   const [disabledTemplateIds, setDisabledTemplateIds] = useState<typeof resume.templateId[]>([]);
   const [targetJobsModalOpen, setTargetJobsModalOpen] = useState(false);
   const [templateReplacementMode, setTemplateReplacementMode] = useState(false);
+  const [interviewStart, setInterviewStart] = useState<TargetJob | null>(null);
+  const [interviewCreating, setInterviewCreating] = useState(false);
+  const [interviewCreateError, setInterviewCreateError] = useState('');
+  const [activeInterview, setActiveInterview] = useState<InterviewApiModel | null>(null);
+  const [interviewMode, setInterviewMode] = useState<'chat' | 'review'>('chat');
   // 定位请求存在 state 里：无关重渲染拿到的是同一个对象引用，useLocateTarget 的 effect 不会重放。
   // 若改成每次渲染新建对象，用户每敲一个字编辑器都会被拽回被定位的区块。
   const [locateRequest, setLocateRequest] = useState<LocateRequest>();
@@ -110,6 +125,10 @@ export default function App() {
     setSelectedResumeId(null);
     setDraftReadError(false);
     setTargetJobsModalOpen(false);
+    setInterviewStart(null);
+    setInterviewCreating(false);
+    setInterviewCreateError('');
+    setActiveInterview(null);
     // 定位请求必须跟租户状态一起清：编辑器带 key 重新挂载时 effect 会跑一次，
     // 残留请求会让下一个会话一进编辑器就被拽走并闪一次高亮。
     setLocateRequest(undefined);
@@ -230,6 +249,46 @@ export default function App() {
     return <main className="app-shell"><p aria-live="polite">正在验证登录状态…</p></main>;
   }
 
+  const handleStartInterview = (targetJob: TargetJob) => {
+    if (selectedResumeId == null) {
+      window.alert('请先保存简历，再开始 AI 面试。');
+      return;
+    }
+    setInterviewCreateError('');
+    setInterviewStart(targetJob);
+  };
+
+  const handleInterviewConfirm = async (config: InterviewConfig) => {
+    if (!interviewStart || selectedResumeId == null || interviewCreating) return;
+    const sessionAtConfirm = sessionEpoch.current;
+    setInterviewCreating(true);
+    setInterviewCreateError('');
+    try {
+      const result = await createInterview(interviewStart.id, selectedResumeId, config);
+      if (sessionEpoch.current !== sessionAtConfirm) return;
+      setActiveInterview(result.interview);
+      setInterviewMode('chat');
+      setInterviewStart(null);
+      navigateToView('interviews');
+    } catch (error) {
+      if (sessionEpoch.current !== sessionAtConfirm) return;
+      setInterviewCreateError(error instanceof Error && error.name === 'ApiError' ? error.message : '创建面试失败，请稍后重试。');
+    } finally {
+      setInterviewCreating(false);
+    }
+  };
+
+  const handleInterviewFinished = (result: InterviewChatFinishedResult) => {
+    setActiveInterview((current) => current ? {
+      ...current,
+      status: 'completed',
+      overallGrade: result.overallGrade,
+      overallReview: result.overallReview ?? null,
+      completedAt: new Date().toISOString(),
+    } : current);
+    setInterviewMode('review');
+  };
+
   if (authState === 'unauthenticated') {
     return <main className="app-shell"><AuthScreen onAuthenticated={handleAuthenticated} /></main>;
   }
@@ -243,6 +302,7 @@ export default function App() {
             <button aria-current={view === 'gallery' ? 'page' : undefined} onClick={() => { setDraftReadError(false); navigateToView('gallery'); }} type="button">模板主页</button>
             <button aria-current={view === 'drafts' ? 'page' : undefined} onClick={() => { setDraftReadError(false); navigateToView('drafts'); }} type="button">我的草稿</button>
             <button aria-current={view === 'targetJobs' ? 'page' : undefined} onClick={() => { setDraftReadError(false); navigateToView('targetJobs'); }} type="button">目标岗位</button>
+            <button aria-current={view === 'interviews' ? 'page' : undefined} onClick={() => { setDraftReadError(false); navigateToView('interviews'); }} type="button">AI 面试</button>
             {user?.isAdmin && <button aria-current={view === 'admin' ? 'page' : undefined} onClick={() => { setDraftReadError(false); navigateToView('admin'); }} type="button">后台管理</button>}
           </nav>
           <div className="account-menu"><span className="account-menu__email">{user?.email}</span><button onClick={handleLogout} type="button">退出登录</button></div>
@@ -252,6 +312,16 @@ export default function App() {
         <TemplateGallery currentTemplateId={resume.templateId} disabledTemplateIds={disabledTemplateIds} onCancelReplacement={() => { setTemplateReplacementMode(false); navigateToView('editor'); }} onSelect={selectTemplate} replacementMode={templateReplacementMode} />
       ) : view === 'targetJobs' ? (
         <TargetJobsPage onModalOpenChange={setTargetJobsModalOpen} />
+      ) : view === 'interviews' ? (
+        activeInterview ? (
+          interviewMode === 'chat' ? (
+            <InterviewChat interview={activeInterview} onExit={() => setActiveInterview(null)} onFinished={handleInterviewFinished} />
+          ) : (
+            <InterviewReview interview={activeInterview} onBack={() => setActiveInterview(null)} />
+          )
+        ) : (
+          <InterviewHistory onOpen={(interview) => { setActiveInterview(interview); setInterviewMode(interview.status === 'active' ? 'chat' : 'review'); }} onStart={() => navigateToView('targetJobs')} />
+        )
       ) : view === 'drafts' ? (
         <>
           {draftReadError && <p className="resume-library__error" role="alert">无法读取该简历内容。</p>}
@@ -271,10 +341,19 @@ export default function App() {
               <span>当前模板：{currentTemplate?.name ?? resume.templateId}</span>
             </div>
             <ResumeLibrary autosaveHandleRef={resumeAutosaveRef} document={resume} selectedId={selectedResumeId} onSelectedIdChange={changeSelectedResumeForSession} onChange={changeResumeForSession} onRestoreSample={() => changeResumeForSession(createSampleResumeDocument())} onSelect={changeResumeForSession} previewRef={previewRef} />
-            <ResumeEditor document={resume} locateRequest={locateRequest} resumeId={selectedResumeId ?? undefined} onBeforeAiRewrite={(snapshot) => resumeAutosaveRef.current?.flush(snapshot) ?? Promise.resolve(false)} onChange={changeResumeForSession} />
+            <ResumeEditor document={resume} locateRequest={locateRequest} resumeId={selectedResumeId ?? undefined} onBeforeAiRewrite={(snapshot) => resumeAutosaveRef.current?.flush(snapshot) ?? Promise.resolve(false)} onChange={changeResumeForSession} onStartInterview={handleStartInterview} />
           </aside>
           <ResumePreview document={resume} onLocate={handleLocate} ref={previewRef} />
         </div>
+      )}
+      {interviewStart && (
+        <InterviewConfigModal
+          error={interviewCreateError}
+          onCancel={() => { if (!interviewCreating) setInterviewStart(null); }}
+          onConfirm={(config) => void handleInterviewConfirm(config)}
+          submitting={interviewCreating}
+          targetJobName={`${interviewStart.company.trim() || '未指定公司'} · ${interviewStart.position.trim() || '未指定职位'}`}
+        />
       )}
     </main>
   );

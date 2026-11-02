@@ -54,6 +54,23 @@ describe('TargetJobCard', () => {
     expect(screen.queryByRole('dialog', { name: '选择目标岗位' })).not.toBeInTheDocument();
   });
 
+  it('offers the AI interview entry for the bound job and reports the target job', () => {
+    const onStartInterview = vi.fn();
+    render(<TargetJobCard onChange={vi.fn()} onStartInterview={onStartInterview} targetJob={targetJob} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '开始 AI 面试' }));
+    expect(onStartInterview).toHaveBeenCalledWith(targetJob);
+  });
+
+  it('hides the AI interview entry without a bound job or without a handler', () => {
+    render(<TargetJobCard onChange={vi.fn()} targetJob={targetJob} />);
+    expect(screen.queryByRole('button', { name: '开始 AI 面试' })).not.toBeInTheDocument();
+
+    cleanup();
+    render(<TargetJobCard onChange={vi.fn()} onStartInterview={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: '开始 AI 面试' })).not.toBeInTheDocument();
+  });
+
   it('shows the current binding and expands the full JD preview', () => {
     render(<TargetJobCard onChange={vi.fn()} targetJob={targetJob} />);
 

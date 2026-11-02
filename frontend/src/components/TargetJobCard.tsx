@@ -9,6 +9,8 @@ export interface TargetJobCardProps {
   targetJobStatus?: 'loading' | 'ready' | 'error';
   onChange: (targetJobId: number | null) => void;
   onRetry?: () => void;
+  /** 绑定目标岗位后展示「开始 AI 面试」入口；由宿主决定简历与导航上下文。 */
+  onStartInterview?: (targetJob: TargetJob) => void;
 }
 
 interface ConfirmationDialogProps {
@@ -111,7 +113,7 @@ function collapsedRequirements(requirements: string) {
   return normalized.length > 80 ? `${normalized.slice(0, 80)}…` : normalized;
 }
 
-export function TargetJobCard({ targetJob, targetJobId, targetJobStatus, onChange, onRetry }: TargetJobCardProps) {
+export function TargetJobCard({ targetJob, targetJobId, targetJobStatus, onChange, onRetry, onStartInterview }: TargetJobCardProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [confirmation, setConfirmation] = useState<'change' | 'clear' | null>(null);
@@ -174,6 +176,9 @@ export function TargetJobCard({ targetJob, targetJobId, targetJobStatus, onChang
             {detailStatus === 'loading' ? <p aria-live="polite" className="target-jobs__status" role="status">正在加载目标岗位详情…</p> : null}
             {detailStatus === 'error' ? <p className="target-jobs__error" role="alert">无法加载目标岗位详情，当前绑定仍会保留。</p> : null}
           </div>
+          {onStartInterview && targetJob ? (
+            <button className="target-job-card__interview" onClick={() => onStartInterview(targetJob)} type="button">开始 AI 面试</button>
+          ) : null}
           <button className="target-job-card__clear" onClick={() => setConfirmation('clear')} type="button">清除目标岗位绑定</button>
         </div>
       ) : (
