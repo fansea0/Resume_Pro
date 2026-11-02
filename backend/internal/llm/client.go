@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudwego/eino-ext/components/model/agenticopenai"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -110,6 +111,20 @@ func NewChatModel(cfg Config) (model.ChatModel, error) {
 		return nil, err
 	}
 	return &structuredOutputChatModel{ChatModel: chatModel, reasoningEffort: cfg.ReasoningEffort}, nil
+}
+
+// NewResponsesModel creates an agenticopenai Responses API model from config.
+// The returned model satisfies model.AgenticModel (Generate/Stream over
+// *schema.AgenticMessage). Compile-time wiring only for now; callers route
+// interview question generation through it.
+func NewResponsesModel(cfg Config) (model.AgenticModel, error) {
+	return agenticopenai.NewResponsesModel(context.Background(), &agenticopenai.ResponsesConfig{
+		APIKey:    cfg.APIKey,
+		BaseURL:   cfg.BaseURL,
+		Model:     cfg.Model,
+		MaxTokens: &cfg.MaxTokens,
+		Timeout:   &cfg.Timeout,
+	})
 }
 
 type structuredOutputChatModel struct {
