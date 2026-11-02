@@ -145,9 +145,9 @@ CREATE TABLE interview_questions (
 POST   /api/interviews                   创建面试（生题 + 落库），body 可带面试配置，返回面试 + 第一题
 GET    /api/interviews                   面试列表（状态、总评摘要）
 GET    /api/interviews/:id               详情（状态、配置快照、进度）
-POST   /api/interviews/:id/answer        { answer } → { grade, followUp, nextQuestion | finished }
+POST   /api/interviews/:id/answer        { answer, skip? } → { grade, followUp?, nextQuestion? | finished }
 GET    /api/interviews/:id/questions     全部题目（追问树、答案、评分）——回看
-POST   /api/interviews/:id/abort         放弃面试（保留已答数据）
+POST   /api/interviews/:id/abort         终止面试（保留已答数据，不生成总评）
 ```
 
 创建请求体（可选字段，未传用全局默认值）：
@@ -169,9 +169,70 @@ POST   /api/interviews/:id/abort         放弃面试（保留已答数据）
 
 - 全部走 `requireAuthentication`，按 tenant 隔离（复用现有模型）。
 - 创建面试时若该 tenant 已有 `status=active` 面试 → 409，提示先结束当前面试。
-- `answer` 防重：同一面试同一时刻只允许一个回答请求（Redis `SETNX` 锁 or 状态校验），重复提交返回 409。
 - 创建接口幂等：前端禁点 + 后端校验（可选：幂等键）。
 - 简历输入：`resumes.content` 是结构化 JSON，先提取纯文本（复用 optimization 的 section 提取逻辑）。
+
+### 用户跳过问题 / 终止面试的操作
+
+**跳过当前题（前端「跳过此题」按钮）**：
+
+- 调 `POST /api/interviews/:id/answer`，body 传 `{ "skip": true }`（不传 answer，前端需二次确认）。
+- 服务端**不调 LLM**（省一次调用），直接把当前主问题 `grade` 记为 `C`（最低档）、`user_answer` 记为空，`index+1` 进入下一题；若已是最后一题则走总评。
+- 不消耗追问预算；跳过 = 最差作答，总评算法分母 N 不变，无需特判。
+- 回看时：`grade=C` 且 `user_answer` 为空 ⇒ 前端展示「已跳过」。
+- 响应结构与「答完跳题」一致：`{ grade: "C", skip: true, nextQuestion | finished }`。
+
+**终止面试（`POST /api/interviews/:id/abort`）**：
+
+- 校验面试存在、属于该 tenant、`status=active`；已结束的返回 409。
+- 置 `status=aborted`、`completed_at=now`；删除 Redis checkpoint（`CheckPointDeleter.Delete`）。
+- 保留已答数据（问题表全部保留），可回看；**不生成总评**（未答完，总评无意义）。
+- 之后该面试不能再 resume/answer（status 非 active → 409）。
+
+### POST /api/interviews/:id/answer 完整实现
+
+```
+鉴权 → 校验面试存在、属于该 tenant、status=active（否则 404/409）
+→ 并发防护：Redis SETNX 锁（key = interview:id, TTL 60s），拿不到锁 → 409「面试正在处理中」；完成后释放
+→ 读 checkpoint（checkPointID = 面试 id）：
+    不存在 / 已过期 → 410「会话已过期，请重新开始面试」（已答数据仍在 SQLite 可回看）
+→ 分支：
+  A. skip=true：
+      不跑图。主问题 grade='C'、user_answer=''；Index+1
+      → Index >= N：跑总评 → status=completed → 删 checkpoint → 返回 finished
+      → 否则：读下一题原文 → 返回 nextQuestion（前端渲染为新 assistant 消息）
+  B. answer 非空：
+      graph.ResumeWithData(ctx, 面试id, answer) 恢复图运行
+      → 提问节点从 GetResumeContext 取用户回答，转评分节点
+      → 评分节点（LLM）输出 { grade, followUp, userSkip }
+      → 追问判定（规则，任一条件满足则「不追问」）：
+          ① followUp == ""（AI 判定无需追问）
+          ② userSkip == true（回答显示不会/没补充）
+          ③ grade >= A（答得够好）
+          ④ FollowUpRound >= PerQuestionFollowUpLimit（单问追问次数到顶）
+          ⑤ FollowUpBudgetLeft <= 0（全局预算用尽）
+      → 不追问：
+          clamp grade（追问链场景取 max(父等级, 本次)）；回写主问题行 grade + user_answer
+          Index+1，FollowUpRound 归零
+          → Index >= N：跑总评 → completed → 删 checkpoint → 返回 finished
+          → 否则：读下一题原文 → 返回 nextQuestion
+      → 追问（以上 5 条都不满足）：
+          FollowUpBudgetLeft--；FollowUpRound++
+          插入追问行（parent_id=主问题 id，question=followUp 原文，grade 暂空）
+          回写主问题行 grade（clamp 后，父等级先行更新）
+          返回 followUp 原文（前端渲染为折叠在父题下的新 assistant 消息，继续等回答）
+→ 统一响应：
+  { "grade": "B", "followUp": "追问原文", "finished": false }                // 追问
+  { "grade": "B", "followUp": "", "nextQuestion": { "id":13, "text":"…", "label":0 }, "finished": false }  // 跳题
+  { "finished": true, "overallGrade": "B+", "overallReview": "…" }           // 结束
+```
+
+要点：
+
+- **「追问字段 AI 输出为空 → index+1 跳题目」**由判定条件 ① 保证：`followUp == ""` 直接走不追问分支跳下一题。
+- **落库时机**：评分/追问判定节点内部直接依赖 repo 写 SQLite（题目本来就在库里，节点要读题、回写答案与等级）；图节点通过构造函数注入 repository，保持图与存储解耦。
+- **并发锁 TTL 60s**：正常一次 answer（LLM 评分）秒级完成；超长锁自动过期避免死锁，过期后重复提交可能绕过防重，可接受（本地单用户场景）。
+- **异常**：LLM 调用失败 → 图运行报错 → 返回 502，checkpoint 不写（中断前的 state 未推进），用户可原样重试；前端提示「评分失败，请重试」。
 
 ## 模型输出契约（评分节点）
 
@@ -304,12 +365,14 @@ const (
 ## 测试
 
 - 后端 state 机：interrupt → resume 恢复位置正确；等级 clamp 只升不降；追问预算扣减与全局禁止；userSkip 跳过追问；index 推进与结束判定。
+- 后端追问判定：followUp 为空 / userSkip / grade>=A / 单问到顶 / 预算用尽 → 均跳下一题；追问插入父题下。
+- 后端跳过与终止：skip 不调 LLM、grade=C、index+1；abort 置状态、删 checkpoint、保留已答、不生成总评；非 active 面试 answer/abort 返回 409。
 - 后端总评算法：中位数奇数/偶数取档、S 严格过半、A/B+ 至少一半、3S9B → B、5S7A → A、6S6A → A、8S4A → S。
-- 后端 checkpoint：Redis store 的 Get/Set/Delete；TTL；checkpoint 丢失报「会话已过期」。
+- 后端 checkpoint：Redis store 的 Get/Set/Delete；TTL；checkpoint 丢失报「会话已过期」；并发锁 SETNX 防重。
 - 后端契约：评分输出 schema 校验 + 修复重试；grade 枚举外值拒绝。
 - 后端并发：同一面试重复 answer 被拒；active 面试存在时创建新面试 409。
 - 后端存储：问题表 batch 插入顺序 = id 顺序；追问树组装；config_snapshot 快照与默认值合并。
-- 前端：配置页（默认值预填、可修改）→ 面试页流程；防抖；回看页；历史列表。
+- 前端：配置页（默认值预填、可修改）→ 面试页流程；防抖；跳过/终止按钮与二次确认；回看页；历史列表。
 - 回归：现有 AI 功能（章节润色、诊断）不受影响。
 
 ## 分阶段计划（待批准后细化）
