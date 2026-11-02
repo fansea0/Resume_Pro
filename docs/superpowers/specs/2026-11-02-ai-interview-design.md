@@ -83,10 +83,10 @@ START
     再 Interrupt(问题消息) 挂起等用户回答
   ← ResumeWithData(用户回答)
   → 评分节点（LLM）：(问题 + 标准答案 + 必答点/加分点 + 用户回答 + 追问历史)
-      输出 { grade, followUp, userSkip }
+      输出 { grade, followUp }
   → 追问判定（规则节点，非 LLM）：
       若 followUp ≠ "" 且 FollowUpRound < 单问上限 且 FollowUpBudgetLeft > 0
-        且 grade < A 且 !userSkip
+        且 grade < A
         → FollowUpBudgetLeft--，FollowUpRound++
         → 追问写入问题表（parent_id = 主问题 id，follow_up_round = FollowUpRound）
         → 回到提问节点：输出追问原文（assistant 消息），Interrupt 挂起等回答
@@ -100,7 +100,7 @@ START
 要点：
 
 - **等级只升不降**：追问评分若低于父等级，`finalGrade = max(parentGrade, newGrade)`，并更新父问题行与该追问行。
-- **「不会 / 没补充」**：评分节点输出 `userSkip=true`（模型识别），规则兜底（回答 rune 数 < 阈值也视为 skip）。
+- **「不会 / 没补充」**：由前端识别（跳过按钮），以 `skip=true` 传参；服务端不调 LLM，grade=C、index+1，见「用户跳过问题」节。
 - **结束语义**：`status=completed` 落库，删除 Redis checkpoint；`abort` 则 `status=aborted`，保留已答数据。
 - **每个问题独立 msg**：新问题的原文直接作为一条 assistant 消息发出（`Interrupt` 的 info 携带），前端按消息渲染，追问折叠在父题下；标准答案答完当前题后折叠可看。
 
@@ -185,7 +185,7 @@ POST   /api/interviews/:id/abort         终止面试（保留已答数据，不
 
 ### 用户跳过问题 / 终止面试的操作
 
-**跳过当前题（前端「跳过此题」按钮）**：
+**跳过当前题（前端「跳过 / 不会 / 没补充」按钮）**：
 
 - 调 `POST /api/interviews/:id/answer`，body 传 `{ "skip": true }`（不传 answer，前端需二次确认）。
 - 服务端**不调 LLM**（省一次调用），直接把当前主问题 `grade` 记为 `C`（最低档）、`user_answer` 记为空，`index+1` 进入下一题；若已是最后一题则走总评。
@@ -215,19 +215,18 @@ POST   /api/interviews/:id/abort         终止面试（保留已答数据，不
   B. answer 非空：
       graph.ResumeWithData(ctx, 面试id, answer) 恢复图运行
       → 提问节点从 GetResumeContext 取用户回答，转评分节点
-      → 评分节点（LLM）输出 { grade, followUp, userSkip }
+      → 评分节点（LLM）输出 { grade, followUp }
       → 追问判定（规则，任一条件满足则「不追问」）：
           ① followUp == ""（AI 判定无需追问）
-          ② userSkip == true（回答显示不会/没补充）
-          ③ grade >= A（答得够好）
-          ④ FollowUpRound >= PerQuestionFollowUpLimit（单问追问次数到顶）
-          ⑤ FollowUpBudgetLeft <= 0（全局预算用尽）
+          ② grade >= A（答得够好）
+          ③ FollowUpRound >= PerQuestionFollowUpLimit（单问追问次数到顶）
+          ④ FollowUpBudgetLeft <= 0（全局预算用尽）
       → 不追问：
           clamp grade（追问链场景取 max(父等级, 本次)）；回写主问题行 grade + user_answer
           Index+1，FollowUpRound 归零
           → Index >= N：跑总评 → completed → 删 checkpoint → 返回 finished
           → 否则：读下一题原文 → 返回 nextQuestion
-      → 追问（以上 5 条都不满足）：
+      → 追问（以上 4 条都不满足）：
           FollowUpBudgetLeft--；FollowUpRound++
           插入追问行（parent_id=主问题 id，question=followUp 原文，grade 暂空）
           回写主问题行 grade（clamp 后，父等级先行更新）
@@ -250,15 +249,14 @@ POST   /api/interviews/:id/abort         终止面试（保留已答数据，不
 ```json
 {
   "grade": "B+",
-  "followUp": "你说的「缓存穿透」具体是怎么解决的？追问：有没有考虑布隆过滤器？",
-  "userSkip": false
+  "followUp": "你说的「缓存穿透」具体是怎么解决的？追问：有没有考虑布隆过滤器？"
 }
 ```
 
 - `grade` 枚举：`C B- B B+ A S`；不在枚举内 → 契约修复重试一次。
 - `followUp` 空串 = 不需要追问。
-- `userSkip` = 用户回答显示不会/没有补充 → 跳过追问直接进入下一题。
 - `grade` 由代码 clamp 保证 >= 父等级。
+- **无 `userSkip`**：用户「不会 / 没补充」由前端识别（按钮）并以 `skip=true` 传参，不依赖模型判断，避免误判。
 
 ### 评分节点 LLM 提示词（简写）
 
@@ -279,28 +277,28 @@ POST   /api/interviews/:id/abort         终止面试（保留已答数据，不
 - 等级只输出一个：C / B- / B / B+ / A / S（从差到优）。
 - 回答完整到位（约 A 及以上）时 followUp 必须为空串，不再追问。
 - 回答模糊、偏移、漏必答点，或需要深挖时，生成一个 followUp 追问问题。
-- 回答明显是「不会 / 没有补充」时，userSkip=true，followUp 为空。
 
 只输出 JSON（不要 markdown 代码块）：
-{"grade":"B+","followUp":"追问问题原文或空串","userSkip":false}
+{"grade":"B+","followUp":"追问问题原文或空串"}
 ```
 
-模板字段说明：`Question` / `StandardAnswer` / `MustPoints` / `BonusPoints` 来自当前行；`FollowUpChain` 是追问链上下文（见下节）；`LabelName` 是枚举中文名（八股/算法/项目）。
+模板字段说明：`Question` / `StandardAnswer` / `MustPoints` / `BonusPoints` 来自当前行；`FollowUpChain` 是追问链上下文（见下节）；`LabelName` 是枚举中文名（八股/算法/项目）。「不会 / 没补充」不进模型判定，由前端按钮以 `skip=true` 处理。
 
-### 追问的对话上下文如何存
+### 每个问题独立会话（对话上下文）
 
-**追问链上下文不存 Redis state，也不存图内存——从 SQLite 重建**：
+**「会话」= 评分节点每次调用时从 SQLite 重建的 messages 数组，不持久化任何会话 id，也不存历史消息**：
 
-- 问题表本身就是「对话真源」：每个追问是一行（`parent_id` 挂主问题、`follow_up_round` 记轮次），`question` 存追问原文、`user_answer` 存用户对追问的回答。
-- 评分节点每次运行时，按 `interview_id` 取该主问题整条链（`parent_id IS NULL` 的主问题 + 各轮追问行，按 id 升序），拼成 `FollowUpChain` 文本进 prompt：
+- 本项目 LLM 走 eino-ext openai 的 ChatModel 接口（`Generate(ctx, []*schema.Message)`），仅支持 chat completions，**无 Responses API / `previous_response_id`**。若用「response id 续聊」需绕过 Eino 直连 HTTP，破坏核心链路，不做。
+- 等价方案：ChatModel 无状态，每次调用传完整 messages 即构成独立会话。评分节点构造：
 
 ```
-追问链：
-- 追问1：你说的「缓存穿透」具体怎么解决？→ 回答1：加布隆过滤器...
-- 追问2：布隆过滤器误判怎么办？→ 回答2：...
+[system] 你是资深 Go 后端面试官…（评分规则）
+[user]   题目 + 标准答案 + 必答点 + 加分点 + 标签
+[user]   追问链（追问1 → 回答1 → 追问2 → 回答2 …，从 SQLite 按 parent_id 重建）
+[user]   本次回答
 ```
 
-- 好处：state 保持最小（只有进度指针）；checkpoint 丢失后追问链仍可从 SQLite 完整重建；回看接口（`/questions`）本来就要按 `parent_id` 组树，同一份数据两用。
+- 每个主问题（含追问链）是一个独立会话，模型只看到当前题上下文，不跨题；无需存 response id、无需维护历史列表——历史本来就是问题表（`question` + `user_answer` 两列），调用时重建。
 - 前端聊天流：新问题/追问原文由服务端按 assistant 消息返回（前文），用户回答由前端本地追加；刷新/回看时用 `/questions` 从库重建整个对话视图。
 
 ## 评分与总评算法
@@ -397,7 +395,7 @@ const (
 
 ## 隐藏考虑点（已纳入设计）
 
-1. **「不会 / 没补充」识别**：模型 `userSkip` 标志 + 回答过短规则兜底，不依赖纯规则硬判。
+1. **「不会 / 没补充」识别**：由前端按钮以 `skip=true` 显式传参，不依赖模型判断（避免 AI 误判用户意图）。
 2. **并发/重复提交**：Redis 锁 or 状态校验防重；前端防抖。
 3. **Redis 不可用**：面试功能 503 优雅降级，已答数据在 SQLite 不丢，可回看；checkpoint 丢失 → 明确错误「会话已过期」。
 4. **checkpoint TTL**：Redis key 设 7 天；超期视为过期面试，无法续跑但可回看。
@@ -418,8 +416,8 @@ const (
 
 ## 测试
 
-- 后端 state 机：interrupt → resume 恢复位置正确；等级 clamp 只升不降；追问预算扣减与全局禁止；userSkip 跳过追问；index 推进与结束判定。
-- 后端追问判定：followUp 为空 / userSkip / grade>=A / 单问到顶 / 预算用尽 → 均跳下一题；追问插入父题下。
+- 后端 state 机：interrupt → resume 恢复位置正确；等级 clamp 只升不降；追问预算扣减与全局禁止；index 推进与结束判定。
+- 后端追问判定：followUp 为空 / grade>=A / 单问到顶 / 预算用尽 → 均跳下一题；追问插入父题下。
 - 后端跳过与终止：skip 不调 LLM、grade=C、index+1；abort 置状态、删 checkpoint、保留已答、不生成总评；非 active 面试 answer/abort 返回 409。
 - 后端总评算法：中位数奇数/偶数取档、S 严格过半、A/B+ 至少一半、3S9B → B、5S7A → A、6S6A → A、8S4A → S。
 - 后端 checkpoint：Redis store 的 Get/Set/Delete；TTL；checkpoint 丢失报「会话已过期」；并发锁 SETNX 防重。
