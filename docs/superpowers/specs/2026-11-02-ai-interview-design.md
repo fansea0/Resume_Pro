@@ -24,7 +24,7 @@
 10. **A 及以上不追问**；用户回答「不会 / 没有补充」时跳过追问（模型输出 `userSkip` 标志 + 回答过短规则兜底）。
 11. **评分等级 6 级**：`C B- B B+ A S`（去掉 C-）。
 12. **总评分算法**：中位数定基础档 + 比例门槛定高档，只输出等级档位，无 0-100 分数（见「评分与总评算法」节）。
-13. **面试配置**：题目总数、追问预算、单问上限、各标签比例都有全局默认值（代码常量）；用户可在面试开始前修改；创建面试时把生效配置快照进 `config_snapshot` 落库。
+13. **面试配置**：题目总数、追问预算、单问上限、各标签数量都有全局默认值（代码常量）；用户可在面试开始前修改；创建面试时把生效配置快照进 `config_snapshot` 落库。配置只在快照存一份，运行时进度（当前 index、剩余预算、追问轮次）放 Eino state（Redis checkpoint），不冗余进 SQLite。
 14. **每道题一个独立消息**（前端聊天式展示，追问折叠在父题下）。
 15. 先不接 TTS。
 
@@ -41,7 +41,17 @@ Eino v0.9.15（已在 go.mod）支持跨请求的图运行恢复：
 - `ResumeWithData(ctx, checkPointID, data)`：带数据恢复，被中断节点通过 `GetResumeContext[T]` 取到恢复数据（本场景即用户回答）。
 - `GetInterruptState[T](ctx)`：节点判断自己是否处于恢复流。
 
-因此「提问 → 等用户回答 → 评分 → 追问/下一题」的跨请求状态机 = 一个图，通过 interrupt/resume 驱动，checkpoint 存 Redis（redigo），序列化用 JSON。问题数据放 SQLite，state 只保存 `{InterviewID, Index, FollowUpRound, Status}` 最小进度，提问节点按 Index 读库取题。
+因此「提问 → 等用户回答 → 评分 → 追问/下一题」的跨请求状态机 = 一个图，通过 interrupt/resume 驱动，checkpoint 存 Redis（redigo），序列化用 JSON。问题数据放 SQLite，state 只保存最小进度，提问节点按 Index 读库取题：
+
+```go
+type InterviewState struct {
+    InterviewID        int64 // 面试 id（= checkpoint id）
+    Index              int   // 当前主问题索引（0-based，指向 SQLite 主问题行）
+    FollowUpRound      int   // 当前主问题已追问轮次
+    FollowUpBudgetLeft int   // 剩余追问预算（每用一次扣 1，0 则全局禁止）
+    Status             string // active / finished
+}
+```
 
 **redigo**：`github.com/gomodule/redigo` 新增依赖，`REDIS_ADDR` 环境变量配置，`REDIS_PASSWORD`（可选）。本地无 Redis 时面试功能返回 503，不影响其它功能。
 
@@ -58,19 +68,22 @@ Eino v0.9.15（已在 go.mod）支持跨请求的图运行恢复：
 
 ```
 START
-  → 提问节点：从 SQLite 按 Index 取题，Interrupt(问题内容)        ← 等用户
+  → 提问节点：从 SQLite 按 Index 取题，把问题原文作为 assistant 消息输出，
+    再 Interrupt(问题消息) 挂起等用户回答
   ← ResumeWithData(用户回答)
   → 评分节点（LLM）：(问题 + 标准答案 + 必答点/加分点 + 用户回答 + 追问历史)
       输出 { grade, followUp, userSkip }
   → 追问判定（规则节点，非 LLM）：
-      若 followUp ≠ "" 且 单问轮次 < limit 且 全局预算 > 0 且 grade < A 且 !userSkip
-        → 追问写入问题表（parent_id = 主问题 id，follow_up_round = round+1）
-        → 回到提问节点，Interrupt(追问问题)                     ← 等用户
+      若 followUp ≠ "" 且 FollowUpRound < 单问上限 且 FollowUpBudgetLeft > 0
+        且 grade < A 且 !userSkip
+        → FollowUpBudgetLeft--，FollowUpRound++
+        → 追问写入问题表（parent_id = 主问题 id，follow_up_round = FollowUpRound）
+        → 回到提问节点：输出追问原文（assistant 消息），Interrupt 挂起等回答
       否则
         → 主问题等级 = 追问链最终等级（只升不降，代码 clamp）
-        → Index+1
-        → 若 Index > N：总评节点（LLM 生成 overall_review，服务端按算法定 overall_grade）→ 落库 → 结束
-        → 否则回到提问节点，Interrupt(下一题)
+        → Index+1，FollowUpRound 归零
+        → 若 Index >= N：总评节点（LLM 生成 overall_review，服务端按算法定 overall_grade）→ 落库 → 结束
+        → 否则回到提问节点：输出下一题原文（assistant 消息），Interrupt 挂起等回答
 ```
 
 要点：
@@ -78,7 +91,18 @@ START
 - **等级只升不降**：追问评分若低于父等级，`finalGrade = max(parentGrade, newGrade)`，并更新父问题行与该追问行。
 - **「不会 / 没补充」**：评分节点输出 `userSkip=true`（模型识别），规则兜底（回答 rune 数 < 阈值也视为 skip）。
 - **结束语义**：`status=completed` 落库，删除 Redis checkpoint；`abort` 则 `status=aborted`，保留已答数据。
-- **每个问题独立 msg**：前端按主问题组织消息块，追问折叠展示；标准答案答完当前题后折叠可看。
+- **每个问题独立 msg**：新问题的原文直接作为一条 assistant 消息发出（`Interrupt` 的 info 携带），前端按消息渲染，追问折叠在父题下；标准答案答完当前题后折叠可看。
+
+### 如何等待用户回答并恢复面试
+
+核心：一次面试 = 同一个 Eino graph 的多次运行，提问节点每次 `Interrupt` 都会保存 checkpoint，下一次回答用 `ResumeWithData` 恢复。详细时序：
+
+1. **创建面试**：生题图跑完落库 → 首次运行面试图 → 提问节点输出第 1 题（assistant 消息）→ `Interrupt` → 引擎把执行位置 + `InterviewState` 序列化写入 Redis（key = 面试 id）→ 图运行返回，HTTP 层把第 1 题 + 等待状态返回给前端。
+2. **等待**：前端把问题渲染为一条 assistant 消息，显示输入框等用户回答。期间服务端无任何常驻 goroutine，面试「挂起」在 Redis 的 checkpoint 里，随时可恢复（可跨分钟/小时/天）。
+3. **恢复**：用户提交回答 → `POST /api/interviews/:id/answer` → 服务端调用 `graph.ResumeWithData(ctx, checkPointID=面试id, data=用户回答)` → 引擎从 Redis 读 checkpoint，从上次中断的提问节点之后继续：评分节点经 `GetResumeContext` 拿到用户回答 → 评分 → 追问判定 → 下一轮（新问题或追问再次 `Interrupt`，或结束）。
+4. **并发防护**：同一面试同一时刻只允许一个活跃回答请求。`answer` 进入时校验 `status=active` 且无进行中请求（Redis 锁 or 状态位），重复提交返回 409。
+5. **恢复失败**：checkpoint 不存在或已过期（Redis TTL 7 天）→ 返回明确错误「会话已过期，请重新开始面试」，已答数据仍在 SQLite 可回看。
+6. **面试结束**：总评节点跑完 → 删除 Redis checkpoint（`CheckPointDeleter.Delete`）→ `status=completed`。
 
 ## 数据契约
 
@@ -88,13 +112,10 @@ CREATE TABLE interviews (
   tenant_id INTEGER NOT NULL REFERENCES tenants(id),
   target_job_id INTEGER NOT NULL REFERENCES target_jobs(id),
   resume_id INTEGER NOT NULL REFERENCES resumes(id),
-  config_snapshot TEXT NOT NULL,          -- JSON: 生效配置快照（题目数/各标签比例/追问预算/单问上限）
+  config_snapshot TEXT NOT NULL,          -- JSON: 生效配置快照（题目数/各标签数量/追问预算/单问上限）
   status TEXT NOT NULL,                   -- active / completed / aborted
   overall_grade TEXT,                     -- 总评等级（C/B-/B/B+/A/S）
   overall_review TEXT,                    -- 整体评价文本
-  question_count INTEGER NOT NULL,
-  follow_up_budget INTEGER NOT NULL,      -- 追问总预算（快照），默认 N/2，每用一次扣 1
-  per_question_follow_up_limit INTEGER NOT NULL DEFAULT 1,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
   completed_at DATETIME
@@ -104,7 +125,7 @@ CREATE TABLE interview_questions (
   interview_id INTEGER NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
   parent_id INTEGER REFERENCES interview_questions(id),  -- NULL = 主问题；追问挂父
   follow_up_round INTEGER NOT NULL DEFAULT 0,            -- 追问轮次，0 = 主问题
-  label TEXT NOT NULL,                    -- 八股 / 算法 / 项目
+  label INTEGER NOT NULL,                 -- 枚举: 0=八股 1=算法 2=项目（Go 代码里定义 QuestionLabel 枚举）
   question TEXT NOT NULL,
   standard_answer TEXT,                   -- 项目题可为空
   user_answer TEXT,
@@ -112,9 +133,9 @@ CREATE TABLE interview_questions (
   grade TEXT,                             -- 评分等级
   created_at DATETIME NOT NULL
 );
-CREATE INDEX idx_interviews_tenant ON interviews(tenant_id, updated_at DESC);
-CREATE INDEX idx_questions_interview ON interview_questions(interview_id, id);
 ```
+
+> 说明：所有配置只存 `config_snapshot` 一份，不在 interviews 表冗余 `question_count` / `follow_up_budget` / `per_question_follow_up_limit` 列；这些值的「运行时版本」（当前 index、剩余预算、当前追问轮次）由 Eino `WithGenLocalState` 的 state 管理，经 checkpoint 持久化到 Redis，不进 SQLite。`label` 用 int + Go 枚举。不加联合索引（数据量小，无必要），查询按 `interview_id` 单列即可。
 
 「父问题 id 和追问轮次一张表」的结论：**合适**。树形结构单表，回看时一次查全部按 `parent_id` 组树，代码层处理。
 
@@ -137,7 +158,7 @@ POST   /api/interviews/:id/abort         放弃面试（保留已答数据）
   "resumeId": 7,
   "config": {
     "questionCount": 12,
-    "labelCounts": { "八股": 5, "算法": 2, "项目": 5 },
+    "labelCounts": { "0": 5, "1": 2, "2": 5 },
     "followUpBudget": 6,
     "perQuestionFollowUpLimit": 1
   }
@@ -234,11 +255,18 @@ LLM 基于每题表现生成一段评价文本（优点、不足、建议），�
 
 ```go
 var DefaultInterviewConfig = InterviewConfig{
-  QuestionCount:           12, // 题目总数默认
-  LabelCounts:             map[string]int{"八股": 5, "算法": 2, "项目": 5}, // 各标签题目数，总和=QuestionCount
-  FollowUpBudget:          -1, // 默认 N/2，-1 表示跟随题目数
-  PerQuestionFollowUpLimit: 1, // 单问追问上限默认 1
+  QuestionCount:            12, // 题目总数默认
+  LabelCounts:              map[QuestionLabel]int{LabelOctopus: 5, LabelAlgorithm: 2, LabelProject: 5}, // 各标签题目数，总和=QuestionCount
+  FollowUpBudget:           -1, // 默认 N/2，-1 表示跟随题目数
+  PerQuestionFollowUpLimit: 1,  // 单问追问上限默认 1
 }
+
+type QuestionLabel int // 数据库 label 列存该枚举值
+const (
+  LabelOctopus   QuestionLabel = iota // 0 八股（Go 基础/数据库/Redis）
+  LabelAlgorithm                      // 1 算法
+  LabelProject                        // 2 项目
+)
 ```
 
 用户可在面试开始前修改（题目总数、各标签数量、追问预算、单问上限），创建接口接收配置，未传字段用默认值，最终生效配置完整写入 `config_snapshot`（JSON）。面试进行中配置不可变。
@@ -247,7 +275,7 @@ var DefaultInterviewConfig = InterviewConfig{
 
 1. 入口：目标 JD 卡片上「开始 AI 面试」。
 2. 配置页：预填全局默认值（题目总数 12、各标签数量、追问预算 = 题目数一半、单问追问上限 1），可修改后开始面试。
-3. 面试页：聊天式。每道主问题一个消息块，答完展示评分等级徽章；追问折叠在父题下；标准答案折叠展示。底部输入框 + 提交（防抖防重复）。
+3. 面试页：聊天式。服务端把每道新问题原文作为一条 assistant 消息返回，前端直接渲染为消息块，随后显示输入框等用户回答；答完展示评分等级徽章；追问折叠在父题下；标准答案折叠展示。底部输入框 + 提交（防抖防重复）。
 4. 结束：总评卡片（总评等级 + 整体评价）+ 逐题明细（答案/标准答案/等级/追问链）。
 5. 历史面试列表：状态、总评摘要、可回看、可放弃进行中的。
 6. 同一用户仅一个进行中面试：发起新面试时若存在 active，提示先结束/放弃。
