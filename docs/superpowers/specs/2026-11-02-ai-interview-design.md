@@ -46,7 +46,7 @@ Eino v0.9.15（已在 go.mod）支持跨请求的图运行恢复：
 ```go
 // InterviewState 是 Eino graph 的本地状态（WithGenLocalState），
 // 每次运行由 gen 函数创建，经 checkpoint 序列化到 Redis（JSON）。
-// 只存「进度指针」，不存任何对话内容——题目/答案/追问链都在 SQLite，
+// 只存「进度指针 + 会话游标」，不存任何对话内容——题目/答案/追问链都在 SQLite，
 // 评分节点按需从库中重建上下文。State 丢失可从 SQLite 完全重建进度。
 type InterviewState struct {
     // InterviewID 面试 id，等于 checkpoint id，用于 Redis key。
@@ -59,10 +59,14 @@ type InterviewState struct {
     FollowUpRound int `json:"follow_up_round"`
     // FollowUpBudgetLeft 剩余追问预算，每生成一次追问扣 1，0 则全局禁止。
     FollowUpBudgetLeft int `json:"follow_up_budget_left"`
+    // ResponseID 当前主问题的 Responses API 会话 id（续聊游标）。
+    // 首次评分调用后写入，追问时随 checkpoint 恢复直接续聊；同时镜像到
+    // SQLite 主问题行 response_id 列做持久化兜底，丢失可从追问链重建会话。
+    ResponseID string `json:"response_id,omitempty"`
 }
 ```
 
-> 设计说明：面试整体状态（active/completed/aborted、总评、配置快照）由 `interviews` 表持久化，state 只承载图运行进度；`Status` 不进 state，避免双真源。节点读写 state 用 `WithStatePreHandler / WithStatePostHandler`（线程安全），index/预算的推进在追问判定节点内完成。
+> 设计说明：面试整体状态（active/completed/aborted、总评、配置快照）由 `interviews` 表持久化，state 只承载图运行进度与会话游标；`Status` 不进 state，避免双真源。节点读写 state 用 `WithStatePreHandler / WithStatePostHandler`（线程安全），index/预算/response_id 的推进在追问判定节点内完成。
 
 **redigo**：`github.com/gomodule/redigo` 新增依赖，`REDIS_ADDR` 环境变量配置，`REDIS_PASSWORD`（可选）。本地无 Redis 时面试功能返回 503，不影响其它功能。
 
@@ -121,6 +125,78 @@ START
 4. **并发防护**：同一面试同一时刻只允许一个活跃回答请求。`answer` 进入时校验 `status=active` 且无进行中请求（Redis 锁 or 状态位），重复提交返回 409。
 5. **恢复失败**：checkpoint 不存在或已过期（Redis TTL 7 天）→ 返回明确错误「会话已过期，请重新开始面试」，已答数据仍在 SQLite 可回看。
 6. **面试结束**：总评节点跑完 → 删除 Redis checkpoint（`CheckPointDeleter.Delete`）→ `status=completed`。
+
+### Eino Graph 节点编排图（节点 ↔ 真实代码）
+
+代码落在新包 `internal/ai/interview/`：`graph.go`（两个图的构建与编译）、`nodes_gen.go`（生题图节点）、`nodes_ask.go`（提问节点）、`nodes_grade.go`（评分节点）、`nodes_decision.go`（追问判定节点）、`nodes_review.go`（总评节点）。所有节点通过构造函数注入 `repo`（SQLite 读写）与 `responsesModel`（Responses API）。
+
+```
+┌───────────────────────── 生题图（创建面试时 Invoke 一次） ─────────────────────────┐
+│                                                                                    │
+│  START ──▶ resume_to_text ──▶ generate_questions ──▶ validate_questions ──▶ persist_questions ──▶ END │
+│            (Lambda)          (ResponsesModel)     (Lambda)            (Lambda)             │
+│            简历 JSON→纯文本     JD+简历+配置→题目数组  schema 校验+重试     batch 落库            │
+└────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────── 面试图（每轮 answer 驱动，跨请求 interrupt/resume） ───────────────────────┐
+│                                                                                                │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────┐    │
+│  │  START ──▶ ask_question ──Interrupt──▶ (等用户回答)                                      │    │
+│  │           (Lambda: 按 state.Index 读 SQLite 取题/追问,                                   │    │
+│  │            输出 assistant 消息 + StatefulInterrupt(info=问题消息, state)                 │    │
+│  │            state.ResponseID 已存时无需重建上下文)                                       │    │
+│  └────────────────────────────────────────────────────────────────────────────────────────┘    │
+│            ▲                                                                                   │
+│            │ ResumeWithData(用户回答)（下一轮 HTTP 请求进入）                                    │
+│            ▼                                                                                   │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────┐    │
+│  │  grade_answer (ResponsesModel, WithStatePreHandler 组装输入)                             │    │
+│  │    首次: 题目+标准答案+必答/加分点+回答 → 存 state.ResponseID                             │    │
+│  │    追问: 仅用户回答 + WithHeadPreviousResponseID(state.ResponseID) → 更新 ResponseID     │    │
+│  │    输出: {grade, followUp} (JSON schema 校验 + 修复重试)                                  │    │
+│  └────────────────────────────────────────────────────────────────────────────────────────┘    │
+│            ▼                                                                                   │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────┐    │
+│  │  decide_follow_up (Lambda 纯规则, WithStatePostHandler 推进 state, 写 SQLite)           │    │
+│  │    followUp≠"" 且 轮次<上限 且 预算>0 且 grade<A ──▶ 插追问行, 预算--, 轮次++,            │    │
+│  │        ResponseID 镜像写主问题行, 返回「去 ask_question」                                 │    │
+│  │    否则 ──▶ clamp 等级回写, Index+1, 轮次归零, ResponseID 清空                            │    │
+│  │        Index<N ──▶ 返回「去 ask_question」                                               │    │
+│  │        Index≥N ──▶ 返回「去 generate_review」                                            │    │
+│  └────────────────────────────────────────────────────────────────────────────────────────┘    │
+│            ▼                                                                                   │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────┐    │
+│  │  generate_review (ResponsesModel)                                                        │    │
+│  │    输入全部主问题(题目+等级+答案), 输出 overall_review 文本                                 │    │
+│  │    (总评等级 overall_grade 由服务端按「中位数+比例门槛」算法计算, 不依赖模型)              │    │
+│  └────────────────────────────────────────────────────────────────────────────────────────┘    │
+│            ▼                                                                                   │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────┐    │
+│  │  finish (Lambda)                                                                         │    │
+│  │    写 interviews(status=completed, overall_grade, overall_review, completed_at),         │    │
+│  │    删 Redis checkpoint → END                                                             │    │
+│  └────────────────────────────────────────────────────────────────────────────────────────┘    │
+└────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**图中边的类型与真实代码对应**：
+
+| 图 | 边 | Eino 代码 |
+| --- | --- | --- |
+| 生题图 | 全链 | `g.AddEdge(START, "resume_to_text")` … `g.AddEdge("persist_questions", END)`；`g.Compile()` 后 `Invoke(ctx, input)` 一次跑完 |
+| 面试图 | START → ask_question | `AddEdge(START, "ask_question")` |
+| 面试图 | ask_question → grade_answer | 无显式边——`ask_question` 内 `StatefulInterrupt` 挂起，`answer` 接口 `ResumeWithData` 从该中断点恢复，引擎沿原边继续到 `grade_answer` |
+| 面试图 | grade_answer → decide_follow_up | `AddEdge("grade_answer", "decide_follow_up")` |
+| 面试图 | decide_follow_up → ask_question | `AddEdge("decide_follow_up", "ask_question")`（返回「追问 / 下一题」都走这条边，重入提问节点） |
+| 面试图 | decide_follow_up → generate_review | `AddEdge("decide_follow_up", "generate_review")`（Index≥N） |
+| 面试图 | generate_review → finish | `AddEdge("generate_review", "finish")` |
+
+**节点与 state 的读写方式**：
+
+- `ask_question`：`WithStatePreHandler` 读 `state.Index` 定位 SQLite 行；`StatefulInterrupt(ctx, info=问题消息, state)` 挂起（state 随 checkpoint 持久化）。
+- `grade_answer`：`WithStatePreHandler` 组装输入（首次拼完整上下文；追问时只拼用户回答 + 读取 `state.ResponseID` 作为续聊游标）。
+- `decide_follow_up`：`WithStatePostHandler` 推进 `state`（预算/轮次/index/ResponseID），并在内部写 SQLite（等级回写、追问行插入、response_id 镜像）。
+- `generate_review` / `finish`：`WithStatePreHandler` 读取全部主问题；`finish` 后 state 使命结束。
 
 ## 数据契约
 
