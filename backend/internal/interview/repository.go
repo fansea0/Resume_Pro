@@ -219,6 +219,24 @@ func (r *Repository) UpdateInterviewStatus(ctx context.Context, id int64, status
 	return nil
 }
 
+// GetInterviewByID 按 id 读取面试行，不带租户过滤。
+//
+// 仅供面试图节点等内部组件使用（Service 层在入口已完成租户归属校验）；
+// 对外的租户隔离读取必须走 GetInterview。
+func (r *Repository) GetInterviewByID(ctx context.Context, id int64) (*Interview, error) {
+	var interview Interview
+	err := r.db.GetContext(ctx, &interview, `
+		SELECT `+interviewColumns+`
+		FROM interviews WHERE id = ?`, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &interview, nil
+}
+
 // MainQuestions 返回面试的主问题（parent_id IS NULL），按 id 升序。
 func (r *Repository) MainQuestions(ctx context.Context, interviewID int64) ([]Question, error) {
 	list := []Question{}
