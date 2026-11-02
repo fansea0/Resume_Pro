@@ -1,0 +1,207 @@
+# AI 模拟面试设计
+
+> 日期：2026-11-02
+> 状态：待评审
+> 范围：基于「目标 JD + 简历」的 AI 模拟面试。生题 → 逐题提问 → 逐题评分（等级 C- ~ S）→ 追问链 → 总评，全程落库可回看。
+> 分支：feat/ai-interview
+
+## 背景
+
+用户想做一个 AI 模拟面试功能：机器人根据目标 JD 和简历预先生成面试题（覆盖 Go 基础、数据库、Redis、简历项目），逐题提问并对回答评分（等级制 C-, C, B-, B, B+, A, S），回答模糊/偏移时可追问，面试结束给出总评分和整体评价。所有作答可追踪，每个问题可回看标准答案。
+
+## 已确认的决策
+
+1. **题目/标准答案/作答数据存 SQLite**（面试表 + 问题表）。
+2. **面试状态用 Eino graph 的 `WithGenLocalState` 管理**，checkpoint 持久化到 Redis（redigo 实现 `CheckPointStore`），checkpoint key = 面试 id。
+3. **不引入外部知识库**，模型自带知识 + 简历 + JD 进上下文即可。
+4. **动态题目 = 对当前题的深化追问**（父问题 id 关联，`follow_up_round` 递增），不改变题目总数与 index 体系。
+5. **同步交互**：回答一次 → 返回评分 + 追问（或下一题 / 面试结束）。
+6. **同一用户同时只能有一个进行中的面试**；发起新的时提示先结束/放弃当前的。
+7. **追问总预算用尽后全局禁止追问**（预算默认 = 题目数一半，每用一次扣 1）。
+8. **单问追问次数限制，默认 1**。
+9. **追问等级 >= 父问题等级**：由代码 clamp 保证（取 max），不信任模型。
+10. **A 及以上不追问**；用户回答「不会 / 没有补充」时跳过追问（模型输出 `userSkip` 标志 + 回答过短规则兜底）。
+11. **总评分算法待定**：用户有单独文档，尚未提供。schema 预留 `overall_grade` / `overall_score` / `overall_review` 字段，算法落地后补充。
+12. **每道题一个独立消息**（前端聊天式展示，追问折叠在父题下）。
+13. 先不接 TTS。
+
+## 技术选型验证（Eino checkpoint + Redis）
+
+Eino v0.9.15（已在 go.mod）支持跨请求的图运行恢复：
+
+- `WithGenLocalState(func(ctx) *State)`：图编译选项，每次运行生成类型化内存态。
+- `WithStatePreHandler / WithStatePostHandler`：节点读写该状态，线程安全。
+- `WithCheckPointStore(store)` + `WithSerializer(serializer)`：图编译选项，运行中断/结束时把 state 与执行位置持久化。
+- `CheckPointStore` 接口仅两个方法：`Get(ctx, checkPointID) ([]byte, bool, error)`、`Set(ctx, checkPointID, checkPoint []byte) error`；可选 `CheckPointDeleter` 接口 `Delete`。
+- `WithCheckPointID(id)`：指定 checkpoint 读写键；`WithWriteToCheckPointID` / `WithForceNewRun` 辅助。
+- `Interrupt(ctx, info)` / `StatefulInterrupt(ctx, info, state)`：节点内发出中断信号，引擎保存 checkpoint 后返回。
+- `ResumeWithData(ctx, checkPointID, data)`：带数据恢复，被中断节点通过 `GetResumeContext[T]` 取到恢复数据（本场景即用户回答）。
+- `GetInterruptState[T](ctx)`：节点判断自己是否处于恢复流。
+
+因此「提问 → 等用户回答 → 评分 → 追问/下一题」的跨请求状态机 = 一个图，通过 interrupt/resume 驱动，checkpoint 存 Redis（redigo），序列化用 JSON。问题数据放 SQLite，state 只保存 `{InterviewID, Index, FollowUpRound, Status}` 最小进度，提问节点按 Index 读库取题。
+
+**redigo**：`github.com/gomodule/redigo` 新增依赖，`REDIS_ADDR` 环境变量配置，`REDIS_PASSWORD`（可选）。本地无 Redis 时面试功能返回 503，不影响其它功能。
+
+## 状态机设计
+
+### 生题图（创建面试时跑一次）
+
+输入：JD（target_jobs 行）+ 简历纯文本（resumes.content JSON 提取）+ 配置（题目总数、各标签比例、追问预算）。
+输出：题目数组，逐条含 `question / standard_answer / label / must_points(必答点) / bonus_points(加分点)`。
+校验：JSON schema 校验 + 重试（复用现有 maxRetries 机制）；项目标签题无标准答案（`standard_answer` 为空）。
+落库：面试表一行 + 问题表按 JSON 顺序 batch 插入（id 自增即顺序）。然后进入面试图。
+
+### 面试图（每轮回答驱动，跨请求 interrupt/resume）
+
+```
+START
+  → 提问节点：从 SQLite 按 Index 取题，Interrupt(问题内容)        ← 等用户
+  ← ResumeWithData(用户回答)
+  → 评分节点（LLM）：(问题 + 标准答案 + 必答点/加分点 + 用户回答 + 追问历史)
+      输出 { grade, followUp, userSkip }
+  → 追问判定（规则节点，非 LLM）：
+      若 followUp ≠ "" 且 单问轮次 < limit 且 全局预算 > 0 且 grade < A 且 !userSkip
+        → 追问写入问题表（parent_id = 主问题 id，follow_up_round = round+1）
+        → 回到提问节点，Interrupt(追问问题)                     ← 等用户
+      否则
+        → 主问题等级 = 追问链最终等级（只升不降，代码 clamp）
+        → Index+1
+        → 若 Index > N：总评节点（LLM 生成 overall_review + 等级映射总分）→ 落库 → 结束
+        → 否则回到提问节点，Interrupt(下一题)
+```
+
+要点：
+
+- **等级只升不降**：追问评分若低于父等级，`finalGrade = max(parentGrade, newGrade)`，并更新父问题行与该追问行。
+- **「不会 / 没补充」**：评分节点输出 `userSkip=true`（模型识别），规则兜底（回答 rune 数 < 阈值也视为 skip）。
+- **结束语义**：`status=completed` 落库，删除 Redis checkpoint；`abort` 则 `status=aborted`，保留已答数据。
+- **每个问题独立 msg**：前端按主问题组织消息块，追问折叠展示；标准答案答完当前题后折叠可看。
+
+## 数据契约
+
+```sql
+CREATE TABLE interviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+  target_job_id INTEGER NOT NULL REFERENCES target_jobs(id),
+  resume_id INTEGER NOT NULL REFERENCES resumes(id),
+  config_snapshot TEXT NOT NULL,          -- JSON: 题目数/各标签比例/追问预算/单问上限
+  status TEXT NOT NULL,                   -- active / completed / aborted
+  overall_grade TEXT,                     -- 总等级（算法待定，字段预留）
+  overall_score REAL,                     -- 总分（算法待定，字段预留）
+  overall_review TEXT,                    -- 整体评价文本
+  question_count INTEGER NOT NULL,
+  follow_up_budget INTEGER NOT NULL,      -- 追问总预算，默认 N/2，每用一次扣 1
+  per_question_follow_up_limit INTEGER NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  completed_at DATETIME
+);
+CREATE TABLE interview_questions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,   -- id 决定顺序，按 JSON 顺序 batch 插入
+  interview_id INTEGER NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+  parent_id INTEGER REFERENCES interview_questions(id),  -- NULL = 主问题；追问挂父
+  follow_up_round INTEGER NOT NULL DEFAULT 0,            -- 追问轮次，0 = 主问题
+  label TEXT NOT NULL,                    -- 八股 / 算法 / 项目
+  question TEXT NOT NULL,
+  standard_answer TEXT,                   -- 项目题可为空
+  user_answer TEXT,
+  extra TEXT,                             -- JSON: { must_points: [], bonus_points: [] }
+  grade TEXT,                             -- 评分等级
+  created_at DATETIME NOT NULL
+);
+CREATE INDEX idx_interviews_tenant ON interviews(tenant_id, updated_at DESC);
+CREATE INDEX idx_questions_interview ON interview_questions(interview_id, id);
+```
+
+「父问题 id 和追问轮次一张表」的结论：**合适**。树形结构单表，回看时一次查全部按 `parent_id` 组树，代码层处理。
+
+## API 契约（后端）
+
+```
+POST   /api/interviews                   创建面试（生题 + 落库），返回面试 + 第一题
+GET    /api/interviews                   面试列表（状态、总评摘要）
+GET    /api/interviews/:id               详情（状态、配置、进度）
+POST   /api/interviews/:id/answer        { answer } → { grade, followUp, nextQuestion | finished }
+GET    /api/interviews/:id/questions     全部题目（追问树、答案、评分）——回看
+POST   /api/interviews/:id/abort         放弃面试（保留已答数据）
+```
+
+约束：
+
+- 全部走 `requireAuthentication`，按 tenant 隔离（复用现有模型）。
+- 创建面试时若该 tenant 已有 `status=active` 面试 → 409，提示先结束当前面试。
+- `answer` 防重：同一面试同一时刻只允许一个回答请求（Redis `SETNX` 锁 or 状态校验），重复提交返回 409。
+- 创建接口幂等：前端禁点 + 后端校验（可选：幂等键）。
+- 简历输入：`resumes.content` 是结构化 JSON，先提取纯文本（复用 optimization 的 section 提取逻辑）。
+
+## 模型输出契约（评分节点）
+
+```json
+{
+  "grade": "B+",
+  "followUp": "你说的「缓存穿透」具体是怎么解决的？追问：有没有考虑布隆过滤器？",
+  "userSkip": false
+}
+```
+
+- `grade` 枚举：`C- C B- B B+ A S`；不在枚举内 → 契约修复重试一次。
+- `followUp` 空串 = 不需要追问。
+- `userSkip` = 用户回答显示不会/没有补充 → 跳过追问直接进入下一题。
+- `grade` 由代码 clamp 保证 >= 父等级。
+
+## 评分与总评算法（待定，占位）
+
+- **等级 → 分数**：S=95, A=88, B+=80, B=72, B-=65, C=58, C-=48（占位值，待用户文档确认）。
+- **总分**：各主问题最终等级分数的平均，映射回总等级（待确认）。
+- **整体评价**：LLM 基于每题表现生成一段评价文本（优点、不足、建议），与总分一起落库。
+- schema 字段已预留，算法文档到位后只改 `internal/ai/interview/` 一个评分函数，不动 schema。
+
+## 前端交互（只讲做什么和长什么样）
+
+1. 入口：目标 JD 卡片上「开始 AI 面试」。
+2. 配置页：题目总数、各标签比例（八股/数据库/Redis/算法/项目，滑块或数字）、追问预算（默认题目数一半）、单问追问上限（默认 1）。
+3. 面试页：聊天式。每道主问题一个消息块，答完展示评分等级徽章；追问折叠在父题下；标准答案折叠展示。底部输入框 + 提交（防抖防重复）。
+4. 结束：总评卡片（总分、总等级、整体评价）+ 逐题明细（答案/标准答案/等级/追问链）。
+5. 历史面试列表：状态、总评摘要、可回看、可放弃进行中的。
+6. 同一用户仅一个进行中面试：发起新面试时若存在 active，提示先结束/放弃。
+
+## 隐藏考虑点（已纳入设计）
+
+1. **「不会 / 没补充」识别**：模型 `userSkip` 标志 + 回答过短规则兜底，不依赖纯规则硬判。
+2. **并发/重复提交**：Redis 锁 or 状态校验防重；前端防抖。
+3. **Redis 不可用**：面试功能 503 优雅降级，已答数据在 SQLite 不丢，可回看；checkpoint 丢失 → 明确错误「会话已过期」。
+4. **checkpoint TTL**：Redis key 设 7 天；超期视为过期面试，无法续跑但可回看。
+5. **生题失败**：schema 校验重试；部分题目非法 → 剔除或整批重试。
+6. **token 成本**：生题一次大调用（题目多时分批，控制 MaxTokens）；每轮一次 LLM 调用；15 题约 15~25 次调用。
+7. **简历输入**：JSON → 纯文本提取复用现有逻辑。
+8. **标准答案展示时机**：答完当前题（含追问链）后折叠可看；历史回看全部。
+9. **「每个问题独立 msg」结论**：需要，独立消息块便于回看与定位。
+
+## 不做
+
+- 不做 TTS（用户明确先不接）。
+- 不做知识库。
+- 不做流式（同步请求）。
+- 不做算法题在线判题（算法题只给标准答案思路）。
+- 不做自动判负/超时终止（用户可主动 abort）。
+- 不做多面试并行（同一用户仅一个进行中面试）。
+
+## 测试
+
+- 后端 state 机：interrupt → resume 恢复位置正确；等级 clamp 只升不降；追问预算扣减与全局禁止；userSkip 跳过追问；index 推进与结束判定。
+- 后端 checkpoint：Redis store 的 Get/Set/Delete；TTL；checkpoint 丢失报「会话已过期」。
+- 后端契约：评分输出 schema 校验 + 修复重试；grade 枚举外值拒绝。
+- 后端并发：同一面试重复 answer 被拒；active 面试存在时创建新面试 409。
+- 后端存储：问题表 batch 插入顺序 = id 顺序；追问树组装。
+- 前端：配置页 → 面试页流程；防抖；回看页；历史列表。
+- 回归：现有 AI 功能（章节润色、诊断）不受影响。
+
+## 分阶段计划（待批准后细化）
+
+1. 后端基础设施：redigo Redis store（CheckPointStore 实现）、面试表/问题表迁移、配置加载（REDIS_ADDR）。
+2. 生题图：简历文本提取 + 生题节点 + schema 校验 + 落库。
+3. 面试图：提问节点 interrupt/resume + 评分节点 + 追问判定 + 总评节点 + checkpoint 生命周期。
+4. API：interview handler + 路由 + 并发防护。
+5. 前端：配置页、面试页、回看页、历史列表。
+6. 联调与测试。
