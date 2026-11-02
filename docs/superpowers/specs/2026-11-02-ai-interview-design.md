@@ -4,7 +4,7 @@
 > 状态：待评审
 > 范围：基于「目标 JD + 简历」的 AI 模拟面试。生题 → 逐题提问 → 逐题评分（等级 C ~ S，6 级）→ 追问链 → 总评，全程落库可回看。
 > 分支：feat/ai-interview
-> 变更：v2 补齐总评分算法（中位数定档 + 比例门槛，等级 6 级去掉 C-，无 0-100 分数）；配置默认值用全局变量，创建面试时快照落库。
+> 变更：v2 补齐总评分算法（中位数定档 + 比例门槛，等级 6 级去掉 C-，无 0-100 分数）；配置默认值用全局变量，创建面试时快照落库。v9 复审：生题改为单个函数（不用 graph）、Redis 走 env、skip 统一走图（追问中跳过保持父等级）、去掉 SQLite response_id 列（state 唯一真源）、prompt 去除追问链字段（Responses 续聊维护）。
 
 ## 背景
 
@@ -21,7 +21,7 @@
 7. **追问总预算用尽后全局禁止追问**（预算默认 = 题目数一半，每用一次扣 1）。
 8. **单问追问次数限制，默认 1**。
 9. **追问等级 >= 父问题等级**：由代码 clamp 保证（取 max），不信任模型。
-10. **A 及以上不追问**；用户回答「不会 / 没有补充」时跳过追问（模型输出 `userSkip` 标志 + 回答过短规则兜底）。
+10. **A 及以上不追问**；用户「不会 / 没补充 / 跳过」由前端按钮以 `skip=true` 显式传参，服务端不调 LLM、按最低档结算（见「用户跳过问题」节）。
 11. **评分等级 6 级**：`C B- B B+ A S`（去掉 C-）。
 12. **总评分算法**：中位数定基础档 + 比例门槛定高档，只输出等级档位，无 0-100 分数（见「评分与总评算法」节）。
 13. **面试配置**：题目总数、追问预算、单问上限、各标签数量都有全局默认值（代码常量）；用户可在面试开始前修改；创建面试时把生效配置快照进 `config_snapshot` 落库。配置只在快照存一份，运行时进度（当前 index、剩余预算、追问轮次）放 Eino state（Redis checkpoint），不冗余进 SQLite。
@@ -30,7 +30,7 @@
 
 ## 技术选型验证（Eino checkpoint + Redis）
 
-Eino v0.9.15（已在 go.mod）支持跨请求的图运行恢复：
+Eino v0.9.21（从 v0.9.15 升级，接口兼容已实测可编译）支持跨请求的图运行恢复：
 
 - `WithGenLocalState(func(ctx) *State)`：图编译选项，每次运行生成类型化内存态。
 - `WithStatePreHandler / WithStatePostHandler`：节点读写该状态，线程安全。
@@ -60,15 +60,23 @@ type InterviewState struct {
     // FollowUpBudgetLeft 剩余追问预算，每生成一次追问扣 1，0 则全局禁止。
     FollowUpBudgetLeft int `json:"follow_up_budget_left"`
     // ResponseID 当前主问题的 Responses API 会话 id（续聊游标）。
-    // 首次评分调用后写入，追问时随 checkpoint 恢复直接续聊；同时镜像到
-    // SQLite 主问题行 response_id 列做持久化兜底，丢失可从追问链重建会话。
+    // 首次评分调用后写入，追问时随 checkpoint 恢复直接续聊；面试结束后无价值，
+    // 不进 SQLite（checkpoint 丢失即按「会话已过期」处理，无需重建会话）。
     ResponseID string `json:"response_id,omitempty"`
 }
 ```
 
 > 设计说明：面试整体状态（active/completed/aborted、总评、配置快照）由 `interviews` 表持久化，state 只承载图运行进度与会话游标；`Status` 不进 state，避免双真源。节点读写 state 用 `WithStatePreHandler / WithStatePostHandler`（线程安全），index/预算/response_id 的推进在追问判定节点内完成。
 
-**redigo**：`github.com/gomodule/redigo` 新增依赖，`REDIS_ADDR` 环境变量配置，`REDIS_PASSWORD`（可选）。本地无 Redis 时面试功能返回 503，不影响其它功能。
+**redigo（Redis）**：`github.com/gomodule/redigo` 新增依赖，地址走环境变量：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `REDIS_ADDR` | `127.0.0.1:6379` | Redis 地址，必填（面试功能依赖） |
+| `REDIS_PASSWORD` | 空 | 可选密码 |
+| `REDIS_DB` | `0` | 可选 DB 序号 |
+
+本地无 Redis 时面试功能返回 503，不影响其它功能。
 
 **Responses API（评分节点专用）**：新增 `github.com/cloudwego/eino-ext/components/model/agenticopenai@v0.2.4` 依赖，eino 升级到 v0.9.21（v0.9.15 → v0.9.21 接口兼容，已实测可编译）。评分节点用 `agenticopenai.NewResponsesModel` 走 Responses API，而非现有 ChatModel：
 
@@ -79,12 +87,29 @@ type InterviewState struct {
 
 ## 状态机设计
 
-### 生题图（创建面试时跑一次）
+### 生题（创建面试时跑一次，单个函数，不用 graph）
 
-输入：JD（target_jobs 行）+ 简历纯文本（resumes.content JSON 提取）+ 配置（题目总数、各标签比例、追问预算）。
-输出：题目数组，逐条含 `question / standard_answer / label / must_points(必答点) / bonus_points(加分点)`。
-校验：JSON schema 校验 + 重试（复用现有 maxRetries 机制）；项目标签题无标准答案（`standard_answer` 为空）。
-落库：面试表一行 + 问题表按 JSON 顺序 batch 插入（id 自增即顺序）。然后进入面试图。
+生题是一次性同步流程，无分支、无中断、无跨请求状态，用 Eino graph 编排没有收益——直接一个函数串起来：
+
+```go
+// CreateInterview 创建面试：生题 → 校验 → 落库 → 返回面试 + 第一题。
+// 内部按序调用三个纯函数；LLM 重试在 generateQuestions 内部（复用现有 maxRetries）。
+func CreateInterview(ctx context.Context, repo *Repo, gen *QuestionGenerator,
+    resumeText string, jd *TargetJobContext, cfg InterviewConfig) (*Interview, error) {
+
+    questions, err := gen.GenerateQuestions(ctx, resumeText, jd, cfg) // ① LLM 生题
+    if err != nil { return nil, err }
+    questions, err = gen.ValidateQuestions(questions)                 // ② schema 校验 + 剔除非法
+    if err != nil { return nil, err }
+    interview, err := repo.CreateInterviewWithQuestions(ctx, cfg, questions) // ③ 事务落库
+    if err != nil { return nil, err }
+    return interview, nil
+}
+```
+
+- 输入：JD（target_jobs 行）+ 简历纯文本（resumes.content JSON 提取）+ 配置（题目总数、各标签数量、追问预算、单问上限）。
+- 输出：题目数组，逐条含 `question / standard_answer / label / must_points(必答点) / bonus_points(加分点)`；项目标签题无标准答案（`standard_answer` 为空）。
+- `repo.CreateInterviewWithQuestions` 在同一事务里完成「无 active 面试检查 + 面试表插入 + 问题表 batch 插入」，杜绝并发创建双写。
 
 ### 面试图（每轮回答驱动，跨请求 interrupt/resume）
 
@@ -93,7 +118,7 @@ START
   → 提问节点：从 SQLite 按 Index 取题，把问题原文作为 assistant 消息输出，
     再 Interrupt(问题消息) 挂起等用户回答
   ← ResumeWithData(用户回答)
-  → 评分节点（LLM）：(问题 + 标准答案 + 必答点/加分点 + 用户回答 + 追问历史)
+  → 评分节点（LLM）：首次拼题目上下文+回答；追问轮只传新回答 + previous response id（上下文服务端续上）
       输出 { grade, followUp }
   → 追问判定（规则节点，非 LLM）：
       若 followUp ≠ "" 且 FollowUpRound < 单问上限 且 FollowUpBudgetLeft > 0
@@ -119,25 +144,18 @@ START
 
 核心：一次面试 = 同一个 Eino graph 的多次运行，提问节点每次 `Interrupt` 都会保存 checkpoint，下一次回答用 `ResumeWithData` 恢复。详细时序：
 
-1. **创建面试**：生题图跑完落库 → 首次运行面试图 → 提问节点输出第 1 题（assistant 消息）→ `Interrupt` → 引擎把执行位置 + `InterviewState` 序列化写入 Redis（key = 面试 id）→ 图运行返回，HTTP 层把第 1 题 + 等待状态返回给前端。
+1. **创建面试**：生题函数跑完落库 → 首次运行面试图 → 提问节点输出第 1 题（assistant 消息）→ `Interrupt` → 引擎把执行位置 + `InterviewState` 序列化写入 Redis（key = 面试 id）→ 图运行返回，HTTP 层把第 1 题 + 等待状态返回给前端。
 2. **等待**：前端把问题渲染为一条 assistant 消息，显示输入框等用户回答。期间服务端无任何常驻 goroutine，面试「挂起」在 Redis 的 checkpoint 里，随时可恢复（可跨分钟/小时/天）。
 3. **恢复**：用户提交回答 → `POST /api/interviews/:id/answer` → 服务端调用 `graph.ResumeWithData(ctx, checkPointID=面试id, data=用户回答)` → 引擎从 Redis 读 checkpoint，从上次中断的提问节点之后继续：评分节点经 `GetResumeContext` 拿到用户回答 → 评分 → 追问判定 → 下一轮（新问题或追问再次 `Interrupt`，或结束）。
 4. **并发防护**：同一面试同一时刻只允许一个活跃回答请求。`answer` 进入时校验 `status=active` 且无进行中请求（Redis 锁 or 状态位），重复提交返回 409。
 5. **恢复失败**：checkpoint 不存在或已过期（Redis TTL 7 天）→ 返回明确错误「会话已过期，请重新开始面试」，已答数据仍在 SQLite 可回看。
 6. **面试结束**：总评节点跑完 → 删除 Redis checkpoint（`CheckPointDeleter.Delete`）→ `status=completed`。
 
-### Eino Graph 节点编排图（节点 ↔ 真实代码）
+### Eino Graph 节点编排图（面试图，节点 ↔ 真实代码）
 
-代码落在新包 `internal/ai/interview/`：`graph.go`（两个图的构建与编译）、`nodes_gen.go`（生题图节点）、`nodes_ask.go`（提问节点）、`nodes_grade.go`（评分节点）、`nodes_decision.go`（追问判定节点）、`nodes_review.go`（总评节点）。所有节点通过构造函数注入 `repo`（SQLite 读写）与 `responsesModel`（Responses API）。
+代码落在新包 `internal/ai/interview/`：`graph.go`（面试图构建与编译）、`service.go`（CreateInterview 生题函数 + answer/abort 入口）、`nodes_ask.go`（提问节点）、`nodes_grade.go`（评分节点）、`nodes_decision.go`（追问判定节点）、`nodes_review.go`（总评节点）、`question_gen.go`（生题 LLM 调用与校验）。所有节点通过构造函数注入 `repo`（SQLite 读写）与 `responsesModel`（Responses API）。
 
 ```
-┌───────────────────────── 生题图（创建面试时 Invoke 一次） ─────────────────────────┐
-│                                                                                    │
-│  START ──▶ resume_to_text ──▶ generate_questions ──▶ validate_questions ──▶ persist_questions ──▶ END │
-│            (Lambda)          (ResponsesModel)     (Lambda)            (Lambda)             │
-│            简历 JSON→纯文本     JD+简历+配置→题目数组  schema 校验+重试     batch 落库            │
-└────────────────────────────────────────────────────────────────────────────────────┘
-
 ┌─────────────────────── 面试图（每轮 answer 驱动，跨请求 interrupt/resume） ───────────────────────┐
 │                                                                                                │
 │  ┌────────────────────────────────────────────────────────────────────────────────────────┐    │
@@ -147,20 +165,22 @@ START
 │  │            state.ResponseID 已存时无需重建上下文)                                       │    │
 │  └────────────────────────────────────────────────────────────────────────────────────────┘    │
 │            ▲                                                                                   │
-│            │ ResumeWithData(用户回答)（下一轮 HTTP 请求进入）                                    │
+│            │ ResumeWithData({answer, skip})（下一轮 HTTP 请求进入）                             │
 │            ▼                                                                                   │
 │  ┌────────────────────────────────────────────────────────────────────────────────────────┐    │
-│  │  grade_answer (ResponsesModel, WithStatePreHandler 组装输入)                             │    │
-│  │    首次: 题目+标准答案+必答/加分点+回答 → 存 state.ResponseID                             │    │
-│  │    追问: 仅用户回答 + WithHeadPreviousResponseID(state.ResponseID) → 更新 ResponseID     │    │
-│  │    输出: {grade, followUp} (JSON schema 校验 + 修复重试)                                  │    │
+│  │  grade_answer (ResponsesModel + Lambda 分支, WithStatePreHandler 组装输入)              │    │
+│  │    skip=true ──▶ 不调 LLM，直接输出 {grade: 结算等级, followUp: ""}                     │    │
+│  │                  （追问中途 skip：保持父等级不降；主问题首答 skip：C）                    │    │
+│  │    正常 ──▶ 首次: 题目+标准答案+必答/加分点+回答 → 存 state.ResponseID                  │    │
+│  │             追问: 仅用户回答 + WithHeadPreviousResponseID(state.ResponseID) → 更新      │    │
+│  │    输出: {grade, followUp} (JSON schema 校验 + 修复重试)                                 │    │
 │  └────────────────────────────────────────────────────────────────────────────────────────┘    │
 │            ▼                                                                                   │
 │  ┌────────────────────────────────────────────────────────────────────────────────────────┐    │
 │  │  decide_follow_up (Lambda 纯规则, WithStatePostHandler 推进 state, 写 SQLite)           │    │
 │  │    followUp≠"" 且 轮次<上限 且 预算>0 且 grade<A ──▶ 插追问行, 预算--, 轮次++,            │    │
-│  │        ResponseID 镜像写主问题行, 返回「去 ask_question」                                 │    │
-│  │    否则 ──▶ clamp 等级回写, Index+1, 轮次归零, ResponseID 清空                            │    │
+│  │        返回「去 ask_question」                                                            │    │
+│  │    否则 ──▶ clamp 等级回写主问题行, Index+1, 轮次归零, ResponseID 清空                    │    │
 │  │        Index<N ──▶ 返回「去 ask_question」                                               │    │
 │  │        Index≥N ──▶ 返回「去 generate_review」                                            │    │
 │  └────────────────────────────────────────────────────────────────────────────────────────┘    │
@@ -181,21 +201,20 @@ START
 
 **图中边的类型与真实代码对应**：
 
-| 图 | 边 | Eino 代码 |
-| --- | --- | --- |
-| 生题图 | 全链 | `g.AddEdge(START, "resume_to_text")` … `g.AddEdge("persist_questions", END)`；`g.Compile()` 后 `Invoke(ctx, input)` 一次跑完 |
-| 面试图 | START → ask_question | `AddEdge(START, "ask_question")` |
-| 面试图 | ask_question → grade_answer | 无显式边——`ask_question` 内 `StatefulInterrupt` 挂起，`answer` 接口 `ResumeWithData` 从该中断点恢复，引擎沿原边继续到 `grade_answer` |
-| 面试图 | grade_answer → decide_follow_up | `AddEdge("grade_answer", "decide_follow_up")` |
-| 面试图 | decide_follow_up → ask_question | `AddEdge("decide_follow_up", "ask_question")`（返回「追问 / 下一题」都走这条边，重入提问节点） |
-| 面试图 | decide_follow_up → generate_review | `AddEdge("decide_follow_up", "generate_review")`（Index≥N） |
-| 面试图 | generate_review → finish | `AddEdge("generate_review", "finish")` |
+| 边 | Eino 代码 |
+| --- | --- |
+| START → ask_question | `AddEdge(START, "ask_question")` |
+| ask_question → grade_answer | 无显式边——`ask_question` 内 `StatefulInterrupt` 挂起，`answer` 接口 `ResumeWithData` 从该中断点恢复，引擎沿原边继续到 `grade_answer` |
+| grade_answer → decide_follow_up | `AddEdge("grade_answer", "decide_follow_up")` |
+| decide_follow_up → ask_question | `AddEdge("decide_follow_up", "ask_question")`（返回「追问 / 下一题」都走这条边，重入提问节点） |
+| decide_follow_up → generate_review | `AddEdge("decide_follow_up", "generate_review")`（Index≥N） |
+| generate_review → finish | `AddEdge("generate_review", "finish")` |
 
 **节点与 state 的读写方式**：
 
 - `ask_question`：`WithStatePreHandler` 读 `state.Index` 定位 SQLite 行；`StatefulInterrupt(ctx, info=问题消息, state)` 挂起（state 随 checkpoint 持久化）。
-- `grade_answer`：`WithStatePreHandler` 组装输入（首次拼完整上下文；追问时只拼用户回答 + 读取 `state.ResponseID` 作为续聊游标）。
-- `decide_follow_up`：`WithStatePostHandler` 推进 `state`（预算/轮次/index/ResponseID），并在内部写 SQLite（等级回写、追问行插入、response_id 镜像）。
+- `grade_answer`：`WithStatePreHandler` 组装输入（首次拼完整上下文；追问时只拼用户回答 + 读取 `state.ResponseID` 作为续聊游标；skip 分支不调模型）。
+- `decide_follow_up`：`WithStatePostHandler` 推进 `state`（预算/轮次/index/ResponseID），并在内部写 SQLite（等级回写、追问行插入）。
 - `generate_review` / `finish`：`WithStatePreHandler` 读取全部主问题；`finish` 后 state 使命结束。
 
 ## 数据契约
@@ -225,12 +244,11 @@ CREATE TABLE interview_questions (
   user_answer TEXT,
   extra TEXT,                             -- JSON: { must_points: [], bonus_points: [] }
   grade TEXT,                             -- 评分等级
-  response_id TEXT,                       -- Responses API 会话 id（仅主问题行使用，追问行沿用父题）
   created_at DATETIME NOT NULL
 );
 ```
 
-> 说明：所有配置只存 `config_snapshot` 一份，不在 interviews 表冗余 `question_count` / `follow_up_budget` / `per_question_follow_up_limit` 列；这些值的「运行时版本」（当前 index、剩余预算、当前追问轮次）由 Eino `WithGenLocalState` 的 state 管理，经 checkpoint 持久化到 Redis，不进 SQLite。`label` 用 int + Go 枚举。不加联合索引（数据量小，无必要），查询按 `interview_id` 单列即可。
+> 说明：所有配置只存 `config_snapshot` 一份，不在 interviews 表冗余 `question_count` / `follow_up_budget` / `per_question_follow_up_limit` 列；这些值的「运行时版本」（当前 index、剩余预算、当前追问轮次、Responses 会话 id）由 Eino `WithGenLocalState` 的 state 管理，经 checkpoint 持久化到 Redis，不进 SQLite。`label` 用 int + Go 枚举。不加联合索引（数据量小，无必要），查询按 `interview_id` 单列即可。
 
 「父问题 id 和追问轮次一张表」的结论：**合适**。树形结构单表，回看时一次查全部按 `parent_id` 组树，代码层处理。
 
@@ -272,8 +290,9 @@ POST   /api/interviews/:id/abort         终止面试（保留已答数据，不
 **跳过当前题（前端「跳过 / 不会 / 没补充」按钮）**：
 
 - 调 `POST /api/interviews/:id/answer`，body 传 `{ "skip": true }`（不传 answer，前端需二次确认）。
-- 服务端**不调 LLM**（省一次调用），直接把当前主问题 `grade` 记为 `C`（最低档）、`user_answer` 记为空，`index+1` 进入下一题；若已是最后一题则走总评。
-- 不消耗追问预算；跳过 = 最差作答，总评算法分母 N 不变，无需特判。
+- 服务端**不调 LLM**，但**仍走图**：skip 作为 `ResumeWithData` 的 data 传入，`grade_answer` 节点跳过模型直接输出结算等级 + 空 followUp，状态推进（index/预算/checkpoint）与正常回答走同一套逻辑，保证 checkpoint 一致。
+- 结算等级：**主问题首答 skip → `C`**（最低档）；**追问中途 skip → 保持当前父等级不降**（已答的不作废），两种情况都结束当前主问题进入下一题；若已是最后一题则走总评。
+- `user_answer` 记为空；不消耗追问预算；跳过 = 最差作答，总评算法分母 N 不变，无需特判。
 - 回看时：`grade=C` 且 `user_answer` 为空 ⇒ 前端展示「已跳过」。
 - 响应结构与「答完跳题」一致：`{ grade: "C", skip: true, nextQuestion | finished }`。
 
@@ -288,33 +307,29 @@ POST   /api/interviews/:id/abort         终止面试（保留已答数据，不
 
 ```
 鉴权 → 校验面试存在、属于该 tenant、status=active（否则 404/409）
-→ 并发防护：Redis SETNX 锁（key = interview:id, TTL 60s），拿不到锁 → 409「面试正在处理中」；完成后释放
+→ 并发防护：Redis SETNX 锁（key = interview:{id}, TTL 60s），拿不到锁 → 409「面试正在处理中」；完成后释放
 → 读 checkpoint（checkPointID = 面试 id）：
     不存在 / 已过期 → 410「会话已过期，请重新开始面试」（已答数据仍在 SQLite 可回看）
-→ 分支：
-  A. skip=true：
-      不跑图。主问题 grade='C'、user_answer=''；Index+1
-      → Index >= N：跑总评 → status=completed → 删 checkpoint → 返回 finished
-      → 否则：读下一题原文 → 返回 nextQuestion（前端渲染为新 assistant 消息）
-  B. answer 非空：
-      graph.ResumeWithData(ctx, 面试id, answer) 恢复图运行
-      → 提问节点从 GetResumeContext 取用户回答，转评分节点
-      → 评分节点（LLM）输出 { grade, followUp }
-      → 追问判定（规则，任一条件满足则「不追问」）：
-          ① followUp == ""（AI 判定无需追问）
-          ② grade >= A（答得够好）
-          ③ FollowUpRound >= PerQuestionFollowUpLimit（单问追问次数到顶）
-          ④ FollowUpBudgetLeft <= 0（全局预算用尽）
-      → 不追问：
-          clamp grade（追问链场景取 max(父等级, 本次)）；回写主问题行 grade + user_answer
-          Index+1，FollowUpRound 归零
-          → Index >= N：跑总评 → completed → 删 checkpoint → 返回 finished
-          → 否则：读下一题原文 → 返回 nextQuestion
-      → 追问（以上 4 条都不满足）：
-          FollowUpBudgetLeft--；FollowUpRound++
-          插入追问行（parent_id=主问题 id，question=followUp 原文，grade 暂空）
-          回写主问题行 grade（clamp 后，父等级先行更新）
-          返回 followUp 原文（前端渲染为折叠在父题下的新 assistant 消息，继续等回答）
+→ 统一走图：graph.ResumeWithData(ctx, 面试id, {answer, skip}) 恢复图运行
+    （skip=true 时不传 answer；skip 与正常回答共用同一状态机，checkpoint 推进一致）
+  → 提问节点从 GetResumeContext 取 {answer, skip}，转评分节点
+  → 评分节点：
+      skip=true → 不调 LLM，结算等级（首答 C / 追问中保持父等级），followUp=""
+      正常 → 评分（LLM）输出 { grade, followUp }
+  → 追问判定（规则，任一条件满足则「不追问」）：
+      ① followUp == ""（AI 判定无需追问）
+      ② grade >= A（答得够好）
+      ③ FollowUpRound >= PerQuestionFollowUpLimit（单问追问次数到顶）
+      ④ FollowUpBudgetLeft <= 0（全局预算用尽）
+  → 不追问：
+      clamp grade（追问链场景取 max(父等级, 本次)）；回写主问题行 grade + user_answer
+      Index+1，FollowUpRound 归零，ResponseID 清空
+      → Index >= N：跑总评 → completed → 删 checkpoint → 返回 finished
+      → 否则：读下一题原文 → 返回 nextQuestion
+  → 追问（以上 4 条都不满足）：
+      FollowUpBudgetLeft--；FollowUpRound++
+      插入追问行（parent_id=主问题 id，question=followUp 原文，grade 暂空）
+      返回 followUp 原文（前端渲染为折叠在父题下的新 assistant 消息，继续等回答）
 → 统一响应：
   { "grade": "B", "followUp": "追问原文", "finished": false }                // 追问
   { "grade": "B", "followUp": "", "nextQuestion": { "id":13, "text":"…", "label":0 }, "finished": false }  // 跳题
@@ -353,7 +368,6 @@ POST   /api/interviews/:id/abort         终止面试（保留已答数据，不
 【标准答案】{{.StandardAnswer}}
 【必答点】{{.MustPoints}}
 【加分点】{{.BonusPoints}}
-【追问链】{{.FollowUpChain}}
 【本次回答】{{.Answer}}
 
 评分规则：
@@ -366,14 +380,14 @@ POST   /api/interviews/:id/abort         终止面试（保留已答数据，不
 {"grade":"B+","followUp":"追问问题原文或空串"}
 ```
 
-模板字段说明：`Question` / `StandardAnswer` / `MustPoints` / `BonusPoints` 来自当前行；`FollowUpChain` 是追问链上下文（见下节）；`LabelName` 是枚举中文名（八股/算法/项目）。「不会 / 没补充」不进模型判定，由前端按钮以 `skip=true` 处理。输入为 `[]*schema.AgenticMessage`（Responses API），首次调用带完整题目上下文，后续追问只带用户新回答 + `WithHeadPreviousResponseID`。
+模板字段说明：`Question` / `StandardAnswer` / `MustPoints` / `BonusPoints` 来自当前行；`LabelName` 是枚举中文名（八股/算法/项目）。首次评分调用（主问题首答）带完整题目上下文；追问轮次只传用户新回答 + `WithHeadPreviousResponseID`，追问链由服务端响应链维护，**不拼进 prompt**。「不会 / 没补充」不进模型判定，由前端按钮以 `skip=true` 处理。输入为 `[]*schema.AgenticMessage`（Responses API）。
 
 ### 每个问题独立会话（Responses API 续聊）
 
 **每个主问题（含追问链）= 一个独立的 Responses API 会话，服务端维护上下文，不存历史消息**：
 
 - 评分节点用 `agenticopenai.ResponsesModel`（Responses API），支持 `WithHeadPreviousResponseID(id)` 续聊——每次调用只需传「新增内容」，服务端自动带上之前全部上下文。
-- 会话 id（`ResponseMeta.OpenAIExtension.ID`）存入 SQLite 问题表主问题行的 `response_id` 列，持久化跨请求；追问行沿用父题的会话，不单独存。
+- 会话 id（`ResponseMeta.OpenAIExtension.ID`）存在 `state.ResponseID`，随 checkpoint 持久化跨请求；追问行沿用父题的会话，不单独存。
 - 调用序列（以主问题 + 2 轮追问为例）：
 
 ```
@@ -386,7 +400,7 @@ POST   /api/interviews/:id/abort         终止面试（保留已答数据，不
 ```
 
 - 模型上下文始终是「本主问题的题目 + 完整追问链」，不跨题；前端聊天流/回看仍用 `/questions` 从库重建，不依赖 response 链。
-- 优势：服务端缓存（实测响应含 `cached_tokens`），多轮追问不重复计费前缀；`response_id` 丢了可从 SQLite 的追问链重建一个全新会话（退化为「重建 messages」路径），已答数据不受影响。
+- 优势：服务端缓存（实测响应含 `cached_tokens`），多轮追问不重复计费前缀；`state.ResponseID` 丢失（checkpoint 过期）时面试按「会话已过期」处理，已答数据不受影响。
 - 约束：如果切换模型/改写 history，响应缓存失效，需重新开会话（`InvalidateMessageCaches`），当前设计每主问题独立会话天然规避。
 
 ## 评分与总评算法
@@ -487,8 +501,8 @@ const (
 2. **并发/重复提交**：Redis 锁 or 状态校验防重；前端防抖。
 3. **Redis 不可用**：面试功能 503 优雅降级，已答数据在 SQLite 不丢，可回看；checkpoint 丢失 → 明确错误「会话已过期」。
 4. **checkpoint TTL**：Redis key 设 7 天；超期视为过期面试，无法续跑但可回看。
-5. **生题失败**：schema 校验重试；部分题目非法 → 剔除或整批重试。
-6. **token 成本**：生题一次大调用（题目多时分批，控制 MaxTokens）；每轮一次 LLM 调用；15 题约 15~25 次调用。
+5. **生题失败**：schema 校验重试；部分题目非法 → 剔除或整批重试（`question_gen.go` 内部处理）。
+6. **token 成本**：生题一次大调用（题目多时分批，控制 MaxTokens）；每轮一次 LLM 调用（skip 不调）；15 题约 15~25 次调用。
 7. **简历输入**：JSON → 纯文本提取复用现有逻辑。
 8. **标准答案展示时机**：答完当前题（含追问链）后折叠可看；历史回看全部。
 9. **「每个问题独立 msg」结论**：需要，独立消息块便于回看与定位。
@@ -506,21 +520,21 @@ const (
 
 - 后端 state 机：interrupt → resume 恢复位置正确；等级 clamp 只升不降；追问预算扣减与全局禁止；index 推进与结束判定。
 - 后端追问判定：followUp 为空 / grade>=A / 单问到顶 / 预算用尽 → 均跳下一题；追问插入父题下。
-- 后端跳过与终止：skip 不调 LLM、grade=C、index+1；abort 置状态、删 checkpoint、保留已答、不生成总评；非 active 面试 answer/abort 返回 409。
+- 后端跳过与终止：skip 不调 LLM 但走图、首答结算 C、追问中保持父等级、index+1；abort 置状态、删 checkpoint、保留已答、不生成总评；非 active 面试 answer/abort 返回 409。
 - 后端总评算法：中位数奇数/偶数取档、S 严格过半、A/B+ 至少一半、3S9B → B、5S7A → A、6S6A → A、8S4A → S。
 - 后端 checkpoint：Redis store 的 Get/Set/Delete；TTL；checkpoint 丢失报「会话已过期」；并发锁 SETNX 防重。
 - 后端契约：评分输出 schema 校验 + 修复重试；grade 枚举外值拒绝。
-- 后端 Responses 会话：首次调用拿 response_id 存主问题行；追问带 previous id 续聊并更新 id；response_id 丢失时从追问链重建会话。
-- 后端并发：同一面试重复 answer 被拒；active 面试存在时创建新面试 409。
+- 后端 Responses 会话：首次调用拿 response_id 存 state；追问带 previous id 续聊并更新。
+- 后端并发：同一面试重复 answer 被拒；active 面试存在时创建新面试 409（检查+插入同事务，防并发双写）。
 - 后端存储：问题表 batch 插入顺序 = id 顺序；追问树组装；config_snapshot 快照与默认值合并。
 - 前端：配置页（默认值预填、可修改）→ 面试页流程；防抖；跳过/终止按钮与二次确认；回看页；历史列表。
 - 回归：现有 AI 功能（章节润色、诊断）不受影响。
 
 ## 分阶段计划（待批准后细化）
 
-1. 后端基础设施：redigo Redis store（CheckPointStore 实现）、面试表/问题表迁移（含 response_id 列）、eino 升级 v0.9.21 + agenticopenai 依赖、配置加载（REDIS_ADDR）。
-2. 生题图：简历文本提取 + 生题节点 + schema 校验 + 落库。
-3. 面试图：提问节点 interrupt/resume + 评分节点 + 追问判定 + 总评节点 + checkpoint 生命周期。
+1. 后端基础设施：redigo Redis store（CheckPointStore 实现 + env 配置 REDIS_ADDR）、面试表/问题表迁移、eino 升级 v0.9.21 + agenticopenai 依赖。
+2. 生题：简历文本提取 + `question_gen.go` 生题函数 + schema 校验 + 事务落库（`service.go`）。
+3. 面试图：提问节点 interrupt/resume + 评分节点（含 skip 分支）+ 追问判定 + 总评节点 + checkpoint 生命周期。
 4. API：interview handler + 路由 + 并发防护。
 5. 前端：配置页、面试页、回看页、历史列表。
 6. 联调与测试。
