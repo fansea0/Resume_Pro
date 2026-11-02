@@ -66,6 +66,13 @@ type InterviewState struct {
 
 **redigo**：`github.com/gomodule/redigo` 新增依赖，`REDIS_ADDR` 环境变量配置，`REDIS_PASSWORD`（可选）。本地无 Redis 时面试功能返回 503，不影响其它功能。
 
+**Responses API（评分节点专用）**：新增 `github.com/cloudwego/eino-ext/components/model/agenticopenai@v0.2.4` 依赖，eino 升级到 v0.9.21（v0.9.15 → v0.9.21 接口兼容，已实测可编译）。评分节点用 `agenticopenai.NewResponsesModel` 走 Responses API，而非现有 ChatModel：
+
+- 每个主问题（含追问链）= 一个独立会话，服务端维护 response 链，**不存历史消息**；
+- 首次评分调用：只传当前问题上下文 + 用户回答，拿到响应后把 `ResponseMeta.OpenAIExtension.ID` 存入 SQLite 问题表主问题行（新增 `response_id` 列）；
+- 后续追问评分：只传用户本次回答 + `WithHeadPreviousResponseID(已存 id)`，上下文由服务端自动续上，响应后更新 `response_id`；
+- 已实测 MiniMax `https://api.minimax.cn/v1/responses` 端点返回 200（标准 Responses 结构，且响应含 `cached_tokens`，多轮续聊自动缓存省 token）。
+
 ## 状态机设计
 
 ### 生题图（创建面试时跑一次）
@@ -142,6 +149,7 @@ CREATE TABLE interview_questions (
   user_answer TEXT,
   extra TEXT,                             -- JSON: { must_points: [], bonus_points: [] }
   grade TEXT,                             -- 评分等级
+  response_id TEXT,                       -- Responses API 会话 id（仅主问题行使用，追问行沿用父题）
   created_at DATETIME NOT NULL
 );
 ```
@@ -282,24 +290,28 @@ POST   /api/interviews/:id/abort         终止面试（保留已答数据，不
 {"grade":"B+","followUp":"追问问题原文或空串"}
 ```
 
-模板字段说明：`Question` / `StandardAnswer` / `MustPoints` / `BonusPoints` 来自当前行；`FollowUpChain` 是追问链上下文（见下节）；`LabelName` 是枚举中文名（八股/算法/项目）。「不会 / 没补充」不进模型判定，由前端按钮以 `skip=true` 处理。
+模板字段说明：`Question` / `StandardAnswer` / `MustPoints` / `BonusPoints` 来自当前行；`FollowUpChain` 是追问链上下文（见下节）；`LabelName` 是枚举中文名（八股/算法/项目）。「不会 / 没补充」不进模型判定，由前端按钮以 `skip=true` 处理。输入为 `[]*schema.AgenticMessage`（Responses API），首次调用带完整题目上下文，后续追问只带用户新回答 + `WithHeadPreviousResponseID`。
 
-### 每个问题独立会话（对话上下文）
+### 每个问题独立会话（Responses API 续聊）
 
-**「会话」= 评分节点每次调用时从 SQLite 重建的 messages 数组，不持久化任何会话 id，也不存历史消息**：
+**每个主问题（含追问链）= 一个独立的 Responses API 会话，服务端维护上下文，不存历史消息**：
 
-- 本项目 LLM 走 eino-ext openai 的 ChatModel 接口（`Generate(ctx, []*schema.Message)`），仅支持 chat completions，**无 Responses API / `previous_response_id`**。若用「response id 续聊」需绕过 Eino 直连 HTTP，破坏核心链路，不做。
-- 等价方案：ChatModel 无状态，每次调用传完整 messages 即构成独立会话。评分节点构造：
+- 评分节点用 `agenticopenai.ResponsesModel`（Responses API），支持 `WithHeadPreviousResponseID(id)` 续聊——每次调用只需传「新增内容」，服务端自动带上之前全部上下文。
+- 会话 id（`ResponseMeta.OpenAIExtension.ID`）存入 SQLite 问题表主问题行的 `response_id` 列，持久化跨请求；追问行沿用父题的会话，不单独存。
+- 调用序列（以主问题 + 2 轮追问为例）：
 
 ```
-[system] 你是资深 Go 后端面试官…（评分规则）
-[user]   题目 + 标准答案 + 必答点 + 加分点 + 标签
-[user]   追问链（追问1 → 回答1 → 追问2 → 回答2 …，从 SQLite 按 parent_id 重建）
-[user]   本次回答
+第 1 次（答主问题）：input = [system 评分规则 + user 题目/标准答案/必答加分点 + user 回答]
+    → 响应 resp_1，存 response_id = resp_1.id
+第 2 次（答追问 1）：input = [user 追问 1 的回答]，
+    opts = WithHeadPreviousResponseID(resp_1.id) → 响应 resp_2，更新 response_id = resp_2.id
+第 3 次（答追问 2）：input = [user 追问 2 的回答]，
+    opts = WithHeadPreviousResponseID(resp_2.id) → 响应 resp_3，更新 response_id = resp_3.id
 ```
 
-- 每个主问题（含追问链）是一个独立会话，模型只看到当前题上下文，不跨题；无需存 response id、无需维护历史列表——历史本来就是问题表（`question` + `user_answer` 两列），调用时重建。
-- 前端聊天流：新问题/追问原文由服务端按 assistant 消息返回（前文），用户回答由前端本地追加；刷新/回看时用 `/questions` 从库重建整个对话视图。
+- 模型上下文始终是「本主问题的题目 + 完整追问链」，不跨题；前端聊天流/回看仍用 `/questions` 从库重建，不依赖 response 链。
+- 优势：服务端缓存（实测响应含 `cached_tokens`），多轮追问不重复计费前缀；`response_id` 丢了可从 SQLite 的追问链重建一个全新会话（退化为「重建 messages」路径），已答数据不受影响。
+- 约束：如果切换模型/改写 history，响应缓存失效，需重新开会话（`InvalidateMessageCaches`），当前设计每主问题独立会话天然规避。
 
 ## 评分与总评算法
 
@@ -422,6 +434,7 @@ const (
 - 后端总评算法：中位数奇数/偶数取档、S 严格过半、A/B+ 至少一半、3S9B → B、5S7A → A、6S6A → A、8S4A → S。
 - 后端 checkpoint：Redis store 的 Get/Set/Delete；TTL；checkpoint 丢失报「会话已过期」；并发锁 SETNX 防重。
 - 后端契约：评分输出 schema 校验 + 修复重试；grade 枚举外值拒绝。
+- 后端 Responses 会话：首次调用拿 response_id 存主问题行；追问带 previous id 续聊并更新 id；response_id 丢失时从追问链重建会话。
 - 后端并发：同一面试重复 answer 被拒；active 面试存在时创建新面试 409。
 - 后端存储：问题表 batch 插入顺序 = id 顺序；追问树组装；config_snapshot 快照与默认值合并。
 - 前端：配置页（默认值预填、可修改）→ 面试页流程；防抖；跳过/终止按钮与二次确认；回看页；历史列表。
@@ -429,7 +442,7 @@ const (
 
 ## 分阶段计划（待批准后细化）
 
-1. 后端基础设施：redigo Redis store（CheckPointStore 实现）、面试表/问题表迁移、配置加载（REDIS_ADDR）。
+1. 后端基础设施：redigo Redis store（CheckPointStore 实现）、面试表/问题表迁移（含 response_id 列）、eino 升级 v0.9.21 + agenticopenai 依赖、配置加载（REDIS_ADDR）。
 2. 生题图：简历文本提取 + 生题节点 + schema 校验 + 落库。
 3. 面试图：提问节点 interrupt/resume + 评分节点 + 追问判定 + 总评节点 + checkpoint 生命周期。
 4. API：interview handler + 路由 + 并发防护。
