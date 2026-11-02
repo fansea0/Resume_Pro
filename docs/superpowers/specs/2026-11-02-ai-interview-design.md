@@ -44,14 +44,25 @@ Eino v0.9.15（已在 go.mod）支持跨请求的图运行恢复：
 因此「提问 → 等用户回答 → 评分 → 追问/下一题」的跨请求状态机 = 一个图，通过 interrupt/resume 驱动，checkpoint 存 Redis（redigo），序列化用 JSON。问题数据放 SQLite，state 只保存最小进度，提问节点按 Index 读库取题：
 
 ```go
+// InterviewState 是 Eino graph 的本地状态（WithGenLocalState），
+// 每次运行由 gen 函数创建，经 checkpoint 序列化到 Redis（JSON）。
+// 只存「进度指针」，不存任何对话内容——题目/答案/追问链都在 SQLite，
+// 评分节点按需从库中重建上下文。State 丢失可从 SQLite 完全重建进度。
 type InterviewState struct {
-    InterviewID        int64 // 面试 id（= checkpoint id）
-    Index              int   // 当前主问题索引（0-based，指向 SQLite 主问题行）
-    FollowUpRound      int   // 当前主问题已追问轮次
-    FollowUpBudgetLeft int   // 剩余追问预算（每用一次扣 1，0 则全局禁止）
-    Status             string // active / finished
+    // InterviewID 面试 id，等于 checkpoint id，用于 Redis key。
+    InterviewID int64 `json:"interview_id"`
+    // Index 当前主问题索引（0-based），指向 interviews.questions 中
+    // parent_id IS NULL 的第 Index 条（按 id 升序 = 生成顺序）。
+    Index int `json:"index"`
+    // FollowUpRound 当前主问题已发生的追问轮次。
+    // 0 = 正等主问题回答；N = 正等第 N 轮追问回答（该追问行已写入 SQLite）。
+    FollowUpRound int `json:"follow_up_round"`
+    // FollowUpBudgetLeft 剩余追问预算，每生成一次追问扣 1，0 则全局禁止。
+    FollowUpBudgetLeft int `json:"follow_up_budget_left"`
 }
 ```
+
+> 设计说明：面试整体状态（active/completed/aborted、总评、配置快照）由 `interviews` 表持久化，state 只承载图运行进度；`Status` 不进 state，避免双真源。节点读写 state 用 `WithStatePreHandler / WithStatePostHandler`（线程安全），index/预算的推进在追问判定节点内完成。
 
 **redigo**：`github.com/gomodule/redigo` 新增依赖，`REDIS_ADDR` 环境变量配置，`REDIS_PASSWORD`（可选）。本地无 Redis 时面试功能返回 503，不影响其它功能。
 
@@ -248,6 +259,49 @@ POST   /api/interviews/:id/abort         终止面试（保留已答数据，不
 - `followUp` 空串 = 不需要追问。
 - `userSkip` = 用户回答显示不会/没有补充 → 跳过追问直接进入下一题。
 - `grade` 由代码 clamp 保证 >= 父等级。
+
+### 评分节点 LLM 提示词（简写）
+
+```
+你是资深 Go 后端面试官，正在用「目标 JD + 简历」做模拟面试。
+请评估候选人对本题的回答。
+
+【题目】{{.Question}}
+【标签】{{.LabelName}}
+【标准答案】{{.StandardAnswer}}
+【必答点】{{.MustPoints}}
+【加分点】{{.BonusPoints}}
+【追问链】{{.FollowUpChain}}
+【本次回答】{{.Answer}}
+
+评分规则：
+- 对照标准答案与必答点评估完整性、准确性、深度。
+- 等级只输出一个：C / B- / B / B+ / A / S（从差到优）。
+- 回答完整到位（约 A 及以上）时 followUp 必须为空串，不再追问。
+- 回答模糊、偏移、漏必答点，或需要深挖时，生成一个 followUp 追问问题。
+- 回答明显是「不会 / 没有补充」时，userSkip=true，followUp 为空。
+
+只输出 JSON（不要 markdown 代码块）：
+{"grade":"B+","followUp":"追问问题原文或空串","userSkip":false}
+```
+
+模板字段说明：`Question` / `StandardAnswer` / `MustPoints` / `BonusPoints` 来自当前行；`FollowUpChain` 是追问链上下文（见下节）；`LabelName` 是枚举中文名（八股/算法/项目）。
+
+### 追问的对话上下文如何存
+
+**追问链上下文不存 Redis state，也不存图内存——从 SQLite 重建**：
+
+- 问题表本身就是「对话真源」：每个追问是一行（`parent_id` 挂主问题、`follow_up_round` 记轮次），`question` 存追问原文、`user_answer` 存用户对追问的回答。
+- 评分节点每次运行时，按 `interview_id` 取该主问题整条链（`parent_id IS NULL` 的主问题 + 各轮追问行，按 id 升序），拼成 `FollowUpChain` 文本进 prompt：
+
+```
+追问链：
+- 追问1：你说的「缓存穿透」具体怎么解决？→ 回答1：加布隆过滤器...
+- 追问2：布隆过滤器误判怎么办？→ 回答2：...
+```
+
+- 好处：state 保持最小（只有进度指针）；checkpoint 丢失后追问链仍可从 SQLite 完整重建；回看接口（`/questions`）本来就要按 `parent_id` 组树，同一份数据两用。
+- 前端聊天流：新问题/追问原文由服务端按 assistant 消息返回（前文），用户回答由前端本地追加；刷新/回看时用 `/questions` 从库重建整个对话视图。
 
 ## 评分与总评算法
 
