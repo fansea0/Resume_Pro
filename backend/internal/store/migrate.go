@@ -84,6 +84,33 @@ CREATE TABLE IF NOT EXISTS target_jobs (
     updated_at   DATETIME NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_target_jobs_tenant ON target_jobs(tenant_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS interviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+  target_job_id INTEGER NOT NULL REFERENCES target_jobs(id),
+  resume_id INTEGER NOT NULL REFERENCES resumes(id),
+  config_snapshot TEXT NOT NULL,
+  status TEXT NOT NULL,
+  overall_grade TEXT,
+  overall_review TEXT,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  completed_at DATETIME
+);
+CREATE TABLE IF NOT EXISTS interview_questions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  interview_id INTEGER NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+  parent_id INTEGER REFERENCES interview_questions(id),
+  follow_up_round INTEGER NOT NULL DEFAULT 0,
+  label INTEGER NOT NULL,
+  question TEXT NOT NULL,
+  standard_answer TEXT,
+  user_answer TEXT,
+  extra TEXT,
+  grade TEXT,
+  created_at DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_interview_questions_interview ON interview_questions(interview_id);
 `
 
 // Migrate applies the application's idempotent SQLite schema migrations.
