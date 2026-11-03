@@ -180,6 +180,17 @@ func (r *Repository) GetInterview(ctx context.Context, tenantID, id int64) (*Int
 	return &interview, nil
 }
 
+// HasActiveInterview 报告租户下是否已有进行中的面试，供创建流程在生题前快速失败。
+func (r *Repository) HasActiveInterview(ctx context.Context, tenantID int64) (bool, error) {
+	var count int
+	err := r.db.GetContext(ctx, &count, `
+		SELECT COUNT(1) FROM interviews WHERE tenant_id = ? AND status = 'active'`, tenantID)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // ListInterviews 按 updated_at 倒序列出租户下的面试（updated_at 相同时按 id 倒序）。
 func (r *Repository) ListInterviews(ctx context.Context, tenantID int64) ([]Interview, error) {
 	list := []Interview{}

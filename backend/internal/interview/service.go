@@ -65,6 +65,16 @@ func (s *Service) CreateInterview(ctx context.Context, tenantID, targetJobID, re
 		resolved = cfg.Resolved()
 	}
 
+	// 生题前预检 active：事务里的检查要等 LLM 跑完才生效，注定失败的创建会白烧十几秒
+	// 和一次 token 开销。落库事务内的检查保留，它负责拦下并发创建。
+	hasActive, err := s.repo.HasActiveInterview(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("interview: check active interview: %w", err)
+	}
+	if hasActive {
+		return nil, ErrActiveInterviewExists
+	}
+
 	generated, err := s.gen.GenerateQuestions(ctx, resumeText, jd, resolved)
 	if err != nil {
 		return nil, fmt.Errorf("interview: generate questions: %w", err)

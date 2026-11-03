@@ -124,12 +124,19 @@ func NewResponsesModel(cfg Config) (model.AgenticModel, error) {
 		Model:     cfg.Model,
 		MaxTokens: &cfg.MaxTokens,
 		Timeout:   &cfg.Timeout,
+		// 不设则沿用 SDK 默认的 2 次静默重试，单次挂起会按超时时长翻倍放大。
+		MaxRetries: &cfg.MaxRetries,
 	}
-	// MiniMax-M3.1-Flash 默认 reasoning_effort=max 会烧光 token 预算在隐藏思考上
-	//（与 ChatModel 的 AI_REASONING_EFFORT 语义一致）：生题/评分需要输出完整 JSON，
-	// 显式降档避免思考过长截断正文。
+	// MiniMax-M3.1-Flash 默认思考档位=max，会把 max_output_tokens 整份额度烧在隐藏
+	// 思考上导致正文（生题 JSON）被截断，因此必须显式降档。
+	//
+	// Responses 端点只认嵌套的 reasoning.effort：顶层 reasoning_effort 是 Chat
+	// Completions 的字段，MiniMax 会静默忽略并按默认最高档跑。实测同一批 12 题：
+	// 顶层字段 171s 且 JSON 截断报错，嵌套字段 15s 且思考仅 50 token。
 	if cfg.ReasoningEffort != "" {
-		responsesConfig.ExtraFields = map[string]any{"reasoning_effort": cfg.ReasoningEffort}
+		responsesConfig.ExtraFields = map[string]any{
+			"reasoning": map[string]any{"effort": cfg.ReasoningEffort},
+		}
 	}
 	return agenticopenai.NewResponsesModel(context.Background(), responsesConfig)
 }

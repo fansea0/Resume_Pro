@@ -17,7 +17,8 @@ import (
 )
 
 // questionGenerationMaxTokens 是生题单次调用的输出上限：N 道题含标准答案与
-// 必答/加分点，12 题约需 5~7k token，给 8192 留足余量避免 JSON 被截断。
+// 必答/加分点，12 题正文约 2k token；上限留足余量，避免思考 token 计入预算时
+// JSON 被截断（思考档位见 llm.NewResponsesModel）。
 const questionGenerationMaxTokens = 8192
 
 // ResponsesModel 是生题所需的 Agentic 模型窄接口（model.AgenticModel 的 Generate 半边），

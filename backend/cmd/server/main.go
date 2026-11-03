@@ -180,10 +180,11 @@ func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Log
 		return nil, nil
 	}
 
-	// 生题一次输出 N 道题（12 题约 5~7k token），单题评分也偶发 50s+（含思考）；
-	// 两者都用放宽后的超时，避免慢响应被当成失败。
+	// 生题一次输出 N 道题（12 题正文约 2k token），评分单次秒级。
+	// 思考档位修正为 reasoning.effort 后不再需要为隐藏思考预留 150s，留 90s 兜底
+	// 高推理档位与网络抖动即可。
 	interviewConfig := llmConfig
-	interviewConfig.Timeout = 150 * time.Second
+	interviewConfig.Timeout = 90 * time.Second
 	questionModel, err := llm.NewResponsesModel(interviewConfig)
 	if err != nil {
 		if appEnv == "production" {

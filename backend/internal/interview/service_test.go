@@ -204,6 +204,32 @@ func TestServiceCreateRejectsSecondActive(t *testing.T) {
 	}
 }
 
+// TestServiceCreateSkipsGenerationWhenActive 注定失败的创建在生题前返回：
+// 一次生题实测十几秒，第二次的 409 不该再烧一次 LLM 调用。
+func TestServiceCreateSkipsGenerationWhenActive(t *testing.T) {
+	repo, db := newTestRepo(t)
+	t.Cleanup(func() { _ = db.Close() })
+	store, _ := redisStore(t)
+	graph, err := BuildGraph(repo, &fakeResponses{payloads: []string{gradeJSON("A", "")}}, store)
+	if err != nil {
+		t.Fatalf("build graph: %v", err)
+	}
+	genModel := &fakeResponses{payloads: twoQuestionGenPayload(t)}
+	svc := NewService(repo, store, NewQuestionGenerator(genModel, 1), graph)
+	ctx := context.Background()
+	cfg := serviceTestConfig()
+
+	if _, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil, &cfg); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil, &cfg); !errors.Is(err, ErrActiveInterviewExists) {
+		t.Fatalf("second create err = %v, want ErrActiveInterviewExists", err)
+	}
+	if genModel.calls != 1 {
+		t.Errorf("生题调用次数 = %d, want 1", genModel.calls)
+	}
+}
+
 // TestServiceAnswerRejectsEnded 创建 → abort → answer 返回 ErrAlreadyEnded；
 // 已终止的面试再次 abort 同样拒绝。
 func TestServiceAnswerRejectsEnded(t *testing.T) {
