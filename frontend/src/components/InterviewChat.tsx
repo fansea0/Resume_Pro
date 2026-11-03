@@ -38,6 +38,8 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
   const [submitError, setSubmitError] = useState('');
   const mounted = useRef(false);
   const requestVersion = useRef(0);
+  const activeRef = useRef<HTMLElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const load = useCallback(async () => {
     const version = ++requestVersion.current;
@@ -69,10 +71,28 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
     siblings.push(question);
     followUpsByParent.set(question.parentId, siblings);
   }
-  const current = [...questions].reverse().find(isAwaiting);
+  // 面试图按顺序推进，因此「当前题」= 未回答的追问（刚被抛出），否则 = 最早一道未回答的主问题。
+  // 全部主问题在建面试时就一次性落库，取「最后一个未回答」会永远停在末题。
+  const awaiting = questions.filter(isAwaiting);
+  const current = awaiting.find((question) => question.parentId) ?? awaiting[0];
+  const currentMainId = current ? (current.parentId ?? current.id) : null;
+  // 只渲染到当前题为止：后续题面提前摊开等于给候选人透题。
+  const visibleThrough = currentMainId == null
+    ? mains.length - 1
+    : Math.max(0, mains.findIndex((main) => main.id === currentMainId));
   const answeredMains = mains.filter((question) => question.grade != null).length;
   const followUpUsed = questions.filter((question) => question.parentId).length;
   const budgetLeft = Math.max(0, interview.configSnapshot.followUpBudget - followUpUsed);
+  const totalMains = Math.max(interview.configSnapshot.questionCount, mains.length);
+  const currentNumber = currentMainId == null
+    ? Math.min(answeredMains + 1, totalMains)
+    : visibleThrough + 1;
+
+  useEffect(() => {
+    if (!current) return;
+    activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    textareaRef.current?.focus({ preventScroll: true });
+  }, [current?.id]);
 
   const submit = async (skip = false) => {
     if (submitting) return;
@@ -141,51 +161,75 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
     );
   };
 
-  const renderQuestion = (question: InterviewQuestion) => {
+  const renderTurn = (question: InterviewQuestion, isCurrent: boolean) => {
     const index = mains.findIndex((main) => main.id === question.id);
     const followUps = followUpsByParent.get(question.id) ?? [];
-    const isCurrent = current?.id === question.id;
     return (
-      <article className={`interview-msg${isCurrent ? ' interview-msg--current' : ''}`} key={question.id}>
+      <article
+        className={`interview-msg interview-msg--${isCurrent ? 'current' : 'past'}`}
+        key={question.id}
+        ref={isCurrent ? activeRef : undefined}
+      >
         <header className="interview-msg__head">
           <span aria-hidden="true" className="interview-msg__avatar">面</span>
           <strong>面试官</strong>
           <span className={`interview-chip interview-chip--${question.label === '0' ? 'octopus' : question.label === '1' ? 'algorithm' : 'project'}`}>{LABEL_NAMES[question.label]}</span>
-          {index >= 0 ? <span className="interview-msg__no">第 {index + 1} 题</span> : null}
-          {isCurrent ? (
-            <span className="interview-msg__wait"><span aria-hidden="true" />等待回答</span>
+          {index >= 0 ? <span className="interview-msg__no">第 {index + 1} / {totalMains} 题</span> : null}
+          {question.id === current?.id ? (
+            <span className="interview-msg__wait"><span aria-hidden="true" />{submitting ? '评分中…' : '等待回答'}</span>
           ) : question.grade ? (
             <span className={`interview-grade interview-grade--${GRADE_CLASS[question.grade]}`}>{question.grade}</span>
           ) : null}
         </header>
         <p className="interview-msg__question">{question.question}</p>
         {renderQuestionBody(question)}
-        {followUps.map((followUp) => (
-          <div className="interview-follow" key={followUp.id}>
-            <header className="interview-msg__head">
-              <span className="interview-follow__chip">追问 {followUp.followUpRound}</span>
-              {current?.id === followUp.id ? (
-                <span className="interview-msg__wait"><span aria-hidden="true" />等待回答</span>
-              ) : followUp.grade ? (
-                <span className={`interview-grade interview-grade--${GRADE_CLASS[followUp.grade]}`}>{followUp.grade}</span>
-              ) : null}
-            </header>
-            <p className="interview-msg__question">{followUp.question}</p>
-            {renderQuestionBody(followUp)}
-          </div>
-        ))}
+        {followUps.map((followUp) => {
+          const isCurrentFollowUp = current?.id === followUp.id;
+          return (
+            <div className={`interview-follow${isCurrentFollowUp ? ' interview-follow--current' : ''}`} key={followUp.id}>
+              <header className="interview-msg__head">
+                <span className="interview-follow__chip">追问 {followUp.followUpRound}</span>
+                {isCurrentFollowUp ? (
+                  <span className="interview-msg__wait"><span aria-hidden="true" />{submitting ? '评分中…' : '等待回答'}</span>
+                ) : followUp.grade ? (
+                  <span className={`interview-grade interview-grade--${GRADE_CLASS[followUp.grade]}`}>{followUp.grade}</span>
+                ) : null}
+              </header>
+              <p className="interview-msg__question">{followUp.question}</p>
+              {renderQuestionBody(followUp)}
+            </div>
+          );
+        })}
       </article>
     );
   };
 
   return (
     <section aria-label="AI 模拟面试进行中" className="interview-chat">
-      <div className="interview-live-bar">
-        <span className="interview-stat">进度 <b>{answeredMains}/{interview.configSnapshot.questionCount}</b></span>
-        <span className="interview-stat">追问预算 <b>{budgetLeft}/{interview.configSnapshot.followUpBudget}</b></span>
-        <span className="interview-stat interview-stat--live"><span aria-hidden="true" />进行中</span>
-        <button onClick={onExit} type="button">返回列表</button>
-      </div>
+      <header className="interview-progress">
+        <div className="interview-live-bar">
+          <div className="interview-progress__heading">
+            <p className="interview-progress__eyebrow">当前题目</p>
+            <p className="interview-progress__count">第 <b>{currentNumber}</b> / {totalMains} 题</p>
+          </div>
+          <span className="interview-stat">进度 <b>{answeredMains}/{interview.configSnapshot.questionCount}</b></span>
+          <span className="interview-stat">追问预算 <b>{budgetLeft}/{interview.configSnapshot.followUpBudget}</b></span>
+          <span className="interview-stat interview-stat--live"><span aria-hidden="true" />进行中</span>
+          <button onClick={onExit} type="button">返回列表</button>
+        </div>
+        <ol aria-hidden="true" className="interview-progress__track">
+          {Array.from({ length: totalMains }, (_, position) => {
+            const main = mains[position];
+            const grade = main?.grade;
+            const state = grade ? GRADE_CLASS[grade] : main?.id === currentMainId ? 'current' : 'todo';
+            return (
+              <li className={`interview-progress__seg interview-progress__seg--${state}`} key={position}>
+                {grade ?? position + 1}
+              </li>
+            );
+          })}
+        </ol>
+      </header>
 
       {loading ? (
         <p aria-live="polite" className="interview-chat__status" role="status">正在载入面试进度…</p>
@@ -193,7 +237,7 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
         <p className="interview-chat__error" role="alert">无法载入面试进度，请稍后重试。</p>
       ) : (
         <div className="interview-chat__stream">
-          {mains.map((main) => renderQuestion(main))}
+          {mains.slice(0, visibleThrough + 1).map((main) => renderTurn(main, main.id === currentMainId))}
         </div>
       )}
 
@@ -206,6 +250,7 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
             onChange={(event) => setAnswer(event.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="输入你的回答…（支持换行，⌘ / Ctrl + Enter 提交）"
+            ref={textareaRef}
             value={answer}
           />
           <div className="interview-dock__foot">

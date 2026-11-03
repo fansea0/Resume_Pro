@@ -677,8 +677,24 @@ body { margin: 0; }
 .interview-grade--bm { background: #fff7e8; color: #ff7d00; }
 .interview-grade--c { background: #ffece8; color: #f53f3f; }
 
-.interview-chat { display: grid; gap: .9rem; margin: 0 auto; max-width: 980px; }
-.interview-live-bar { align-items: center; background: #fff; border: 1px solid var(--int-line); border-radius: 12px; box-shadow: 0 8px 20px rgba(28, 51, 84, .05); display: flex; flex-wrap: wrap; gap: .5rem; padding: .6rem .9rem; }
+/* 单题模式下线程很短：把对话区撑满一屏，输入坞才能像主流对话产品一样贴在视口
+   底部，而不是悬在页面中间留一片空白（11rem = 头部 96px + 外壳底部留白 80px）。 */
+.interview-chat { display: grid; gap: .9rem; grid-template-rows: auto minmax(0, 1fr) auto; margin: 0 auto; max-width: 980px; min-height: calc(100dvh - 11rem); }
+.interview-progress { background: #fff; border: 1px solid var(--int-line); border-radius: 12px; box-shadow: 0 8px 20px rgba(28, 51, 84, .05); display: grid; gap: .6rem; padding: .6rem .9rem .75rem; position: sticky; top: .5rem; z-index: 6; }
+.interview-live-bar { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; }
+.interview-progress__heading { display: grid; gap: .05rem; margin-right: .35rem; }
+.interview-progress__eyebrow { color: var(--int-muted); font-size: .68rem; font-weight: 750; letter-spacing: .12em; margin: 0; }
+.interview-progress__count { color: var(--int-ink); font-size: 1.02rem; letter-spacing: -.02em; margin: 0; }
+.interview-progress__count b { font-variant-numeric: tabular-nums; }
+.interview-progress__track { display: flex; gap: 3px; list-style: none; margin: 0; padding: 0; }
+.interview-progress__seg { align-items: center; background: #eef2f8; border-radius: 4px; color: #93a1b5; display: flex; flex: 1 1 0; font-size: .66rem; font-variant-numeric: tabular-nums; height: 1.35rem; justify-content: center; min-width: 0; transition: background .2s ease, color .2s ease; }
+.interview-progress__seg--current { background: var(--int-wash); border: 1px solid #9dc2f2; color: var(--int-accent); font-weight: 700; }
+.interview-progress__seg--s { background: #722ed1; color: #fff; }
+.interview-progress__seg--a { background: #00b42a; color: #fff; }
+.interview-progress__seg--bp { background: #155eef; color: #fff; }
+.interview-progress__seg--b { background: #14c9c9; color: #fff; }
+.interview-progress__seg--bm { background: #ff9a2e; color: #fff; }
+.interview-progress__seg--c { background: #f76560; color: #fff; }
 .interview-stat { align-items: center; background: var(--int-wash); border-radius: 999px; color: var(--int-muted); display: inline-flex; font-size: .78rem; gap: .35rem; padding: .22rem .7rem; }
 .interview-stat b { color: var(--int-ink); font-variant-numeric: tabular-nums; }
 .interview-stat--live { background: #e8ffea; color: #00b42a; }
@@ -688,10 +704,15 @@ body { margin: 0; }
 .interview-live-bar > button:hover { background: #ffece8; }
 .interview-chat__status { color: var(--int-muted); font-size: .86rem; margin: 0; }
 .interview-chat__error { background: #fff5f3; border: 1px solid #f3c8c2; border-radius: 9px; color: #b42318; font-size: .82rem; margin: 0; padding: .6rem .8rem; }
-.interview-chat__stream { display: grid; gap: .75rem; }
+.interview-chat__stream { align-content: start; display: grid; gap: .75rem; }
 
 .interview-msg { background: #fff; border: 1px solid var(--int-line); border-radius: 12px; box-shadow: 0 8px 20px rgba(28, 51, 84, .05); color: var(--int-ink); display: grid; gap: .55rem; padding: .85rem 1rem; }
 .interview-msg--current { border-color: #9dc2f2; box-shadow: 0 0 0 3px rgba(21, 94, 239, .08), 0 8px 20px rgba(28, 51, 84, .05); }
+/* 已答轮次压成两行，对话流只把当前题留在视觉焦点上。 */
+.interview-msg--past { background: #fbfcfe; gap: .45rem; }
+.interview-msg--past .interview-msg__question,
+.interview-msg--past .interview-bubble__text { -webkit-box-orient: vertical; -webkit-line-clamp: 2; display: -webkit-box; overflow: hidden; }
+.interview-msg--past .interview-msg__head strong { color: var(--int-muted); }
 .interview-msg__head { align-items: center; display: flex; flex-wrap: wrap; gap: .45rem; }
 .interview-msg__avatar { align-items: center; background: linear-gradient(135deg, #155eef, #722ed1); border-radius: 50%; color: #fff; display: inline-flex; flex: 0 0 auto; font-size: .68rem; font-weight: 700; height: 1.45rem; justify-content: center; width: 1.45rem; }
 .interview-msg__head strong { font-size: .84rem; }
@@ -711,13 +732,14 @@ body { margin: 0; }
 .interview-fold__answer { font-size: .8rem; line-height: 1.6; margin: 0; overflow-wrap: anywhere; }
 .interview-fold__empty { color: var(--int-muted); font-size: .78rem; margin: 0; }
 .interview-follow { border-left: 2px solid #c9d5e5; display: grid; gap: .55rem; margin-left: 1.2rem; padding-left: .8rem; }
+.interview-follow--current { border-left-color: #9dc2f2; }
 .interview-follow__chip { background: #f2f5f9; border-radius: 5px; color: #536176; font-size: .7rem; font-weight: 650; padding: .06rem .45rem; }
 .interview-follow__head { align-items: center; display: flex; gap: .45rem; margin: 0; }
 .interview-points { align-items: center; display: flex; flex-wrap: wrap; gap: .3rem; margin: 0; }
 .interview-points__label { color: var(--int-muted); flex: 0 0 auto; font-size: .7rem; }
 .interview-point { background: #f2f5f9; border-radius: 6px; color: #536176; font-size: .72rem; padding: .08rem .5rem; }
 .interview-point--bonus { background: #fff7e8; color: #b25e00; }
-.interview-dock { background: #fff; border: 1px solid #9dc2f2; border-radius: 12px; box-shadow: 0 0 0 3px rgba(21, 94, 239, .08), 0 8px 20px rgba(28, 51, 84, .05); display: grid; gap: .5rem; padding: .7rem .8rem; }
+.interview-dock { background: #fff; border: 1px solid #9dc2f2; border-radius: 12px; bottom: .75rem; box-shadow: 0 0 0 3px rgba(21, 94, 239, .08), 0 8px 20px rgba(28, 51, 84, .05); display: grid; gap: .5rem; padding: .7rem .8rem; position: sticky; z-index: 5; }
 .interview-dock textarea { border: 0; border-radius: 8px; color: var(--int-ink); font: inherit; min-height: 3.4rem; padding: .35rem .45rem; resize: vertical; width: 100%; }
 .interview-dock textarea:focus-visible { outline: 3px solid var(--int-accent); outline-offset: 2px; }
 .interview-dock__foot { align-items: center; border-top: 1px solid var(--int-line); display: flex; flex-wrap: wrap; gap: .6rem; padding-top: .55rem; }
