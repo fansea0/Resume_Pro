@@ -411,6 +411,29 @@ func TestGraphAnswerWithoutSession(t *testing.T) {
 	}
 }
 
+// TestGraphStartInterviewRejectsEndedInterview 契约 §10 守卫：对已完成/已终止的面试
+// StartInterview 必须报错，而不是整场从 START 重启图（否则随后的 Answer 会从第 1 题
+// 覆写已答数据）。
+func TestGraphStartInterviewRejectsEndedInterview(t *testing.T) {
+	repo, db := newTestRepo(t)
+	defer db.Close()
+	ctx := context.Background()
+	iv, err := repo.CreateInterviewWithQuestions(ctx, 1, graphTestConfig(), 1, 1, graphQuestions())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := repo.UpdateInterviewStatus(ctx, iv.ID, "completed", nil, nil); err != nil {
+		t.Fatalf("mark completed: %v", err)
+	}
+	graph, err := BuildGraph(repo, &fakeResponses{payloads: []string{gradeJSON("A", "")}}, newGraphTestStore())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if _, err := graph.StartInterview(ctx, iv.ID); err == nil {
+		t.Fatal("StartInterview on a completed interview should fail")
+	}
+}
+
 // TestGraphAnswerAfterGraphRebuild 进程重启（Graph 实例重建、interruptID 丢失）后
 // Answer：先重放让 ask_question 重新中断拿到新 interruptID，再定向恢复评分推进。
 func TestGraphAnswerAfterGraphRebuild(t *testing.T) {

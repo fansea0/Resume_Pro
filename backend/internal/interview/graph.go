@@ -372,6 +372,12 @@ func (dep graphDeps) askQuestion(ctx context.Context, in string) (string, error)
 			if err != nil {
 				return fmt.Errorf("interview: load interview %d: %w", id, err)
 			}
+			// 契约 §10 守卫：非 active 的面试不得（重）启图——checkpoint 已删时
+			// 从 START 重跑会让随后的 Answer 从第 1 题覆写已答数据。Service 层
+			// 已在入口校验 status，这里是图内的最后一道闸。
+			if iv.Status != "active" {
+				return fmt.Errorf("interview: interview %d is %s, not active", id, iv.Status)
+			}
 			var cfg InterviewConfig
 			if err := json.Unmarshal([]byte(iv.ConfigSnapshot), &cfg); err != nil {
 				return fmt.Errorf("interview: parse config snapshot: %w", err)
