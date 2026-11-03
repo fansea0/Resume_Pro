@@ -13,7 +13,8 @@ import (
 // 职责边界：
 //   - 租户隔离在本层校验（契约 §4：repo 的写方法不带 tenant 参数，调用前先
 //     GetInterview(tenantID, id) 确认归属）；
-//   - resumeText 由调用方（T9 handler）从简历 JSON 提取后传入，本层不 import resume 包；
+//   - resumeText 与 jd（目标岗位上下文）由调用方（T9 handler）分别从简历 JSON 与
+//     target_jobs 行提取后传入，本层不 import resume / targetjob 包；
 //   - 生题结果 → MainQuestionInput 的转换在本层完成（契约 §8），must/bonus 点由
 //     repository 的 nullableExtra 序列化为 extra 列的 {"must_points":[],"bonus_points":[]}。
 type Service struct {
@@ -46,20 +47,25 @@ var (
 // status=active 复检仍是一道闸，不会出现评分错乱级别的破坏。
 const answerLockTTLSeconds = 60
 
-// CreateInterview 创建一场面试：默认值合并 → LLM 生题 → 事务落库 → 启动面试图（首题挂起）。
+// CreateInterview 创建一场面试：默认值合并 → LLM 生题（JD + 简历 + 配置）→ 事务落库
+// → 启动面试图（首题挂起）。
+//
+// jd 是目标岗位上下文（JDContext），由调用方（T9 handler）从 target_jobs 行提取
+// Company/Position/Requirements 构造；可为 nil（生题器按空 JD 兜底），但传入后生成
+// 的题目才贴合目标岗位（spec「生题」：生题输入 = JD + 简历 + 配置）。
 //
 // cfg 为 nil 时用 DefaultInterviewConfig.Resolved()；非 nil 时用 cfg.Resolved()
 //（FollowUpBudget<0 同样解析为 N/2）。同租户已有 active 面试返回 ErrActiveInterviewExists。
 //
 // 成功后图已挂起在第一题上；第一题通过 FirstQuestion 获取（保持契约 §1 的
 // (*Interview, error) 签名，见 FirstQuestion 注释）。
-func (s *Service) CreateInterview(ctx context.Context, tenantID, targetJobID, resumeID int64, resumeText string, cfg *InterviewConfig) (*Interview, error) {
+func (s *Service) CreateInterview(ctx context.Context, tenantID, targetJobID, resumeID int64, resumeText string, jd *JDContext, cfg *InterviewConfig) (*Interview, error) {
 	resolved := DefaultInterviewConfig.Resolved()
 	if cfg != nil {
 		resolved = cfg.Resolved()
 	}
 
-	generated, err := s.gen.GenerateQuestions(ctx, resumeText, nil, resolved)
+	generated, err := s.gen.GenerateQuestions(ctx, resumeText, jd, resolved)
 	if err != nil {
 		return nil, fmt.Errorf("interview: generate questions: %w", err)
 	}

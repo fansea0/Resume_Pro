@@ -63,6 +63,12 @@ func twoQuestionGenPayload(t *testing.T) []string {
 	return []string{questionsPayload(t, octopusQuestion(), projectQuestion())}
 }
 
+// testJD 目标岗位上下文（spec「生题」：生题输入 = JD + 简历 + 配置），
+// 由调用方从 target_jobs 行提取构造（T9）。
+func testJD() *JDContext {
+	return &JDContext{Company: "X 公司", Position: "Go 后端", Requirements: "熟悉 Redis 与 MySQL"}
+}
+
 // TestServiceCreateAndAnswer 创建 → 首题 → 回答评分。
 // 简报 Step 1 语义保留；造数按控制器裁定 F3 修正为「合法题集 + 题数一致的 cfg」
 //（简报草图的空 questions[] 与 `payload string` 字段均与实际 API 不符）。
@@ -71,7 +77,7 @@ func TestServiceCreateAndAnswer(t *testing.T) {
 	ctx := context.Background()
 	cfg := serviceTestConfig()
 
-	iv, err := svc.CreateInterview(ctx, 1, 3, 7, "简历文本", &cfg)
+	iv, err := svc.CreateInterview(ctx, 1, 3, 7, "简历文本", testJD(), &cfg)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -140,7 +146,7 @@ func TestServiceCreateUsesDefaultConfig(t *testing.T) {
 	_, svc, _, _ := newTestService(t, []string{defaultConfigQuestionsPayload(t)}, []string{gradeJSON("A", "")})
 	ctx := context.Background()
 
-	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil)
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -167,7 +173,7 @@ func TestServiceCreateResolvesNegativeBudget(t *testing.T) {
 
 	cfg := serviceTestConfig()
 	cfg.FollowUpBudget = -1
-	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", &cfg)
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil, &cfg)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -187,13 +193,13 @@ func TestServiceCreateRejectsSecondActive(t *testing.T) {
 	ctx := context.Background()
 	cfg := serviceTestConfig()
 
-	if _, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", &cfg); err != nil {
+	if _, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil, &cfg); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	if _, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", &cfg); !errors.Is(err, ErrActiveInterviewExists) {
+	if _, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil, &cfg); !errors.Is(err, ErrActiveInterviewExists) {
 		t.Fatalf("second create err = %v, want ErrActiveInterviewExists", err)
 	}
-	if _, err := svc.CreateInterview(ctx, 2, 1, 1, "简历文本", &cfg); err != nil {
+	if _, err := svc.CreateInterview(ctx, 2, 1, 1, "简历文本", nil, &cfg); err != nil {
 		t.Fatalf("other tenant create: %v", err)
 	}
 }
@@ -205,7 +211,7 @@ func TestServiceAnswerRejectsEnded(t *testing.T) {
 	ctx := context.Background()
 	cfg := serviceTestConfig()
 
-	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", &cfg)
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil, &cfg)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -234,7 +240,7 @@ func TestServiceAnswerRejectsConcurrent(t *testing.T) {
 	ctx := context.Background()
 	cfg := serviceTestConfig()
 
-	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", &cfg)
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil, &cfg)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -259,7 +265,7 @@ func TestServiceAnswerSessionExpired(t *testing.T) {
 	ctx := context.Background()
 	cfg := serviceTestConfig()
 
-	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", &cfg)
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil, &cfg)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -287,7 +293,7 @@ func TestServiceTenantIsolation(t *testing.T) {
 	ctx := context.Background()
 	cfg := serviceTestConfig()
 
-	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", &cfg)
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil, &cfg)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -325,7 +331,7 @@ func TestServiceQuestionsFlattensFollowUps(t *testing.T) {
 	ctx := context.Background()
 	cfg := serviceTestConfig()
 
-	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", &cfg)
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历文本", nil, &cfg)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -371,5 +377,45 @@ func TestServiceQuestionsFlattensFollowUps(t *testing.T) {
 	empty, err := svc.List(ctx, 2)
 	if err != nil || len(empty) != 0 {
 		t.Errorf("list other tenant = %v err = %v, want empty", empty, err)
+	}
+}
+
+// TestServiceCreatePassesJDToGenerator 创建时把 JD 上下文传入生题器
+//（spec「生题」：生题输入 = JD + 简历 + 配置），防止参数在编排层被静默丢弃。
+func TestServiceCreatePassesJDToGenerator(t *testing.T) {
+	repo, db := newTestRepo(t)
+	t.Cleanup(func() { _ = db.Close() })
+	store, _ := redisStore(t)
+	genFake := &fakeResponses{payloads: twoQuestionGenPayload(t)}
+	graph, err := BuildGraph(repo, &fakeResponses{payloads: []string{gradeJSON("A", "")}}, store)
+	if err != nil {
+		t.Fatalf("build graph: %v", err)
+	}
+	svc := NewService(repo, store, NewQuestionGenerator(genFake, 1), graph)
+
+	cfg := serviceTestConfig()
+	if _, err := svc.CreateInterview(context.Background(), 1, 1, 1, "简历文本", testJD(), &cfg); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if len(genFake.inputs) == 0 {
+		t.Fatal("generator was not called")
+	}
+	// 生题消息的第 2 条是 user JSON payload（第 1 条是 system 规则），
+	// user 消息文本在 UserInputText 块中；JD 的三个字段必须原样进入其中。
+	var sent questionUserPayload
+	var userMsg string
+	for _, block := range genFake.inputs[0][1].ContentBlocks {
+		if block != nil && block.UserInputText != nil {
+			userMsg += block.UserInputText.Text
+		}
+	}
+	if err := json.Unmarshal([]byte(userMsg), &sent); err != nil {
+		t.Fatalf("unmarshal generator user payload %q: %v", userMsg, err)
+	}
+	if sent.Company != "X 公司" || sent.Position != "Go 后端" || sent.Requirements != "熟悉 Redis 与 MySQL" {
+		t.Errorf("generator payload jd = %q / %q / %q, want testJD fields", sent.Company, sent.Position, sent.Requirements)
+	}
+	if sent.ResumeText != "简历文本" {
+		t.Errorf("generator payload resumeText = %q, want 简历文本", sent.ResumeText)
 	}
 }
