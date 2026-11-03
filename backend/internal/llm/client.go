@@ -118,13 +118,20 @@ func NewChatModel(cfg Config) (model.ChatModel, error) {
 // *schema.AgenticMessage). Compile-time wiring only for now; callers route
 // interview question generation through it.
 func NewResponsesModel(cfg Config) (model.AgenticModel, error) {
-	return agenticopenai.NewResponsesModel(context.Background(), &agenticopenai.ResponsesConfig{
+	responsesConfig := &agenticopenai.ResponsesConfig{
 		APIKey:    cfg.APIKey,
 		BaseURL:   cfg.BaseURL,
 		Model:     cfg.Model,
 		MaxTokens: &cfg.MaxTokens,
 		Timeout:   &cfg.Timeout,
-	})
+	}
+	// MiniMax-M3.1-Flash 默认 reasoning_effort=max 会烧光 token 预算在隐藏思考上
+	//（与 ChatModel 的 AI_REASONING_EFFORT 语义一致）：生题/评分需要输出完整 JSON，
+	// 显式降档避免思考过长截断正文。
+	if cfg.ReasoningEffort != "" {
+		responsesConfig.ExtraFields = map[string]any{"reasoning_effort": cfg.ReasoningEffort}
+	}
+	return agenticopenai.NewResponsesModel(context.Background(), responsesConfig)
 }
 
 type structuredOutputChatModel struct {

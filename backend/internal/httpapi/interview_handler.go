@@ -84,7 +84,7 @@ func (h *interviewHandler) create(ginCtx *gin.Context) {
 			writeError(ginCtx, http.StatusConflict, err.Error())
 			return
 		}
-		writeError(ginCtx, http.StatusInternalServerError, "could not create interview")
+		writeError(ginCtx, http.StatusInternalServerError, "could not create interview", err)
 		return
 	}
 	first, err := h.service.FirstQuestion(ginCtx.Request.Context(), principal.TenantID, iv.ID)

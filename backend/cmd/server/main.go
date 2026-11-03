@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/jmoiron/sqlx"
@@ -179,7 +180,19 @@ func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Log
 		return nil, nil
 	}
 
-	responsesModel, err := llm.NewResponsesModel(llmConfig)
+	// 生题一次输出 N 道题（12 题约 5~7k token），单题评分也偶发 50s+（含思考）；
+	// 两者都用放宽后的超时，避免慢响应被当成失败。
+	interviewConfig := llmConfig
+	interviewConfig.Timeout = 150 * time.Second
+	questionModel, err := llm.NewResponsesModel(interviewConfig)
+	if err != nil {
+		if appEnv == "production" {
+			return nil, fmt.Errorf("interview requires responses model: %w", err)
+		}
+		logger.WithError(err).Warn("AI interview disabled (responses model unavailable)")
+		return nil, nil
+	}
+	responsesModel, err := llm.NewResponsesModel(interviewConfig)
 	if err != nil {
 		if appEnv == "production" {
 			return nil, fmt.Errorf("interview requires responses model: %w", err)
@@ -189,7 +202,7 @@ func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Log
 	}
 
 	repo := interview.NewRepository(db)
-	gen := interview.NewQuestionGenerator(responsesModel, llmConfig.MaxRetries)
+	gen := interview.NewQuestionGenerator(questionModel, llmConfig.MaxRetries)
 	graph, err := interview.BuildGraph(repo, responsesModel, redisStore)
 	if err != nil {
 		return nil, fmt.Errorf("build interview graph: %w", err)

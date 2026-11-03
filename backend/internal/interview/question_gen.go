@@ -16,6 +16,10 @@ import (
 	"resumepro/backend/internal/interview/prompts"
 )
 
+// questionGenerationMaxTokens 是生题单次调用的输出上限：N 道题含标准答案与
+// 必答/加分点，12 题约需 5~7k token，给 8192 留足余量避免 JSON 被截断。
+const questionGenerationMaxTokens = 8192
+
 // ResponsesModel 是生题所需的 Agentic 模型窄接口（model.AgenticModel 的 Generate 半边），
 // 收窄后便于测试替换 fake 实现。
 type ResponsesModel interface {
@@ -136,7 +140,9 @@ func (g *QuestionGenerator) GenerateQuestions(ctx context.Context, resumeText st
 		return nil, err
 	}
 
-	response, err := g.cm.Generate(ctx, messages)
+	// 生题一次输出 N 道题（每题含标准答案、必答/加分点），默认 4096 token 会被截断，
+	// 显式给足空间（12 题约 5~7k token，8192 留有余量）。
+	response, err := g.cm.Generate(ctx, messages, model.WithMaxTokens(questionGenerationMaxTokens))
 	if err != nil {
 		return nil, fmt.Errorf("generate questions: %w", err)
 	}
@@ -147,7 +153,7 @@ func (g *QuestionGenerator) GenerateQuestions(ctx context.Context, resumeText st
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		retryResponse, retryErr := g.cm.Generate(ctx, repairQuestionMessages(messages, content, err))
+		retryResponse, retryErr := g.cm.Generate(ctx, repairQuestionMessages(messages, content, err), model.WithMaxTokens(questionGenerationMaxTokens))
 		if retryErr != nil {
 			return nil, fmt.Errorf("generate questions: %w", retryErr)
 		}

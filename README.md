@@ -126,6 +126,13 @@ Deploy the API and client over HTTPS, set `COOKIE_SECURE=true`, and use a high-e
 - 目标岗位是当前用户的资产，可维护多份；`requirements` 去除首尾空白后按当前后端的字节长度校验至少为 `10`，`company` 和 `position` 可留空。
 - 简历可通过 `targetJobId` 绑定一份目标岗位；创建或更新简历时会校验该目标岗位属于当前租户。
 
+### AI 模拟面试
+
+- 入口：目标岗位卡片上的「开始 AI 面试」，基于目标 JD + 简历生成题目（八股/算法/项目），逐题提问、逐题评分（`C/B-/B/B+/A/S`），可追问，全部答完后给出总评（中位数 + 比例门槛算法）。
+- 依赖：**Redis**（面试状态 checkpoint 存储）。未配置时后端启动打印告警，面试接口统一返回 `503`，不影响其它功能。
+- 环境变量：`REDIS_ADDR`（默认 `127.0.0.1:6379`）、`REDIS_PASSWORD`（可选）、`REDIS_DB`（默认 `0`）。
+- 接口：`POST /api/interviews`（创建，返回面试 + 第一题）、`GET /api/interviews`（列表）、`GET /api/interviews/:id`（详情）、`GET /api/interviews/:id/questions`（回看题目与答案）、`POST /api/interviews/:id/answer`（回答，`{answer?, skip?}`）、`POST /api/interviews/:id/abort`（放弃）。
+
 ## Verification
 
 ```bash
