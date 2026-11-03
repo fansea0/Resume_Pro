@@ -68,7 +68,7 @@ export function InterviewConfigModal({ error, onCancel, onConfirm, submitting, t
     const focusableSelector = 'button:not(:disabled), input:not(:disabled), textarea:not(:disabled)';
     const focusableElements = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector));
     const handleFocusIn = (event: FocusEvent) => {
-      if (!dialog.contains(event.target as Node)) focusableElements()[0]?.focus();
+      if (!dialog.contains(event.target as Node)) dialog.querySelector<HTMLElement>('input, textarea')?.focus();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !submittingRef.current) {
@@ -94,7 +94,7 @@ export function InterviewConfigModal({ error, onCancel, onConfirm, submitting, t
     };
     document.addEventListener('focusin', handleFocusIn);
     document.addEventListener('keydown', handleKeyDown);
-    focusableElements()[0]?.focus();
+    dialog.querySelector<HTMLElement>('input, textarea')?.focus();
     return () => {
       document.removeEventListener('focusin', handleFocusIn);
       document.removeEventListener('keydown', handleKeyDown);

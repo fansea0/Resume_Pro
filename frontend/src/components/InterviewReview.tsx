@@ -100,7 +100,7 @@ export function InterviewReview({ interview, onBack }: InterviewReviewProps) {
           <span className="interview-hero__letter">{interview.overallGrade ?? '—'}</span>
           <div>
             <b>{interview.overallGrade ? '总评等级' : interview.status === 'aborted' ? '面试已放弃，未生成总评' : '总评等级'}</b>
-            <span>{new Date(interview.completedAt ?? interview.updatedAt).toLocaleString()} 完成 · 12 题制 · 追问 {followUpUsed} 次</span>
+            <span>{new Date(interview.completedAt ?? interview.updatedAt).toLocaleString()} 完成 · {interview.configSnapshot?.questionCount ?? mains.length} 题制 · 追问 {followUpUsed} 次</span>
           </div>
         </div>
         {onBack ? <button onClick={onBack} type="button">返回列表</button> : null}
