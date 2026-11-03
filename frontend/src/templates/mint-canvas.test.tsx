@@ -236,4 +236,49 @@ describe('MintCanvasTemplate', () => {
     const markdown = container.querySelector('.template-mint-canvas__markdown')?.textContent ?? '';
     expect(markdown).toContain('负责订单中台架构方案，输出 4 份 RFC 文档。');
   });
+
+
+  it('renders the project link as an anchor when the display switch is on', () => {
+    const withLink = {
+      ...document,
+      sections: document.sections.map((section) => (
+        section.type === 'project'
+          ? { ...section, content: { items: section.content.items.map((item) => ({ ...item, link: 'https://example.com', showLink: true })) } }
+          : section
+      )),
+    };
+    const { container } = render(<MintCanvasTemplate document={withLink} />);
+    const link = container.querySelector('a[href="https://example.com"]');
+    expect(link).not.toBeNull();
+    expect(link?.textContent).toBe('https://example.com');
+    expect(link?.closest('.template-mint-canvas__link')).not.toBeNull();
+  });
+
+  it('hides the project link when the display switch is off', () => {
+    const hidden = {
+      ...document,
+      sections: document.sections.map((section) => (
+        section.type === 'project'
+          ? { ...section, content: { items: section.content.items.map((item) => ({ ...item, link: 'https://example.com', showLink: false })) } }
+          : section
+      )),
+    };
+    const { container } = render(<MintCanvasTemplate document={hidden} />);
+    expect(container.querySelector('.template-mint-canvas__link')).toBeNull();
+    expect(container.querySelector('a[href="https://example.com"]')).toBeNull();
+  });
+
+  it('drops unsafe project links', () => {
+    const unsafe = {
+      ...document,
+      sections: document.sections.map((section) => (
+        section.type === 'project'
+          ? { ...section, content: { items: section.content.items.map((item) => ({ ...item, link: 'javascript:alert(1)', showLink: true })) } }
+          : section
+      )),
+    };
+    const { container } = render(<MintCanvasTemplate document={unsafe} />);
+    expect(container.querySelector('.template-mint-canvas__link')).toBeNull();
+    expect(container.querySelector('a')).toBeNull();
+  });
 });

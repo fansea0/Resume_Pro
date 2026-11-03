@@ -308,6 +308,10 @@
   padding: .5mm 1.8mm;
 }
 .template-mint-canvas__role { color: var(--mint-muted); font-size: .84rem; margin: 0 0 .25rem; }
+/* Project link reads as a metadata row, matching the introduction and tech-stack labels. */
+.template-mint-canvas__link { color: var(--mint-text); font-size: .82rem; margin: 0 0 1.6mm; overflow-wrap: anywhere; }
+.template-mint-canvas__link a { color: var(--mint-primary-deep); text-decoration: underline; }
+.template-mint-canvas__link a:hover { text-decoration: none; }
 /* Role shares the title row: title left, role centred, date right. */
 .template-mint-canvas__entry-heading--role { gap: .6rem; }
 .template-mint-canvas__entry-heading--role > .template-mint-canvas__role {

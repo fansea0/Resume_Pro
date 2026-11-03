@@ -8,7 +8,7 @@ import type {
   ResumeSection,
 } from '../types/resume';
 import { ResumeAvatar } from './ResumeAvatar';
-import { ResumeMarkdown } from '../components/ResumeMarkdown';
+import { ResumeMarkdown, safeUrl } from '../components/ResumeMarkdown';
 import { renderInlineMarkdown } from '../components/ResumeInline';
 import { EntryLocateButton, ITEM_ANCHOR_ATTR, SectionLocateButton, type LocateHandler } from '../components/ResumeLocate';
 
@@ -210,6 +210,7 @@ function MintProjectItem(section: ResumeSection, item: ProjectItem, onLocate?: L
   const hasDate = Boolean(item.startDate || item.endDate);
   const showIntroduction = Boolean(item.showIntroduction && item.introduction);
   const techChips = item.showTechStack ? splitTechStack(item.techStack) : [];
+  const safeLink = item.showLink ? safeUrl(item.link) : '';
   return (
     <article className="template-mint-canvas__entry" data-resume-entry={item.id} {...{ [ITEM_ANCHOR_ATTR]: item.id }}>
       <div
@@ -227,6 +228,12 @@ function MintProjectItem(section: ResumeSection, item: ProjectItem, onLocate?: L
           </time>
         )}
       </div>
+      {safeLink && (
+        <p className="template-mint-canvas__link">
+          <span className="template-mint-canvas__meta-label">项目链接：</span>
+          <a href={safeLink}>{item.link}</a>
+        </p>
+      )}
       {showIntroduction && (
         <p className="template-mint-canvas__entry-sub">
           <span className="template-mint-canvas__meta-label">项目介绍：</span>
