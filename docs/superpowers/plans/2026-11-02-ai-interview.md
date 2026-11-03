@@ -32,7 +32,7 @@
 - Consumes: 无（基础任务）
 - Produces: 编译可通过的依赖集
 
-- [ ] **Step 1: 升级依赖**
+- [x] **Step 1: 升级依赖**
 
 Run:
 ```bash
@@ -43,12 +43,12 @@ go get github.com/gomodule/redigo@latest
 go mod tidy
 ```
 
-- [ ] **Step 2: 全量编译与测试**
+- [x] **Step 2: 全量编译与测试**
 
 Run: `cd backend && go build ./... && go test ./...`
 Expected: 全部编译通过、测试全绿（eino v0.9.15 → v0.9.21 接口兼容，现有 ai 包不受影响）。
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/go.mod backend/go.sum
@@ -65,7 +65,7 @@ git commit -m "chore(deps): eino 升级 v0.9.21，新增 agenticopenai 与 redig
 **Interfaces:**
 - Produces: 表 `interviews`（id/tenant_id/target_job_id/resume_id/config_snapshot/status/overall_grade/overall_review/created_at/updated_at/completed_at）；表 `interview_questions`（id/interview_id/parent_id/follow_up_round/label/question/standard_answer/user_answer/extra/grade/created_at）
 
-- [ ] **Step 1: 在 schema 常量追加建表语句**
+- [x] **Step 1: 在 schema 常量追加建表语句**
 
 在 `internal/store/migrate.go` 的 `schema` 常量末尾（`idx_users_tenant_id` 之后）追加：
 
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS interview_questions (
 CREATE INDEX IF NOT EXISTS idx_interview_questions_interview ON interview_questions(interview_id);
 ```
 
-- [ ] **Step 2: 写迁移测试**
+- [x] **Step 2: 写迁移测试**
 
 Create `backend/internal/store/migrate_test.go`（若不存在则新建；已有则追加用例）：
 
@@ -122,12 +122,12 @@ func TestMigrateCreatesInterviewTables(t *testing.T) {
 
 （`newTestDB` 按该文件现有测试辅助函数复用；若无则用 `store.OpenSQLite(":memory:")` + `Migrate`。）
 
-- [ ] **Step 3: 跑测试确认通过**
+- [x] **Step 3: 跑测试确认通过**
 
 Run: `cd backend && go test ./internal/store/ -run TestMigrateCreatesInterviewTables -v`
 Expected: PASS。
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add backend/internal/store/migrate.go backend/internal/store/migrate_test.go
@@ -155,7 +155,7 @@ git commit -m "feat(store): 新增 interviews 与 interview_questions 表迁移"
   - `var DefaultInterviewConfig = InterviewConfig{QuestionCount: 12, LabelCounts: map[QuestionLabel]int{LabelOctopus: 5, LabelAlgorithm: 2, LabelProject: 5}, FollowUpBudget: -1, PerQuestionFollowUpLimit: 1}`
   - `func (c InterviewConfig) Resolved() InterviewConfig`（FollowUpBudget<0 时置为 QuestionCount/2）
 
-- [ ] **Step 1: 写总评算法测试（红）**
+- [x] **Step 1: 写总评算法测试（红）**
 
 Create `grading_test.go`：
 
@@ -201,12 +201,12 @@ func TestClampGrade(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/interview/ -run TestComputeOverallGrade -v`
 Expected: FAIL（`ComputeOverallGrade` 未定义）。
 
-- [ ] **Step 3: 写 model.go 与 grading.go（实现）**
+- [x] **Step 3: 写 model.go 与 grading.go（实现）**
 
 `model.go` 放 Grade/QuestionLabel/InterviewConfig 类型与常量（见 Interfaces）。`grading.go`：
 
@@ -286,12 +286,12 @@ func GradeFromOrder(o int) Grade {
 
 > 注意：`n/2` 对偶数 N 取下标 `N/2-1`（如 N=12 → orders[5]），正是「偶数取下档」；奇数 N=13 → orders[6] 正中间。与 spec 一致。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd backend && go test ./internal/interview/ -v`
 Expected: PASS（含 ClampGrade）。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/internal/interview/
@@ -322,7 +322,7 @@ git commit -m "feat(interview): 模型类型与总评算法（中位数+比例�
   - `var ErrActiveInterviewExists = errors.New("active interview already exists")`；`var ErrNotFound = errors.New("not found")`（复用 targetjob 风格的错误声明）
   - `func (r *Repository) ExtraFields(extra string) (must, bonus []string)`（解析 `{"must_points":[],"bonus_points":[]}`，容错）
 
-- [ ] **Step 1: 写 repository 测试（红）**
+- [x] **Step 1: 写 repository 测试（红）**
 
 Create `repository_test.go`（用 `store.OpenSQLite(":memory:")` + `store.Migrate` 建测试库）：
 
@@ -398,21 +398,21 @@ func TestQuestionChainAndFollowUp(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/interview/ -run TestCreateInterview -v`
 Expected: FAIL（`CreateInterview` 未定义）。
 
-- [ ] **Step 3: 实现 repository.go**
+- [x] **Step 3: 实现 repository.go**
 
 按现有 targetjob 模式（`sqlx` + `store.BeginSQLiteWriteTx`），注意 CreateInterview 事务内先查 active 再插入；config_snapshot 用 `json.Marshal(cfg)`；主问题 batch 用循环 `INSERT`（数量 ≤ 20，无需 ExecBatch）。label 列存 `int(label)`，读回用 `QuestionLabel(row.Label)`。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd backend && go test ./internal/interview/ -v`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/internal/interview/repository.go backend/internal/interview/repository_test.go
@@ -437,7 +437,7 @@ git commit -m "feat(interview): repository 落库（事务建面试、追问树�
   - `func (s *RedisStore) Close() error`
   - 并发锁辅助：`func (s *RedisStore) TryLock(ctx, key string, ttlSeconds int) (bool, error)`（`SET key 1 NX EX ttl`）、`func (s *RedisStore) Unlock(ctx, key string) error`
 
-- [ ] **Step 1: 写测试（红）——需要本地 Redis**
+- [x] **Step 1: 写测试（红）——需要本地 Redis**
 
 测试要求本地 Redis（`127.0.0.1:6379`）。若环境无 Redis，测试跳过（`t.Skip`）：
 
@@ -499,12 +499,12 @@ func TestRedisStoreTryLock(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/interview/ -run TestRedisStore -v`
 Expected: 有 Redis 时 FAIL（`NewRedisStore` 未定义）；无 Redis 时 SKIP（可接受，但实现完需在本地验证）。
 
-- [ ] **Step 3: 实现 redis_store.go**
+- [x] **Step 3: 实现 redis_store.go**
 
 redigo 用法：
 
@@ -587,12 +587,12 @@ func (s *RedisStore) Unlock(_ context.Context, key string) error {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd backend && go test ./internal/interview/ -run TestRedisStore -v`
 Expected: PASS（本地需 Redis；本机已有 `redis-server` 或 docker 起的实例则直接跑）。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/internal/interview/redis_store.go backend/internal/interview/redis_store_test.go
@@ -618,7 +618,7 @@ git commit -m "feat(interview): Redis CheckPointStore 与 SETNX 并发锁（redi
   - `type JDContext struct { Company, Position, Requirements string }`
   - `llm.NewResponsesModel(llm.Config) (model.AgenticModel, error)`（agenticopenai.NewResponsesModel）
 
-- [ ] **Step 1: 写 fake 模型与生题测试（红）**
+- [x] **Step 1: 写 fake 模型与生题测试（红）**
 
 Create `question_gen_test.go`：
 
@@ -660,24 +660,24 @@ func TestGenerateQuestions(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/interview/ -run TestGenerateQuestions -v`
 Expected: FAIL。
 
-- [ ] **Step 3: 实现 question_gen.go**
+- [x] **Step 3: 实现 question_gen.go**
 
 - prompt 用现有 `internal/ai/prompts` 的 `embed.go` 模式（`//go:embed *.tmpl`）——新建 `backend/internal/interview/prompts/questions.tmpl`，内容按设计文档生题 prompt（JD + 简历 + 配置，输出 `{"questions":[{question,standardAnswer,label,mustPoints,bonusPoints}]}`）。
 - 调用 `g.cm.Generate(ctx, []*schema.AgenticMessage{system, user}, llm.WithJSONSchemaResponse(...))`；schema 用 `eino-contrib/jsonschema`（现有 `internal/ai/schemas` 模式）。
 - 校验：`label` 转 `QuestionLabel` 必须 ∈ {0,1,2}；`question` 非空；**八股/算法题 `standardAnswer` 必须非空，项目题允许空**；数量等于 `cfg.QuestionCount`（不足或超出 → 重试一次，仍失败 → error）。
 - `maxRetries` 复用现有契约修复模式（失败追加纠正消息再调一次）。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd backend && go test ./internal/interview/ -v`
 Expected: PASS。
 
-- [ ] **Step 5: 实现 llm.NewResponsesModel 工厂**
+- [x] **Step 5: 实现 llm.NewResponsesModel 工厂**
 
 在 `internal/llm/client.go` 追加：
 
@@ -695,12 +695,12 @@ func NewResponsesModel(cfg Config) (model.AgenticModel, error) {
 
 （import：`github.com/cloudwego/eino-ext/components/model/agenticopenai`、`github.com/cloudwego/eino/components/model`。注意 `model.AgenticModel` 与现有 `model.ChatModel` 并存。）
 
-- [ ] **Step 6: 编译 + 全量测试**
+- [x] **Step 6: 编译 + 全量测试**
 
 Run: `cd backend && go build ./... && go test ./internal/...`
 Expected: 全绿。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add backend/internal/interview/question_gen.go backend/internal/interview/question_gen_test.go backend/internal/interview/prompts/ backend/internal/llm/client.go
@@ -725,7 +725,7 @@ git commit -m "feat(interview): 生题函数（Responses 调用 + schema 校验�
   - `func (g *Graph) Answer(ctx, interviewID int64, payload answerPayload) (graphResult, error)`
   - `type graphResult struct { Grade Grade; FollowUp string; NextQuestion *Question; Finished bool; OverallGrade Grade; OverallReview string }`
 
-- [ ] **Step 1: 写图测试（红）——用 fake 模型驱动单轮**
+- [x] **Step 1: 写图测试（红）——用 fake 模型驱动单轮**
 
 ```go
 package interview
@@ -761,12 +761,12 @@ func TestGraphSingleTurn(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/interview/ -run TestGraphSingleTurn -v`
 Expected: FAIL（`BuildGraph` 未定义）。
 
-- [ ] **Step 3: 实现 graph.go**
+- [x] **Step 3: 实现 graph.go**
 
 关键结构（Eino API 按 v0.9.21，与设计文档「Eino Graph 节点编排图」一一对应）：
 
@@ -840,12 +840,12 @@ func BuildGraph(repo *Repository, cm ResponsesModel) (*Graph, error) {
 
 > 若 v0.9.21 的 `ResumeWithData` 签名与设计文档查证时不同，以实际 API 为准适配（计划执行者需读 `compose/resume.go` 确认参数）。`compose.Graph` 泛型实例化可用 `compose.NewGraph[string, string]`。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd backend && go test ./internal/interview/ -run TestGraphSingleTurn -v`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/internal/interview/graph.go backend/internal/interview/graph_test.go
@@ -872,7 +872,7 @@ git commit -m "feat(interview): 面试图五个节点（ask/grade/decide/review/
   - `func (s *Service) Questions(ctx, tenantID, id int64) ([]Question, error)`（全部主问题含追问树，按 parent_id 组树返回平铺顺序）
   - 错误：`ErrNotFound`、`ErrActiveInterviewExists`、`ErrAlreadyEnded`（非 active answer/abort 409）、`ErrConcurrentAnswer`（409）
 
-- [ ] **Step 1: 写 service 测试（红）**
+- [x] **Step 1: 写 service 测试（红）**
 
 ```go
 package interview
@@ -908,23 +908,23 @@ func TestServiceAnswerRejectsConcurrent(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/interview/ -run TestService -v`
 Expected: FAIL。
 
-- [ ] **Step 3: 实现 service.go**
+- [x] **Step 3: 实现 service.go**
 
 按设计文档「answer 完整实现」：校验 → TryLock(interviewID, 60) → 读 checkpoint（缺失 → ErrSessionExpired 410 语义）→ `graph.Answer` → Unlock（defer）。`CreateInterview` 里 `resumeText` 由调用方（httpapi）从简历 JSON 提取后传入——service 不直接碰 resume 包，保持隔离；生题 fake 返回空列表时测试用真实 cfg 覆盖。
 
 > 注意：CreateInterview 需要 resume 纯文本，handler 从 `resume.Repository.Get` 拿 `content` JSON 提取；service 接受 `resumeText string` 参数，不 import resume 包。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd backend && go test ./internal/interview/ -v`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/internal/interview/service.go backend/internal/interview/service_test.go
@@ -948,7 +948,7 @@ git commit -m "feat(interview): service 编排（创建/回答/放弃/回看 + �
   - `POST /api/interviews/:id/abort`
   - 错误映射：404→`ErrNotFound`、409→`ErrActiveInterviewExists/ErrAlreadyEnded/ErrConcurrentAnswer`、410→`ErrSessionExpired`、400→参数错
 
-- [ ] **Step 1: 写 handler 测试（红）**
+- [x] **Step 1: 写 handler 测试（红）**
 
 沿用现有 handler 测试模式（`httptest` + 内存 db + fake 服务注入；参考 `target_handler_test.go` 的建测方式，service 用真 repo + fake model + 真实 Redis 或注入假 store——若 Redis 不可用，handler 测试对 `ErrSessionExpired`/404 路径仍可测）。
 
@@ -964,16 +964,16 @@ func TestInterviewHandlerAnswerNotFound(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/httpapi/ -run TestInterviewHandler -v`
 Expected: FAIL。
 
-- [ ] **Step 3: 实现 interview_handler.go**
+- [x] **Step 3: 实现 interview_handler.go**
 
 按 `target_handler.go` 模式：`newInterviewHandler(service *interview.Service) *interviewHandler`；`create/list/get/questions/answer/abort` 方法；`principalFromContext` 取 tenant；简历文本提取用 `resume.Repository.Get` + 简单 JSON 提取（`content` 里拼各 section 文本，见现有 `optimization.go` 的 section 遍历方式，做成 `extractResumeText(content string) string`）。
 
-- [ ] **Step 4: 注册路由**
+- [x] **Step 4: 注册路由**
 
 在 `router.go` 加：
 
@@ -993,16 +993,16 @@ if config.InterviewService != nil {
 
 `RouterConfig` 增加 `InterviewService *interview.Service`。
 
-- [ ] **Step 5: main.go 接线**
+- [x] **Step 5: main.go 接线**
 
 `buildRouterConfig` 中：读 `REDIS_ADDR`/`REDIS_PASSWORD`/`REDIS_DB` env → `interview.NewRedisStore`（失败：非生产 warn 且不注册 interview service；生产 fatal）→ `llm.NewResponsesModel`（失败同理）→ `interview.NewQuestionGenerator` → `interview.BuildGraph` → `interview.NewService` → 赋给 `config.InterviewService`。生题/评分共用同一个 ResponsesModel 实例。
 
-- [ ] **Step 6: 编译 + 全量测试**
+- [x] **Step 6: 编译 + 全量测试**
 
 Run: `cd backend && go build ./... && go test ./...`
 Expected: 全绿。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add backend/internal/httpapi/interview_handler.go backend/internal/httpapi/interview_handler_test.go backend/internal/httpapi/router.go backend/cmd/server/main.go
@@ -1024,25 +1024,25 @@ git commit -m "feat(api): 面试 REST 接口与路由注册，main 接线 Redis/
   - `api/interviews.ts`：`createInterview(targetJobId, resumeId, config?)`、`listInterviews()`、`getInterview(id)`、`answerInterview(id, answer, skip?)`、`getInterviewQuestions(id)`、`abortInterview(id)`；类型 `Interview`、`InterviewQuestion`、`InterviewConfig`、`AnswerResult`
   - 组件间 props：`InterviewChat({ interview, onFinished })`、`InterviewReview({ interview })`、`InterviewHistory({ onStart })`
 
-- [ ] **Step 1: 写 api 测试（红）**
+- [x] **Step 1: 写 api 测试（红）**
 
 按 `frontend/src/api/targetJobs.test.ts` 模式（mock `apiFetch`）：create/list/answer/abort 各用例 + 错误分支。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd frontend && npx vitest run src/api/interviews.test.ts`
 Expected: FAIL。
 
-- [ ] **Step 3: 实现 interviews.ts**
+- [x] **Step 3: 实现 interviews.ts**
 
 类型与函数见 Interfaces；`answerInterview` 的 body 按 `{answer?, skip?}`；返回 `AnswerResult`（`{grade, followUp?, nextQuestion?, finished?, overallGrade?, overallReview?}`）。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd frontend && npx vitest run src/api/interviews.test.ts`
 Expected: PASS。
 
-- [ ] **Step 5: 组件实现**
+- [x] **Step 5: 组件实现**
 
 - **InterviewConfigModal**：预填 `DefaultInterviewConfig`（题目总数 12、标签数量 5/2/5、追问预算默认一半、单问上限 1），数字输入可改，确认回调 `(config) => void`。
 - **InterviewChat**：聊天列表——assistant 问题消息块 + 用户回答 + 评分徽章（等级色块）+ 追问折叠（父题下缩进）；底部输入框 +「发送」「跳过/不会」按钮；提交防抖（disable 至响应返回）；响应带 `nextQuestion` 追加新消息、`finished` 切总评卡片。
@@ -1050,12 +1050,12 @@ Expected: PASS。
 - **InterviewHistory**：列表（状态徽章：进行中/已完成/已放弃、总评摘要、回看入口、放弃按钮）。
 - **app.tsx / TargetJobCard**：目标 JD 卡片加「开始 AI 面试」→ 弹配置弹窗 → 进面试页；「进行中面试」存在时提示先结束。
 
-- [ ] **Step 6: 组件测试 + 全量测试**
+- [x] **Step 6: 组件测试 + 全量测试**
 
 Run: `cd frontend && npx vitest run`
 Expected: 全绿。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add frontend/src/api/interviews.ts frontend/src/api/interviews.test.ts frontend/src/components/ frontend/src/app.tsx
@@ -1069,7 +1069,7 @@ git commit -m "feat(frontend): AI 面试配置/聊天/回看/历史页面与接�
 **Files:**
 - Modify: `.env.example`（追加 REDIS_ADDR/REDIS_PASSWORD/REDIS_DB）、`README.md`（面试功能说明）
 
-- [ ] **Step 1: .env.example 追加**
+- [x] **Step 1: .env.example 追加**
 
 ```bash
 # Optional. Redis for AI interview state (checkpoint store). Interview feature is disabled without it.
@@ -1078,15 +1078,15 @@ git commit -m "feat(frontend): AI 面试配置/聊天/回看/历史页面与接�
 # REDIS_DB=0
 ```
 
-- [ ] **Step 2: 端到端手测**
+- [x] **Step 2: 端到端手测**
 
 Run: `cd backend && go run ./cmd/server` + `cd frontend && npm run dev`，浏览器走一遍：目标 JD → 配置弹窗 → 第一题 → 回答 → 评分/追问 → 跳过 → 全部答完 → 总评 → 历史回看 → abort。用真实 MiniMax key（`.env` 已有）。预期：生题成功、每轮回答返回评分、追问链等级只升不降、总评符合算法、回看数据完整。
 
-- [ ] **Step 3: README 补面试功能段落**
+- [x] **Step 3: README 补面试功能段落**
 
 简短说明：入口、依赖（Redis）、env 变量、接口列表。
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .env.example README.md
