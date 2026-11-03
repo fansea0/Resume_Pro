@@ -34,7 +34,8 @@ const questionColumns = `id, interview_id, parent_id, follow_up_round, label, qu
 	`COALESCE(standard_answer, '') AS standard_answer, ` +
 	`COALESCE(user_answer, '') AS user_answer, ` +
 	`COALESCE(extra, '') AS extra, ` +
-	`COALESCE(grade, '') AS grade`
+	`COALESCE(grade, '') AS grade, ` +
+	`created_at`
 
 // Interview 是一次面试的落库视图。
 //
@@ -65,6 +66,7 @@ type Question struct {
 	UserAnswer     string        `db:"user_answer" json:"userAnswer"`
 	Extra          string        `db:"extra" json:"extra"`
 	Grade          string        `db:"grade" json:"grade"`
+	CreatedAt      time.Time     `db:"created_at" json:"createdAt"`
 }
 
 // MainQuestionInput 是一道主问题的落库内容（与生题函数的一条输出对应）。

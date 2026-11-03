@@ -26,15 +26,19 @@ const (
 )
 
 // InterviewConfig 是一次面试的生效配置快照（创建面试时落库到 config_snapshot）。
+// InterviewConfig 是一次面试的生效配置快照（创建面试时落库到 config_snapshot）。
+//
+// json tag 用 camelCase 与前端契约对齐：config_snapshot 落库的 JSON 即
+// /api/interviews 返回给前端的 configSnapshot 对象，无需 handler 二次转换。
 type InterviewConfig struct {
 	// QuestionCount 主问题总数。
-	QuestionCount int
-	// LabelCounts 各标签的题目数量。
-	LabelCounts map[QuestionLabel]int
+	QuestionCount int `json:"questionCount"`
+	// LabelCounts 各标签的题目数量（map key 序列化为 "0"/"1"/"2"）。
+	LabelCounts map[QuestionLabel]int `json:"labelCounts"`
 	// FollowUpBudget 全场追问预算；< 0 表示按 QuestionCount/2 自动折半（见 Resolved）。
-	FollowUpBudget int
+	FollowUpBudget int `json:"followUpBudget"`
 	// PerQuestionFollowUpLimit 单题追问轮次上限。
-	PerQuestionFollowUpLimit int
+	PerQuestionFollowUpLimit int `json:"perQuestionFollowUpLimit"`
 }
 
 // DefaultInterviewConfig 是全局默认配置；FollowUpBudget = -1 表示自动折半。
@@ -57,3 +61,11 @@ func (c InterviewConfig) Resolved() InterviewConfig {
 	}
 	return c
 }
+
+// AnswerPayload 是提交一轮回答的入参（answerPayload 的导出别名）。
+// httpapi 层构造 `interview.AnswerPayload{Answer: ..., Skip: ...}` 传给 Service.Answer。
+type AnswerPayload = answerPayload
+
+// AnswerResult 是一轮回答对调用方的结果（graphResult 的导出别名）。
+// httpapi 层直接序列化或读取其导出字段。
+type AnswerResult = graphResult

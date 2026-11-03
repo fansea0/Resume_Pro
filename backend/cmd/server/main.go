@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/cloudwego/eino/components/model"
@@ -15,6 +16,7 @@ import (
 	"resumepro/backend/internal/envfile"
 	"resumepro/backend/internal/files"
 	"resumepro/backend/internal/httpapi"
+	"resumepro/backend/internal/interview"
 	"resumepro/backend/internal/llm"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/resumesvc"
@@ -143,5 +145,55 @@ func buildRouterConfig(db *sqlx.DB, resumeRepository *resume.Repository, logger 
 		ai.WithMaxRetries(llmConfig.MaxRetries),
 	)
 	logger.WithField("model", llmConfig.Model).Info("AI features enabled")
+
+	interviewService, err := buildInterviewService(db, llmConfig, logger, options.AppEnv)
+	if err != nil {
+		return config, err
+	}
+	config.InterviewService = interviewService
 	return config, nil
+}
+
+// buildInterviewService 接线 AI 模拟面试：Redis checkpoint store + Responses 模型
+// + 生题器 + 面试图 + Service。
+//
+// Redis 或 Responses 模型不可用时：生产环境直接返回错误（面试是必开功能）；
+// 非生产环境打印告警并返回 nil（路由仍注册，接口统一返回 503，与 AI 功能降级一致）。
+func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Logger, appEnv string) (*interview.Service, error) {
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "127.0.0.1:6379"
+	}
+	redisDB := 0
+	if raw := os.Getenv("REDIS_DB"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			redisDB = parsed
+		}
+	}
+	redisStore, err := interview.NewRedisStore(redisAddr, os.Getenv("REDIS_PASSWORD"), redisDB)
+	if err != nil {
+		if appEnv == "production" {
+			return nil, fmt.Errorf("interview requires Redis: %w", err)
+		}
+		logger.WithError(err).Warn("AI interview disabled (Redis unavailable)")
+		return nil, nil
+	}
+
+	responsesModel, err := llm.NewResponsesModel(llmConfig)
+	if err != nil {
+		if appEnv == "production" {
+			return nil, fmt.Errorf("interview requires responses model: %w", err)
+		}
+		logger.WithError(err).Warn("AI interview disabled (responses model unavailable)")
+		return nil, nil
+	}
+
+	repo := interview.NewRepository(db)
+	gen := interview.NewQuestionGenerator(responsesModel, llmConfig.MaxRetries)
+	graph, err := interview.BuildGraph(repo, responsesModel, redisStore)
+	if err != nil {
+		return nil, fmt.Errorf("build interview graph: %w", err)
+	}
+	logger.WithField("redis", redisAddr).Info("AI interview enabled")
+	return interview.NewService(repo, redisStore, gen, graph), nil
 }

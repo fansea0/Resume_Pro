@@ -11,6 +11,7 @@ import (
 	"resumepro/backend/internal/ai"
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/files"
+	"resumepro/backend/internal/interview"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/resumesvc"
 	"resumepro/backend/internal/targetjob"
@@ -34,6 +35,9 @@ type RouterConfig struct {
 	// AIService is nil when AI features are disabled. The authenticated routes
 	// remain registered so callers receive an explicit 503 response.
 	AIService *ai.Service
+	// InterviewService is nil when Redis or the Responses model is unavailable;
+	// the authenticated routes remain registered and return an explicit 503.
+	InterviewService *interview.Service
 }
 
 var avatarFilenamePattern = regexp.MustCompile(`^[a-f0-9]{64}-[a-f0-9]{64}\.avatar$`)
@@ -100,6 +104,16 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 	aiRoutes.Use(requireAuthentication(service))
 	aiRoutes.POST("/resumes/generate", aiHandler.generateResume)
 	aiRoutes.POST("/resumes/:id/section/rewrite", aiHandler.rewriteSection)
+
+	interviewHandler := newInterviewHandler(config.InterviewService, resumeRepository, config.TargetJobService)
+	interviews := router.Group("/api/interviews")
+	interviews.Use(requireAuthentication(service))
+	interviews.POST("", interviewHandler.create)
+	interviews.GET("", interviewHandler.list)
+	interviews.GET("/:id", interviewHandler.get)
+	interviews.POST("/:id/answer", interviewHandler.answer)
+	interviews.GET("/:id/questions", interviewHandler.questions)
+	interviews.POST("/:id/abort", interviewHandler.abort)
 
 	return router
 }
