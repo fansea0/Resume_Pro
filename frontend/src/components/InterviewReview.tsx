@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 
+import { safeUrl } from './ResumeMarkdown';
 import {
   getInterviewQuestions,
   type Interview,
@@ -12,6 +14,15 @@ const GRADE_CLASS: Record<InterviewGrade, string> = {
 };
 const GRADE_ORDER: InterviewGrade[] = ['S', 'A', 'B+', 'B', 'B-', 'C'];
 const LABEL_NAMES = { '0': '八股', '1': '算法', '2': '项目' } as const;
+const REVIEW_ELEMENTS = ['p', 'br', 'strong', 'em', 'code', 'ul', 'ol', 'li'];
+
+/**
+ * CommonMark 吞掉紧贴段落的列表（没有空行时整串按段落续行解析），
+ * 模型常按「结论一行 + 要点若干行」输出，这里补回空行。
+ */
+function separateLists(markdown: string) {
+  return markdown.replace(/([^\n])\n(\s*[-*]\s)/g, '$1\n\n$2');
+}
 
 interface InterviewReviewProps {
   interview: Interview;
@@ -107,8 +118,16 @@ export function InterviewReview({ interview, onBack }: InterviewReviewProps) {
       </div>
 
       <div className="interview-card">
-        <h3 className="interview-card__title">整体评价</h3>
-        <p className="interview-card__review">{interview.overallReview ?? '本场面试未生成整体评价。'}</p>
+        <h3 className="interview-card__title">整体评价 <span>复盘用 · 短板与下一步</span></h3>
+        {interview.overallReview ? (
+          <div className="interview-card__review">
+            <ReactMarkdown allowedElements={REVIEW_ELEMENTS} unwrapDisallowed urlTransform={safeUrl}>
+              {separateLists(interview.overallReview)}
+            </ReactMarkdown>
+          </div>
+        ) : (
+          <p className="interview-card__review">本场面试未生成整体评价。</p>
+        )}
       </div>
 
       <div className="interview-card">

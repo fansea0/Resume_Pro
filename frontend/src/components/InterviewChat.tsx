@@ -10,6 +10,8 @@ import {
 } from '../api/interviews';
 
 const LABEL_NAMES: Record<InterviewLabel, string> = { '0': '八股', '1': '算法', '2': '项目' };
+// 与 .interview-dock textarea 的 max-height 保持一致（12rem @16px）。
+const DOCK_MAX_HEIGHT_PX = 192;
 const GRADE_CLASS: Record<InterviewGrade, string> = {
   C: 'c', 'B-': 'bm', B: 'b', 'B+': 'bp', A: 'a', S: 's',
 };
@@ -94,6 +96,14 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
     textareaRef.current?.focus({ preventScroll: true });
   }, [current?.id]);
 
+  // 输入框随内容长高，到 DOCK_MAX_HEIGHT 后内部滚动：长答案不会把题面顶出屏幕。
+  useEffect(() => {
+    const area = textareaRef.current;
+    if (!area) return;
+    area.style.height = 'auto';
+    area.style.height = `${Math.min(area.scrollHeight, DOCK_MAX_HEIGHT_PX)}px`;
+  }, [answer]);
+
   const submit = async (skip = false) => {
     if (submitting) return;
     if (!skip && !answer.trim()) return;
@@ -125,41 +135,14 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
     }
   };
 
-  const renderQuestionBody = (question: InterviewQuestion) => {
-    const answered = question.userAnswer != null || question.grade != null;
-    const extra = question.extra;
-    return (
-      <>
-        {question.userAnswer ? (
-          <div className="interview-bubble">
-            <p className="interview-bubble__label">我的回答</p>
-            <p className="interview-bubble__text">{question.userAnswer}</p>
-          </div>
-        ) : null}
-        {answered && (question.standardAnswer || extra) ? (
-          <details className="interview-fold">
-            <summary>查看标准答案</summary>
-            <div className="interview-fold__panel">
-              {question.standardAnswer ? <p className="interview-fold__answer">{question.standardAnswer}</p> : null}
-              {question.standardAnswer ? null : <p className="interview-fold__empty">项目题无标准答案，按综合表现评级</p>}
-              {extra?.mustPoints.length ? (
-                <p className="interview-points">
-                  <span className="interview-points__label">必答点</span>
-                  {extra.mustPoints.map((point) => <span className="interview-point" key={point}>{point}</span>)}
-                </p>
-              ) : null}
-              {extra?.bonusPoints.length ? (
-                <p className="interview-points">
-                  <span className="interview-points__label">加分点</span>
-                  {extra.bonusPoints.map((point) => <span className="interview-point interview-point--bonus" key={point}>{point}</span>)}
-                </p>
-              ) : null}
-            </div>
-          </details>
-        ) : null}
-      </>
-    );
-  };
+  const renderQuestionBody = (question: InterviewQuestion) => (
+    question.userAnswer ? (
+      <div className="interview-bubble">
+        <p className="interview-bubble__label">我的回答</p>
+        <p className="interview-bubble__text">{question.userAnswer}</p>
+      </div>
+    ) : null
+  );
 
   const renderTurn = (question: InterviewQuestion, isCurrent: boolean) => {
     const index = mains.findIndex((main) => main.id === question.id);
@@ -244,17 +227,26 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
       {submitError && <p className="interview-chat__error" role="alert">{submitError}</p>}
 
       {current ? (
-        <div className="interview-dock">
+        <div aria-busy={submitting} className="interview-dock">
           <textarea
             aria-label="回答输入"
             onChange={(event) => setAnswer(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入你的回答…（支持换行，⌘ / Ctrl + Enter 提交）"
+            placeholder="输入你的回答…"
+            readOnly={submitting}
             ref={textareaRef}
             value={answer}
           />
           <div className="interview-dock__foot">
-            <span className="interview-dock__hint">同步评分约需 3~8 秒，提交后请勿重复点击；不会或没补充可直接跳过</span>
+            <span aria-live="polite" className="interview-dock__hint">
+              {submitting ? (
+                <>
+                  <span aria-hidden="true" className="interview-typing__dots"><i /><i /><i /></span>
+                  面试官正在评分，约需 3~8 秒…
+                </>
+              ) : '⌘ / Ctrl + Enter 提交；不会答可跳过'}
+            </span>
+            {answer.length ? <span className="interview-dock__count">{answer.length} 字</span> : null}
             <div className="interview-dock__actions">
               <button className="interview-dock__skip" disabled={submitting} onClick={() => void submit(true)} type="button">跳过 · 不会</button>
               <button disabled={submitting || !answer.trim()} onClick={() => void submit()} type="button">

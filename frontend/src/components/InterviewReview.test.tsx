@@ -83,6 +83,45 @@ describe('InterviewReview', () => {
     expect(screen.getByText('缓冲满时')).toBeInTheDocument();
   });
 
+  it('renders the overall review markdown as bullets and bold', async () => {
+    getInterviewQuestions.mockResolvedValue([question({ id: 1 })]);
+
+    render(
+      <InterviewReview
+        interview={{
+          ...completedInterview,
+          overallReview: '结论：**并发扎实，存储层偏弱**。\n- 第 2 题只背了 **B+ 树** 结论\n- 第 4 题缺 **混合持久化**\n\n下一步：读 Redis 实战。',
+        }}
+        onBack={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText('混合持久化')).toBeInTheDocument();
+    expect(screen.getByText('混合持久化').tagName).toBe('STRONG');
+    // 紧贴段落的列表在 CommonMark 里会被吞成续行，这里必须解析成两条要点。
+    expect(document.querySelectorAll('.interview-card__review li')).toHaveLength(2);
+  });
+
+  it('keeps inline code and headings instead of dropping their text', async () => {
+    getInterviewQuestions.mockResolvedValue([question({ id: 1 })]);
+
+    render(
+      <InterviewReview
+        interview={{
+          ...completedInterview,
+          overallReview: '用 `context.WithTimeout` 取消查询。\n\n## 短板',
+        }}
+        onBack={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText('context.WithTimeout')).toBeInTheDocument();
+    expect(screen.getByText('context.WithTimeout').tagName).toBe('CODE');
+    // 未列入白名单的标签要摊平成正文，不能让整句话凭空消失。
+    expect(screen.getByText('短板')).toBeInTheDocument();
+    expect(document.querySelector('.interview-card__review h2')).toBeNull();
+  });
+
   it('marks skipped questions instead of pretending they were answered', async () => {
     getInterviewQuestions.mockResolvedValue([
       question({ id: 4, grade: 'C', userAnswer: '', question: 'RDB 与 AOF 如何取舍？' }),

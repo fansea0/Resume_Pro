@@ -54,6 +54,7 @@ export function InterviewConfigModal({ error, onCancel, onConfirm, submitting, t
   const [budget, setBudget] = useState<number | typeof BUDGET_UNTOUCHED>(BUDGET_UNTOUCHED);
   const [perQuestionLimit, setPerQuestionLimit] = useState(DEFAULT_INTERVIEW_CONFIG.perQuestionFollowUpLimit);
   const [localError, setLocalError] = useState('');
+  const [elapsed, setElapsed] = useState(0);
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCancelRef = useRef(onCancel);
   const submittingRef = useRef(submitting);
@@ -102,6 +103,17 @@ export function InterviewConfigModal({ error, onCancel, onConfirm, submitting, t
     };
   }, []);
 
+  // 生题要 15 秒上下，等待时给出真实计时，而不是让按钮文案静默挂着。
+  useEffect(() => {
+    if (!submitting) {
+      setElapsed(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setElapsed(Math.round((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [submitting]);
+
   const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
   const stepQuestionCount = (delta: number) => {
@@ -133,7 +145,7 @@ export function InterviewConfigModal({ error, onCancel, onConfirm, submitting, t
 
   return createPortal(
     <div className="interview-dialog__backdrop">
-      <div aria-labelledby={titleId} aria-modal="true" className="interview-dialog" ref={dialogRef} role="dialog">
+      <div aria-labelledby={titleId} aria-modal="true" className={`interview-dialog${submitting ? ' interview-dialog--busy' : ''}`} ref={dialogRef} role="dialog">
         <div className="interview-dialog__heading">
           <div>
             <p className="interview-dialog__eyebrow">AI MOCK INTERVIEW</p>
@@ -196,9 +208,20 @@ export function InterviewConfigModal({ error, onCancel, onConfirm, submitting, t
           </div>
         </div>
         {(localError || error) && <p className="interview-dialog__error" role="alert">{localError || error}</p>}
+        {submitting ? (
+          <div aria-live="polite" className="interview-generating" role="status">
+            <span aria-hidden="true" className="interview-generating__rail">
+              {Array.from({ length: Math.min(questionCount, 14) }, (_, index) => (
+                <i key={index} style={{ animationDelay: `${(index % 7) * 0.12}s` }} />
+              ))}
+            </span>
+            <b>正在生成 {questionCount} 道题</b>
+            <span>已用 {elapsed}s · 通常 15 秒内完成</span>
+          </div>
+        ) : null}
         <div className="interview-dialog__actions">
           <button disabled={submitting} onClick={onCancel} type="button">取消</button>
-          <button disabled={submitting} onClick={handleSubmit} type="button">{submitting ? '正在生题，约需 10~20 秒…' : '开始面试'}</button>
+          <button disabled={submitting} onClick={handleSubmit} type="button">{submitting ? '正在生题…' : '开始面试'}</button>
         </div>
       </div>
     </div>,

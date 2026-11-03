@@ -60,4 +60,13 @@ describe('InterviewConfigModal', () => {
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it('reports progress while the questions are being generated', () => {
+    render(<InterviewConfigModal onCancel={vi.fn()} onConfirm={vi.fn()} submitting targetJobName="字节跳动 · Go 后端工程师" />);
+
+    expect(screen.getByText('正在生成 12 道题')).toBeInTheDocument();
+    expect(screen.getByText(/已用 0s/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '正在生题…' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '取消' })).toBeDisabled();
+  });
 });

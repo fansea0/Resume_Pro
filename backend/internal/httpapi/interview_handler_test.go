@@ -127,6 +127,13 @@ func createInterviewFixture(t *testing.T, router http.Handler, cookie *http.Cook
 	if created.FirstQuestion == nil || created.FirstQuestion["question"] == nil {
 		t.Error("firstQuestion missing")
 	}
+	// 面试进行中：首题响应不得携带标准答案与考察点。
+	if _, leaked := created.FirstQuestion["standardAnswer"]; leaked {
+		t.Error("firstQuestion leaked standardAnswer while interview is active")
+	}
+	if _, leaked := created.FirstQuestion["extra"]; leaked {
+		t.Error("firstQuestion leaked extra while interview is active")
+	}
 	return target.ID, created.Interview.ID
 }
 
@@ -157,6 +164,12 @@ func TestInterviewHandlerCreateAndAnswer(t *testing.T) {
 	if result.NextQuestion == nil {
 		t.Error("nextQuestion missing after first answer")
 	}
+	if _, leaked := result.NextQuestion["standardAnswer"]; leaked {
+		t.Error("nextQuestion leaked standardAnswer while interview is active")
+	}
+	if _, leaked := result.NextQuestion["extra"]; leaked {
+		t.Error("nextQuestion leaked extra while interview is active")
+	}
 
 	questionsResponse := requestJSON(t, router, http.MethodGet, "/api/interviews/"+jsonNumber(interviewID)+"/questions", "", cookie)
 	if questionsResponse.Code != http.StatusOK {
@@ -174,6 +187,58 @@ func TestInterviewHandlerCreateAndAnswer(t *testing.T) {
 	}
 	if rows[0]["userAnswer"] == nil {
 		t.Error("userAnswer should be written after answer")
+	}
+	for _, row := range rows {
+		if _, leaked := row["standardAnswer"]; leaked {
+			t.Errorf("questions leaked standardAnswer while interview is active: %v", row["id"])
+		}
+		if _, leaked := row["extra"]; leaked {
+			t.Errorf("questions leaked extra while interview is active: %v", row["id"])
+		}
+	}
+}
+
+// TestInterviewHandlerSolutionsAfterCompletion 验证面试结束后标准答案与考察点恢复下发，
+// 同时面试进行中（active）不得出现。
+func TestInterviewHandlerSolutionsAfterCompletion(t *testing.T) {
+	router, cookie, db := setupInterviewAPI(t)
+	_, interviewID := createInterviewFixture(t, router, cookie, db)
+
+	path := "/api/interviews/" + jsonNumber(interviewID) + "/answer"
+	first := requestJSON(t, router, http.MethodPost, path, `{"answer":"hchan 结构"}`, cookie)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first answer: %d %s", first.Code, first.Body.String())
+	}
+	second := requestJSON(t, router, http.MethodPost, path, `{"answer":"按业务场景选择缓存方案"}`, cookie)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second answer: %d %s", second.Code, second.Body.String())
+	}
+	var result struct {
+		Finished bool `json:"finished"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	if !result.Finished {
+		t.Fatal("finished = false, want true after the last question")
+	}
+
+	questionsResponse := requestJSON(t, router, http.MethodGet, "/api/interviews/"+jsonNumber(interviewID)+"/questions", "", cookie)
+	if questionsResponse.Code != http.StatusOK {
+		t.Fatalf("questions: %d %s", questionsResponse.Code, questionsResponse.Body.String())
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(questionsResponse.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("decode questions: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("no questions after completion")
+	}
+	if rows[0]["standardAnswer"] != "hchan 结构" {
+		t.Errorf("standardAnswer = %v, want recovered after completion", rows[0]["standardAnswer"])
+	}
+	if rows[0]["extra"] == nil {
+		t.Error("extra should be recovered after completion")
 	}
 }
 

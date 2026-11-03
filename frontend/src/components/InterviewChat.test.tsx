@@ -125,6 +125,35 @@ describe('InterviewChat', () => {
     expect(getInterviewQuestions).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps standard answers and scoring points out of the live interview', async () => {
+    getInterviewQuestions.mockResolvedValue([
+      makeQuestion({ id: 1, userAnswer: '答过了', grade: 'B' }),
+      makeQuestion({ id: 2, question: '当前题：Redis 持久化怎么选？', userAnswer: null, grade: null }),
+    ]);
+
+    render(<InterviewChat interview={interview} onFinished={vi.fn()} onExit={vi.fn()} />);
+    await screen.findByText('当前题：Redis 持久化怎么选？');
+
+    expect(screen.queryByText('查看标准答案')).not.toBeInTheDocument();
+    expect(screen.queryByText(/环形队列/)).not.toBeInTheDocument();
+    expect(screen.queryByText('hchan 结构组成')).not.toBeInTheDocument();
+  });
+
+  it('shows the interviewer typing indicator while the answer is graded', async () => {
+    let release: (value: unknown) => void = () => {};
+    getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1, userAnswer: null, grade: null })]);
+    answerInterview.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+
+    render(<InterviewChat interview={interview} onFinished={vi.fn()} onExit={vi.fn()} />);
+    fireEvent.change(await screen.findByLabelText('回答输入'), { target: { value: '回答' } });
+    fireEvent.click(screen.getByRole('button', { name: '提交回答' }));
+
+    expect(await screen.findByText(/面试官正在评分/)).toBeInTheDocument();
+    expect(screen.getByText(/约需 3~8 秒/)).toBeInTheDocument();
+    expect(screen.getByLabelText('回答输入')).toHaveAttribute('readonly');
+    release({ grade: 'B', followUp: '' });
+  });
+
   it('reports the overall result and stops when the interview finishes', async () => {
     const onFinished = vi.fn();
     getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1, userAnswer: null, grade: null })]);
@@ -177,5 +206,6 @@ describe('InterviewChat', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('评分失败，请重试');
     expect(screen.getByRole('button', { name: '提交回答' })).toBeEnabled();
+    expect(screen.getByLabelText('回答输入')).not.toHaveAttribute('readonly');
   });
 });

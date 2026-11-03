@@ -15,7 +15,7 @@ import (
 )
 
 // interviewHandler 是 AI 模拟面试的 HTTP 层：只做鉴权、入参解码、DTO 转换
-//（interview 包类型 → 前端契约形状）与错误映射，业务全部委托 Service。
+// （interview 包类型 → 前端契约形状）与错误映射，业务全部委托 Service。
 //
 // service 为 nil 时所有端点返回 503（Redis / LLM 不可用时由 main 注入 nil，
 // 与 aiHandler 的降级约定一致）。
@@ -92,9 +92,10 @@ func (h *interviewHandler) create(ginCtx *gin.Context) {
 		writeError(ginCtx, http.StatusInternalServerError, "could not load first question")
 		return
 	}
+	// 新面试恒为 active：首题同样不下发标准答案与考察点，避免在面试开始前就透题。
 	writeJSON(ginCtx, http.StatusCreated, map[string]any{
 		"interview":     interviewDTO(iv),
-		"firstQuestion": questionDTO(first),
+		"firstQuestion": questionDTO(first, false),
 	})
 }
 
@@ -177,7 +178,8 @@ func (h *interviewHandler) answer(ginCtx *gin.Context) {
 			return
 		}
 	}
-	writeJSON(ginCtx, http.StatusOK, answerResultDTO(result, input.Skip))
+	// 未结束 = 仍在面试中：下一题同样隐去标准答案与考察点。
+	writeJSON(ginCtx, http.StatusOK, answerResultDTO(result, input.Skip, !result.Finished))
 }
 
 func (h *interviewHandler) questions(ginCtx *gin.Context) {
@@ -194,15 +196,24 @@ func (h *interviewHandler) questions(ginCtx *gin.Context) {
 	if !ok {
 		return
 	}
+	iv, err := h.service.Get(ginCtx.Request.Context(), principal.TenantID, id)
+	if err != nil {
+		if !handleInterviewError(ginCtx, err) {
+			return
+		}
+	}
 	items, err := h.service.Questions(ginCtx.Request.Context(), principal.TenantID, id)
 	if err != nil {
 		if !handleInterviewError(ginCtx, err) {
 			return
 		}
 	}
+	// 面试进行中不下发标准答案与必答/加分点：候选人不能通过接口提前拿到答案；
+	// 面试结束后（completed/aborted）报告页按原逻辑回看。
+	withSolutions := iv.Status != "active"
 	dtos := make([]any, 0, len(items))
 	for i := range items {
-		dtos = append(dtos, questionDTO(&items[i]))
+		dtos = append(dtos, questionDTO(&items[i], withSolutions))
 	}
 	writeJSON(ginCtx, http.StatusOK, dtos)
 }
@@ -294,23 +305,29 @@ func interviewDTO(iv *interview.Interview) map[string]any {
 // questionDTO 把问题行转成前端 InterviewQuestion 形状：
 // label 由 int 转字符串（"0"/"1"/"2"），extra 由 JSON 字符串解析为
 // {mustPoints, bonusPoints}，空串字段转 null。
-func questionDTO(q *interview.Question) map[string]any {
+//
+// withSolutions=false 时整段省略 standardAnswer 与 extra：面试未结束前，
+// 标准答案和考察点不得出现在接口响应里（前端也就无从提前拿到）。
+func questionDTO(q *interview.Question, withSolutions bool) map[string]any {
 	if q == nil {
 		return nil
 	}
-	return map[string]any{
-		"id":             q.ID,
-		"interviewId":    q.InterviewID,
-		"parentId":       q.ParentID,
-		"followUpRound":  q.FollowUpRound,
-		"label":          strconv.Itoa(int(q.Label)),
-		"question":       q.Question,
-		"standardAnswer": nullableText(q.StandardAnswer),
-		"userAnswer":     nullableText(q.UserAnswer),
-		"extra":          questionExtraDTO(q.Extra),
-		"grade":          nullableText(q.Grade),
-		"createdAt":      q.CreatedAt,
+	dto := map[string]any{
+		"id":            q.ID,
+		"interviewId":   q.InterviewID,
+		"parentId":      q.ParentID,
+		"followUpRound": q.FollowUpRound,
+		"label":         strconv.Itoa(int(q.Label)),
+		"question":      q.Question,
+		"userAnswer":    nullableText(q.UserAnswer),
+		"grade":         nullableText(q.Grade),
+		"createdAt":     q.CreatedAt,
 	}
+	if withSolutions {
+		dto["standardAnswer"] = nullableText(q.StandardAnswer)
+		dto["extra"] = questionExtraDTO(q.Extra)
+	}
+	return dto
 }
 
 // questionExtraDTO 把 extra 列（{"must_points":[],"bonus_points":[]}）解析成前端
@@ -336,7 +353,7 @@ func questionExtraDTO(extra string) map[string]any {
 }
 
 // answerResultDTO 把图运行结果转成前端 AnswerResult 形状。
-func answerResultDTO(result interview.AnswerResult, skip bool) map[string]any {
+func answerResultDTO(result interview.AnswerResult, skip, hideSolutions bool) map[string]any {
 	dto := map[string]any{
 		"grade":    result.Grade,
 		"followUp": result.FollowUp,
@@ -346,7 +363,7 @@ func answerResultDTO(result interview.AnswerResult, skip bool) map[string]any {
 		dto["skip"] = true
 	}
 	if result.NextQuestion != nil {
-		dto["nextQuestion"] = questionDTO(result.NextQuestion)
+		dto["nextQuestion"] = questionDTO(result.NextQuestion, !hideSolutions)
 	}
 	if result.Finished {
 		dto["overallGrade"] = result.OverallGrade
