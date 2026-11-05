@@ -2,6 +2,7 @@ package speech
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -33,8 +34,13 @@ func TestSynthesizeForcesWavContentType(t *testing.T) {
 	var gotFormat string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertRequest(t, r, http.MethodPost, "/audio/speech")
-		_ = r.ParseForm()
-		gotFormat = r.Form.Get("response_format")
+		var body struct {
+			ResponseFormat string `json:"response_format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode json body: %v", err)
+		}
+		gotFormat = body.ResponseFormat
 		w.Header().Set("Content-Type", "audio/mp3") // 故意撒谎：上游按 response_format 拼 MIME
 		_, _ = w.Write([]byte("RIFFfake"))
 	}))
@@ -50,6 +56,71 @@ func TestSynthesizeForcesWavContentType(t *testing.T) {
 	}
 	if result.ContentType != "audio/wav" {
 		t.Errorf("content type = %q, want audio/wav", result.ContentType)
+	}
+}
+
+// TestSynthesizeSendsJSONBody 请求体必须是 JSON。
+//
+// 踩过的坑：mlx-audio 0.6.4 的 /v1/audio/speech 是 FastAPI 的 Pydantic 端点，
+// 只接受 application/json；发 form-urlencoded 会拿到 422，TTS 全部失败。
+// OpenAI 官方的同名端点用的也是 JSON body。
+func TestSynthesizeSendsJSONBody(t *testing.T) {
+	var gotContentType string
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode json body: %v", err)
+		}
+		_, _ = w.Write([]byte("RIFFfake"))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, server.URL)
+	cfg.TTSModel = "tts-model"
+	cfg.TTSVoice = "Vivian"
+	provider := NewOpenAICompatibleProvider(cfg)
+	if _, err := provider.Synthesize(context.Background(), SynthesisRequest{Text: "你好"}); err != nil {
+		t.Fatalf("synthesize: %v", err)
+	}
+
+	if gotContentType != "application/json" {
+		t.Errorf("content type = %q, want application/json", gotContentType)
+	}
+	if gotBody["model"] != "tts-model" {
+		t.Errorf("model = %v, want tts-model", gotBody["model"])
+	}
+	if gotBody["input"] != "你好" {
+		t.Errorf("input = %v, want 你好", gotBody["input"])
+	}
+	if gotBody["response_format"] != "wav" {
+		t.Errorf("response_format = %v, want wav", gotBody["response_format"])
+	}
+	if gotBody["voice"] != "Vivian" {
+		t.Errorf("voice = %v, want Vivian", gotBody["voice"])
+	}
+}
+
+// TestSynthesizeOmitsEmptyVoice voice 为空时不应该传空字符串字段：
+// 上游会把空 voice 当成「指定发音人」而不是「用默认」。
+func TestSynthesizeOmitsEmptyVoice(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode json body: %v", err)
+		}
+		_, _ = w.Write([]byte("RIFFfake"))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, server.URL)
+	cfg.TTSVoice = ""
+	provider := NewOpenAICompatibleProvider(cfg)
+	if _, err := provider.Synthesize(context.Background(), SynthesisRequest{Text: "你好"}); err != nil {
+		t.Fatalf("synthesize: %v", err)
+	}
+	if _, ok := gotBody["voice"]; ok {
+		t.Errorf("voice should be omitted when empty, got %v", gotBody["voice"])
 	}
 }
 

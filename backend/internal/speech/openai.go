@@ -62,27 +62,35 @@ func NewOpenAICompatibleProvider(cfg Config) *OpenAICompatibleProvider {
 
 // Synthesize 调用 POST {base}/audio/speech。
 //
-// 两个刻意的处理（设计文档「坑 1」）：
+// 请求体用 JSON（application/json）：OpenAI 官方的 /v1/audio/speech 示例就是 JSON body，
+// 本地 mlx-audio 0.6.4 的同名端点更是只接受 JSON —— 发 form-urlencoded 会直接 422。
+//
+// 另外两个刻意的处理（设计文档「坑 1」）：
 //   - 固定 response_format=wav：上游只用它拼 Content-Type，传 mp3 会得到「标着 mp3 的 WAV 字节」；
 //   - 不信任上游 Content-Type，直接定为 audio/wav，与实际字节一致。
 func (p *OpenAICompatibleProvider) Synthesize(ctx context.Context, req SynthesisRequest) (SynthesisResult, error) {
-	form := url.Values{}
-	form.Set("model", p.ttsModel)
-	form.Set("input", req.Text)
-	form.Set("response_format", "wav")
+	body := map[string]any{
+		"model":           p.ttsModel,
+		"input":           req.Text,
+		"response_format": "wav",
+	}
 	voice := req.Voice
 	if voice == "" {
 		voice = p.ttsVoice
 	}
 	if voice != "" {
-		form.Set("voice", voice)
+		body["voice"] = voice
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return SynthesisResult{}, fmt.Errorf("speech: encode tts request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.ttsBaseURL+"/audio/speech", strings.NewReader(form.Encode()))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.ttsBaseURL+"/audio/speech", bytes.NewReader(payload))
 	if err != nil {
 		return SynthesisResult{}, fmt.Errorf("speech: build tts request: %w", sanitizeRequestError(err, p.ttsBaseURL))
 	}
-	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	httpReq.Header.Set("Content-Type", "application/json")
 	if p.ttsAPIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+p.ttsAPIKey)
 	}

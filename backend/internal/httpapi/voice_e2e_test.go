@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"io"
 	"math"
 	"mime/multipart"
 	"net/http"
@@ -98,7 +99,8 @@ func e2eStartStubVoiceServer(t *testing.T) *e2eStubVoice {
 		switch r.URL.Path {
 		case "/v1/audio/speech":
 			stub.ttsCalls.Add(1)
-			_ = r.ParseForm()
+			// 请求体是 JSON，读掉它，避免长连接在下一个请求上错位。
+			_, _ = io.Copy(io.Discard, r.Body)
 			w.Header().Set("Content-Type", "audio/wav")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(e2eStubWAV(200))
