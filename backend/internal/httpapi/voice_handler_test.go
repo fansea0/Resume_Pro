@@ -246,8 +246,10 @@ func TestVoiceTranscribeRejectsUnknownInterview(t *testing.T) {
 
 // TestQuestionsIncludeAudioState 题目列表每题都带 audioState 字段（值可为空）。
 func TestQuestionsIncludeAudioState(t *testing.T) {
-	router, cookie, _, _ := setupVoiceAPI(t)
+	router, cookie, db, _ := setupVoiceAPI(t)
 	_, interviewID := createInterviewFixture(t, router, cookie, nil)
+	questionID := firstQuestionID(t, router, cookie, interviewID)
+	markAudioState(t, db, questionID, "ready")
 
 	response := requestJSON(t, router, http.MethodGet, "/api/interviews/"+jsonNumber(interviewID)+"/questions", "", cookie)
 	if response.Code != http.StatusOK {
@@ -260,9 +262,18 @@ func TestQuestionsIncludeAudioState(t *testing.T) {
 	if len(rows) == 0 {
 		t.Fatal("no questions")
 	}
+	want := map[int64]string{questionID: "ready"}
 	for _, row := range rows {
 		if _, ok := row["audioState"]; !ok {
 			t.Errorf("question %v missing audioState", row["id"])
+			continue
+		}
+		id, ok := row["id"].(float64)
+		if !ok {
+			continue
+		}
+		if expected, tracked := want[int64(id)]; tracked && row["audioState"] != expected {
+			t.Errorf("question %d audioState = %v, want %v", int64(id), row["audioState"], expected)
 		}
 	}
 }

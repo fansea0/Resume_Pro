@@ -58,11 +58,37 @@ func (c *Corrector) Correct(ctx context.Context, text string) string {
 		logrus.WithError(err).Warn("voice: text correction failed, use raw transcript")
 		return text
 	}
-	corrected := strings.TrimSpace(agenticText(resp))
+	corrected := stripWrappers(strings.TrimSpace(agenticText(resp)))
 	if corrected == "" {
 		return text
 	}
 	return corrected
+}
+
+// stripWrappers 剥掉模型可能加的包裹标记。
+//
+// prompt 已经要求「只输出校对后的纯文本」，但模型不听话时经常带上 Markdown 围栏、
+// 加粗标记或引号；这些标记进了输入框就是脏数据。
+//
+// 只剥「成对且包裹整个文本」的标记 —— 文本内部的引号属于正常内容，不能动。
+func stripWrappers(text string) string {
+	trimmed := strings.TrimSpace(text)
+	wrappers := []struct{ open, close string }{
+		{"```", "```"},
+		{"**", "**"},
+		{"\"\"", "\"\""},
+		{"「", "」"},
+		{"“", "”"},
+		{"‘", "’"},
+	}
+	for _, wrapper := range wrappers {
+		if len(trimmed) > len(wrapper.open)+len(wrapper.close) &&
+			strings.HasPrefix(trimmed, wrapper.open) &&
+			strings.HasSuffix(trimmed, wrapper.close) {
+			trimmed = strings.TrimSpace(trimmed[len(wrapper.open) : len(trimmed)-len(wrapper.close)])
+		}
+	}
+	return trimmed
 }
 
 // agenticText 拼接 assistant 响应中的全部生成文本块。

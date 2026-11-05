@@ -59,6 +59,38 @@ func TestCorrectorFallsBackOnEmptyModelOutput(t *testing.T) {
 	}
 }
 
+// TestCorrectorStripsModelWrappers 模型加的 Markdown 围栏 / 引号不能进输入框。
+func TestCorrectorStripsModelWrappers(t *testing.T) {
+	cases := []struct {
+		name  string
+		model string
+		want  string
+	}{
+		{"code fence", "```\n我做过 Golang\n```", "我做过 Golang"},
+		{"bold", "**我做过 Golang**", "我做过 Golang"},
+		{"double quote", "\"\"我做过 Golang\"\"", "我做过 Golang"},
+		{"corner bracket", "「我做过 Golang」", "我做过 Golang"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			corrector := NewCorrector(&stubTextModel{text: tc.model}, time.Second)
+			got := corrector.Correct(context.Background(), "我做过 go lang")
+			if got != tc.want {
+				t.Fatalf("corrected = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCorrectorKeepsInnerQuotes 文本内部的引号属于正常内容，不能被剥掉。
+func TestCorrectorKeepsInnerQuotes(t *testing.T) {
+	corrector := NewCorrector(&stubTextModel{text: "他说“这个方案可行”"}, time.Second)
+	got := corrector.Correct(context.Background(), "原话")
+	if got != "他说“这个方案可行”" {
+		t.Fatalf("corrected = %q", got)
+	}
+}
+
 func TestCorrectorPromptForbidsRewriting(t *testing.T) {
 	if !strings.Contains(correctSystemPrompt, "不得改变原意") {
 		t.Error("system prompt must forbid semantic rewriting")

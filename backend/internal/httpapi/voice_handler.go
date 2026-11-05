@@ -119,8 +119,25 @@ func (h *voiceHandler) transcribe(ginCtx *gin.Context) {
 		return
 	}
 
+	// 解析前先限体积：multipart 解析会把整个请求体读进内存，超出内存阈值的部分
+	// 由 net/http 写成磁盘临时文件 —— 那会让用户录音短暂落盘（与「不存录音」冲突），
+	// 超大请求体还会变成无上限的资源消耗。先用 Content-Length 快速拒绝，
+	// 再用 MaxBytesReader 兜住 chunked 请求（ContentLength 为 -1 时没有快速判断）。
+	const maxUploadBytes = speech.MaxAudioBytes + (1 << 20) // 额外留 1MB 给 multipart 头部
+	if ginCtx.Request.ContentLength > maxUploadBytes {
+		writeError(ginCtx, http.StatusBadRequest, "audio file is too large")
+		return
+	}
+	ginCtx.Request.Body = http.MaxBytesReader(ginCtx.Writer, ginCtx.Request.Body, maxUploadBytes)
+
 	header, err := ginCtx.FormFile("file")
 	if err != nil {
+		// MaxBytesReader 触发的错误要归到「太大」，而不是「缺文件」。
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(ginCtx, http.StatusBadRequest, "audio file is too large")
+			return
+		}
 		writeError(ginCtx, http.StatusBadRequest, "audio file is required")
 		return
 	}

@@ -52,6 +52,8 @@ func setupInterviewAPI(t *testing.T, voices ...*speech.VoiceService) (http.Handl
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 内存 SQLite 每个连接是独立库，必须限成单连接，否则并发请求会随机报 no such table。
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 	if err := store.Migrate(context.Background(), db); err != nil {
 		t.Fatal(err)
@@ -256,6 +258,20 @@ func TestInterviewHandlerAnswerNotFound(t *testing.T) {
 		`{"answer":"x"}`, cookie)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("answer unknown interview: %d, want 404", response.Code)
+	}
+}
+
+// TestInterviewHandlerCreatePrecheckBeforeBinding 已有 active 面试时，非法 body 也返回 409。
+//
+// 只有预检排在「解析简历/JD」之前才成立：否则应该先撞上 body 解析失败（400）。
+// 这条断言同时把预检的位置钉死，防止将来被挪到解析之后（白白加载简历与 JD）。
+func TestInterviewHandlerCreatePrecheckBeforeBinding(t *testing.T) {
+	router, cookie, _ := setupInterviewAPI(t)
+	_, _ = createInterviewFixture(t, router, cookie, nil)
+
+	conflict := requestJSON(t, router, http.MethodPost, "/api/interviews", `{"targetJobId":"not-a-number"}`, cookie)
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("create with invalid body = %d, want 409: %s", conflict.Code, conflict.Body.String())
 	}
 }
 
