@@ -7,6 +7,7 @@
 - 日志统一走 `backend/internal/logging` 抽象层（默认实现是 `logrus` 适配器）；业务代码一律不直接 `import logrus`。详见下方「日志规范」。
 - 需要编排 LLM、工具调用或工作流时使用 Eino。未涉及 AI 能力的普通业务逻辑不得为了使用 Eino 而增加依赖。
 - 需要 Redis 缓存、会话辅助、限流或分布式协调时使用 `redigo`。Redis 连接与依赖须通过配置注入；本地开发和自动化测试不得依赖外部 Redis 服务。
+- 用 Eino 的 Responses 模型（`agenticopenai`）接非 OpenAI 上游时，`previous_response_id` 会被**静默忽略**（MiniMax 的 Responses 兼容端点即如此）。任何依赖「服务端续上下文」的写法都不成立：system prompt 与题目上下文必须由调用方每次自带。2026-11-05 的追问轮评分就因为只发一句用户答案、指望服务端续上下文，模型把答案当聊天请求返回了技术方案，最终报 `invalid grade ""`。
 
 ## 日志规范
 
