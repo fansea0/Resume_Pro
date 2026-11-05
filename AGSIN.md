@@ -4,9 +4,57 @@
 
 - 后端使用 Go 与 Gin；HTTP 接口保持在 `backend/internal/httpapi`，并通过 `NewRouter` 构造，以便在不启动真实服务的情况下测试。
 - 数据访问统一使用 `sqlx`，SQL、迁移和事务边界必须可测试；当前 SQLite 实现继续保留。
-- 日志统一使用 `logrus`，启动、错误和关键请求上下文应使用结构化字段记录。
+- 日志统一走 `backend/internal/logging` 抽象层（默认实现是 `logrus` 适配器）；业务代码一律不直接 `import logrus`。详见下方「日志规范」。
 - 需要编排 LLM、工具调用或工作流时使用 Eino。未涉及 AI 能力的普通业务逻辑不得为了使用 Eino 而增加依赖。
 - 需要 Redis 缓存、会话辅助、限流或分布式协调时使用 `redigo`。Redis 连接与依赖须通过配置注入；本地开发和自动化测试不得依赖外部 Redis 服务。
+
+## 日志规范
+
+日志存在的意义是**出问题时能定位**。前端只会拿到一句「interview operation failed」这种泛化文案，
+没有日志就等于线上无法排查 —— 这类事故在 2026-11-05 的语音追问提交失败上真实发生过一次，
+根因（`grade_answer` 节点拿到空 grade）完全靠后端日志才定位到。
+
+### 唯一入口
+
+- 业务代码只 import `backend/internal/logging`，用 `logging.Info / Warn / Error / Warnf ...`
+  与 `logging.WithError(err).WithFields(logging.Fields{...})`。
+- **禁止在业务代码里直接 import `logrus`**。只有两个例外：`internal/logging` 自身（适配器实现）
+  与 `cmd/server/main.go`（组装点，负责把 `logrus.New()` 包成 `logging.Logger`）。
+- 换日志组件（zap / slog / 云厂商 SDK）时只改 `internal/logging` 一个包，必要时调一次
+  `logging.SetLogger(...)`；业务代码零改动。
+- `internal/ai` 的 eino 回调同样走 `logging`（`ai.NewHooks(logger)`），不直接依赖 logrus。
+
+### 必须打日志的场景
+
+1. **任何返回 5xx 的路径** —— 统一走 `httpapi.writeError` + `requestLogger` 中间件落日志，
+   不要在各个 handler 里各写各的（漏一处就又变成「只有一句泛化文案」）。
+2. **任何降级或兜底** —— 功能被禁用、跳过、重试耗尽、失败后回落到默认值。
+3. **任何外部调用失败** —— LLM、TTS、ASR、Redis、数据库、文件存储。
+4. **状态机的异常迁移** —— 抢占生成权失败、重复提交、清理失败、状态归零失败、队列丢弃。
+5. **启动与关闭** —— 监听地址、各能力是否装配成功（语音/AI/面试）、配置生效情况。
+
+### 怎么写
+
+- 级别：`Error` = 需要人介入；`Warn` = 降级但主流程正常；`Info` = 关键节点；`Debug` = 排查细节。
+- **必须带原始错误**：拿得到 `err` 就用 `WithError(err)`，不要只写一句「失败了」。
+- 关键上下文用结构化字段（`WithFields`），不要拼进消息文本 —— 拼进文本就没法按字段检索。
+- 消息用「模块: 发生了什么」的固定前缀，便于按模块过滤（如 `voice: ...`、`interview: ...`）。
+- 新增或修改日志行为要有对应测试（见 `internal/logging/logging_test.go`、
+  `internal/httpapi/request_logging_test.go`）。
+
+### 请求 ID 与前端报障
+
+- 每个请求分配一个短 `request_id`（`X-Request-ID` 响应头）。
+- 5xx 响应体带 `request_id` 字段：前端只显示泛化文案时，用户报障报这个 ID 即可定位日志。
+- 中间件在 `internal/httpapi/request_logging.go`，记录方法、路径、状态、耗时、客户端 IP、
+  内部错误详情与 `request_id`。**只记 5xx**：4xx 是客户端问题（参数错、未登录、越权），量大且不必逐条追。
+
+### 禁止
+
+- 禁止记录请求体、查询参数、简历内容、录音、密钥、token、Cookie、密码。
+- 禁止用 `log.Print` / `fmt.Println` 打日志。
+- 禁止吞掉 `err`：要么处理，要么记日志。
+- 禁止在 handler 里另起一套 5xx 记录逻辑（统一走 `writeError` + 中间件）。
 
 ## Dev API 自动化测试入口
 
