@@ -19,6 +19,12 @@ const (
 	// generatorBacklogSize 是 backlog 的上限。
 	// backlog 也满时才真正放弃任务并归还生成权（兜底，避免无限占用内存与生成权）。
 	generatorBacklogSize = 4096
+	// generatorBacklogFairnessLimit 是连续消费 backlog 的上限：
+	// 达到上限后强制让位一次给 channel，避免 channel 里的老任务被永久推迟。
+	generatorBacklogFairnessLimit = 8
+	// generatorDBTimeout 是生成器内部同步 DB 调用（抢占、归还、状态归零）的超时。
+	// 这些调用跑在调用方 goroutine 里，DB 被锁住时不能无限期占住。
+	generatorDBTimeout = 5 * time.Second
 	// generatorWorkerExitTimeout 是 Close 等待 worker 退出的上限：
 	// 上游 TTS 不响应 ctx 取消时，不能把进程退出卡死。
 	generatorWorkerExitTimeout = 5 * time.Second
@@ -242,7 +248,10 @@ func (g *Generator) Enqueue(ctx context.Context, tenantID, interviewID, question
 	// 客户端中断请求会让 ctx 取消，抢占因此失败的话这题就永远没人合成
 	//（状态停在 NULL，只能等下次重启 Reload 才补齐）。
 	// 用 WithoutCancel 而不是 Background：保留 trace / 日志字段。
-	bgCtx := context.WithoutCancel(ctx)
+	// 再加超时：抢占是同步 DB 调用且跑在请求 goroutine 里，
+	// DB 被锁住时（SQLite busy_timeout=5000）不能无限期占住请求。
+	bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), generatorDBTimeout)
+	defer cancel()
 	claimed, err := g.repo.ClaimAudioState(bgCtx, questionID)
 	if err != nil {
 		g.enqueue.Delete(questionID)
@@ -254,6 +263,20 @@ func (g *Generator) Enqueue(ctx context.Context, tenantID, interviewID, question
 		g.enqueue.Delete(questionID)
 		return
 	}
+
+	// 抢占成功后再次确认没有被关闭：
+	// 开头的检查与这里之间存在窗口，Close 恰好落在窗口里时，
+	// worker 已经退出，这题会永远卡在 pending 且没人消费。
+	select {
+	case <-g.closed:
+		g.enqueue.Delete(questionID)
+		if err := g.repo.ReleaseAudioState(bgCtx, questionID); err != nil {
+			logrus.WithError(err).WithField("question_id", questionID).Warn("voice: release audio state failed")
+		}
+		return
+	default:
+	}
+
 	job := Job{TenantID: tenantID, InterviewID: interviewID, QuestionID: questionID, Text: text}
 	select {
 	case g.jobs <- job:
@@ -320,7 +343,12 @@ func (g *Generator) CleanupInterview(ctx context.Context, tenantID, interviewID 
 		}
 	}()
 
-	if err := g.markInterviewClosed(ctx, interviewID); err != nil {
+	// 状态归零是 DB 调用，不能受调用方 ctx 的生命周期影响：
+	// 未来可能用请求 ctx 调用 CleanupInterview，而请求可能已被取消。
+	// 归零失败没有重试入口（目录会残留），因此给一个独立的超时。
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), generatorDBTimeout)
+	defer cancel()
+	if err := g.markInterviewClosed(dbCtx, interviewID); err != nil {
 		// 状态没归零就不能删目录：否则 DB 里仍是 ready、文件却没了，
 		// 前端按 ready 请求音频只会拿到 404。宁可留下孤儿文件。
 		logrus.WithError(err).WithField("interview_id", interviewID).
@@ -359,9 +387,58 @@ func (g *Generator) signalDone() {
 }
 
 // run 是 worker 主循环：串行消费队列。
+//
+// 任务有两个来源：channel（主队列）与 backlog（队列满时的溢出区）。
+//
+// backlog 优先消费：这些题早就抢占了生成权（状态 pending），
+// 若一直排在 channel 后面，在持续入队压力下会永久饥饿 ——
+// 旧实现是「处理完一题再把 backlog 灌回 channel」，
+// 而合成期间新任务会把刚腾出的槽位补满，pump 永远失败，backlog 的题一直 pending。
+//
+// 为了不让 channel 里的老任务被永久推迟，连续消费 backlog 达到上限后强制让位一次。
 func (g *Generator) run(ctx context.Context) {
 	defer g.signalDone()
+	// 第三层兜底：worker goroutine 顶层的任何 panic 都不能 abort 整个进程
+	//（panic 逃出 goroutine 会让 Go 直接终止整个后端）。
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithField("panic", fmt.Sprintf("%v", r)).
+				Error("voice: panic in audio generator worker loop, recovered")
+		}
+	}()
+
+	backlogStreak := 0
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-g.closed:
+			return
+		default:
+		}
+
+		if backlogStreak >= generatorBacklogFairnessLimit {
+			// 公平性让位：channel 里的任务也必须有被处理的机会。
+			backlogStreak = 0
+			select {
+			case <-ctx.Done():
+				return
+			case <-g.closed:
+				return
+			case job := <-g.jobs:
+				g.safeProcess(ctx, job)
+				continue
+			default:
+				// channel 空：回到 backlog 优先。
+			}
+		}
+
+		if job, ok := g.takeBacklog(); ok {
+			backlogStreak++
+			g.safeProcess(ctx, job)
+			continue
+		}
+
 		select {
 		case <-ctx.Done():
 			return
@@ -369,9 +446,6 @@ func (g *Generator) run(ctx context.Context) {
 			return
 		case job := <-g.jobs:
 			g.safeProcess(ctx, job)
-			// 处理完一题就尝试把 backlog 里的任务灌回队列：
-			// 队列满时进 backlog 的题因此不会在本进程内永远落空。
-			g.pumpBacklog()
 		}
 	}
 }
@@ -405,27 +479,20 @@ func (g *Generator) pushBacklog(job Job) bool {
 	return true
 }
 
-// pumpBacklog 把 backlog 里的任务灌回队列。
+// takeBacklog 取出并移除 backlog 头部任务；backlog 为空时返回 false。
 //
-// 只由 worker 调用（单线程），因此「看头部 → 投递 → 移除」不会重复投递；
-// Enqueue 只往尾部追加，不会影响头部。
-func (g *Generator) pumpBacklog() {
+// 「看头部」与「移除」在同一个锁内完成：否则并发下可能取到同一条或漏掉。
+// 取出后即从 backlog 移除：任务不会被重复投递；
+// 万一处理时 panic，内层 recover 会把这题标记为 failed，不会无声消失。
+func (g *Generator) takeBacklog() (Job, bool) {
 	g.backlogMu.Lock()
+	defer g.backlogMu.Unlock()
 	if len(g.backlog) == 0 {
-		g.backlogMu.Unlock()
-		return
+		return Job{}, false
 	}
 	job := g.backlog[0]
-	g.backlogMu.Unlock()
-
-	select {
-	case g.jobs <- job:
-		g.backlogMu.Lock()
-		g.backlog = g.backlog[1:]
-		g.backlogMu.Unlock()
-	default:
-		// 队列又满了：留在 backlog，等下一次 pump。
-	}
+	g.backlog = g.backlog[1:]
+	return job, true
 }
 
 // process 合成一题：合成失败按退避重试，耗尽后标记 failed。

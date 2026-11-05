@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,6 +35,15 @@ type fakeStateStore struct {
 
 	// resetInterviewErr 让 ResetAudioStateByInterview 返回错误（模拟 DB 写失败）。
 	resetInterviewErr error
+
+	// claimEntered / claimRelease 让 ClaimAudioState 阻塞，
+	// 用于制造「抢占已发出但尚未返回」的窗口。
+	claimEntered     chan struct{}
+	claimRelease     chan struct{}
+	claimEnteredOnce sync.Once
+
+	// claimHasDeadline 记录最近一次抢占收到的 ctx 是否带 deadline。
+	claimHasDeadline bool
 }
 
 func (f *fakeStateStore) seed(questionID, interviewID int64, state string) {
@@ -65,6 +75,13 @@ func (f *fakeStateStore) claimCount() int {
 	return f.claims
 }
 
+// claimDeadlineRecorded 报告最近一次抢占收到的 ctx 是否带 deadline。
+func (f *fakeStateStore) claimDeadlineRecorded() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.claimHasDeadline
+}
+
 func (f *fakeStateStore) updateLog() []stateUpdate {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -92,6 +109,23 @@ func (f *fakeStateStore) UpdateAudioState(_ context.Context, questionID int64, s
 // 真实仓储用的是带 ctx 的 SQL：ctx 取消时抢占会失败。
 // 这里同样尊重 ctx，否则「请求 ctx 被取消」的用例测不出问题。
 func (f *fakeStateStore) ClaimAudioState(ctx context.Context, questionID int64) (bool, error) {
+	f.mu.Lock()
+	if _, ok := ctx.Deadline(); ok {
+		f.claimHasDeadline = true
+	}
+	entered, release := f.claimEntered, f.claimRelease
+	f.mu.Unlock()
+
+	if entered != nil {
+		// 模拟「抢占请求已发出、尚未返回」的窗口。
+		f.claimEnteredOnce.Do(func() { close(entered) })
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	}
+
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -135,7 +169,10 @@ func (f *fakeStateStore) ResetStalePendingAudio(_ context.Context) (int64, error
 	return n, nil
 }
 
-func (f *fakeStateStore) ResetAudioStateByInterview(_ context.Context, interviewID int64) error {
+func (f *fakeStateStore) ResetAudioStateByInterview(ctx context.Context, interviewID int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ensure()
@@ -167,6 +204,9 @@ type countingSynth struct {
 	entered     chan struct{}
 	enteredOnce sync.Once
 	release     chan struct{}
+
+	// onCall 在每次合成时被调用（用于制造持续入队压力等场景）。
+	onCall func(call int)
 }
 
 func (s *countingSynth) Synthesize(ctx context.Context, _ SynthesisRequest) (SynthesisResult, error) {
@@ -184,6 +224,9 @@ func (s *countingSynth) Synthesize(ctx context.Context, _ SynthesisRequest) (Syn
 		case <-ctx.Done():
 			return SynthesisResult{}, ctx.Err()
 		}
+	}
+	if s.onCall != nil {
+		s.onCall(current)
 	}
 	if s.panicOnCall > 0 && current == s.panicOnCall {
 		panic("provider exploded")
@@ -571,6 +614,143 @@ func TestGeneratorBacklogJobsAreProcessed(t *testing.T) {
 	}
 	if got := synth.callCount(); got != 5 {
 		t.Fatalf("synthesized %d times, want 5", got)
+	}
+}
+
+// Important-1：持续入队压力下 backlog 里的题不能永久饥饿。
+//
+// 形状与评审复现一致：channel 容量 1，每次合成时再入队一个新题 → channel 恒满。
+// 旧实现（处理完一题再把 backlog 灌回 channel）下，合成期间新任务会补满刚腾出的槽位，
+// pump 永远失败，backlog 里的题一直停在 pending。
+func TestGeneratorBacklogDoesNotStarveUnderConstantEnqueue(t *testing.T) {
+	synth := &countingSynth{}
+	states := &fakeStateStore{}
+	generator, _ := newTestGeneratorWithSizes(t, synth, states, 1, 1, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var counter int64
+	synth.onCall = func(call int) {
+		// 每次合成都再入队一个新题：worker 取走 channel 任务后槽位立刻被补上，
+		// channel 恒满 → backlog 持续有积压。
+		id := atomic.AddInt64(&counter, 1) + 1000
+		states.seed(id, 10, "")
+		generator.Enqueue(ctx, 1, 10, id, "题面")
+	}
+
+	states.seed(100, 10, "")
+	generator.Enqueue(ctx, 1, 10, 100, "题面") // 进 channel
+	states.seed(101, 10, "")
+	generator.Enqueue(ctx, 1, 10, 101, "题面") // channel 满 → backlog
+	states.seed(102, 10, "")
+	generator.Enqueue(ctx, 1, 10, 102, "题面") // backlog
+
+	generator.Start(ctx)
+	defer generator.Close()
+
+	waitForState(t, states, 101, "ready")
+	waitForState(t, states, 102, "ready")
+}
+
+// 公平性：backlog 优先消费时，channel 里的老任务也不能被永久推迟。
+func TestGeneratorChannelJobNotStarvedByBacklog(t *testing.T) {
+	synth := &countingSynth{}
+	states := &fakeStateStore{}
+	generator, _ := newTestGeneratorWithSizes(t, synth, states, 1, 1, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var counter int64
+	synth.onCall = func(call int) {
+		id := atomic.AddInt64(&counter, 1) + 1000
+		states.seed(id, 10, "")
+		generator.Enqueue(ctx, 1, 10, id, "题面")
+	}
+
+	states.seed(100, 10, "")
+	generator.Enqueue(ctx, 1, 10, 100, "题面") // 进 channel
+	states.seed(101, 10, "")
+	generator.Enqueue(ctx, 1, 10, 101, "题面") // channel 满 → backlog
+
+	generator.Start(ctx)
+	defer generator.Close()
+
+	// channel 里的老任务最终会被处理（连续消费 backlog 达上限后强制让位）。
+	waitForState(t, states, 100, "ready")
+}
+
+// Minor-2：抢占进行中发生 Close 时，抢占成功后必须再次确认并归还生成权。
+func TestGeneratorEnqueueReleasesClaimWhenClosedDuringClaim(t *testing.T) {
+	synth := &countingSynth{}
+	states := &fakeStateStore{}
+	states.seed(100, 10, "")
+	states.claimEntered = make(chan struct{})
+	states.claimRelease = make(chan struct{})
+	generator, _ := newTestGenerator(t, synth, states, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	generator.Start(ctx)
+
+	done := make(chan struct{})
+	go func() {
+		generator.Enqueue(ctx, 1, 10, 100, "题面")
+		close(done)
+	}()
+
+	<-states.claimEntered // 抢占已发出、尚未返回
+	generator.Close()     // 此刻关闭生成器：worker 退出
+	close(states.claimRelease)
+	<-done
+
+	// 抢占成功后才发现已关闭 → 必须归还生成权，否则这题永远卡在 pending。
+	if got := states.state(100); got != "" {
+		t.Fatalf("question 100 state = %q, want empty (claim must be released)", got)
+	}
+}
+
+// Minor-3：抢占必须带超时，不能无限期占住调用方 goroutine。
+func TestGeneratorClaimUsesBoundedContext(t *testing.T) {
+	synth := &countingSynth{}
+	states := &fakeStateStore{}
+	states.seed(100, 10, "")
+	generator, _ := newTestGenerator(t, synth, states, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	generator.Start(ctx)
+	defer generator.Close()
+
+	generator.Enqueue(ctx, 1, 10, 100, "题面")
+	waitForState(t, states, 100, "ready")
+
+	if !states.claimDeadlineRecorded() {
+		t.Fatal("claim context must carry a deadline")
+	}
+}
+
+// Minor-5：清理路径不能受调用方 ctx 取消影响（否则状态归零失败、目录残留）。
+func TestGeneratorCleanupSurvivesCanceledContext(t *testing.T) {
+	synth := &countingSynth{}
+	states := &fakeStateStore{}
+	states.seed(100, 10, "")
+	generator, store := newTestGenerator(t, synth, states, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	generator.Start(ctx)
+	defer generator.Close()
+
+	if err := store.SaveQuestionAudio(ctx, 1, 10, 100, testWAV()); err != nil {
+		t.Fatalf("seed audio: %v", err)
+	}
+
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	cancelRequest()
+	generator.CleanupInterview(requestCtx, 1, 10)
+
+	if got := states.state(100); got != "" {
+		t.Fatalf("question 100 state = %q, want empty (state reset must survive a canceled ctx)", got)
+	}
+	if _, err := store.ReadQuestionAudio(1, 10, 100); err == nil {
+		t.Fatal("audio file must be cleaned up even when the caller ctx is canceled")
 	}
 }
 
