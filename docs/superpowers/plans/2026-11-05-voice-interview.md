@@ -363,6 +363,13 @@ type AudioHooks interface {
 Run: `cd backend && go build ./... && go test ./...`
 Expected: 全部通过。
 
+> **实现说明（落地时确认过的三处适配）**：brief 里的示例代码与仓库既有写法有三处出入，实现时按仓库惯例调整是对的：
+> 1. `PendingAudio` 需要 `db` tag（sqlx 默认映射对不上 `tenant_id` / `question_id`）。
+> 2. `QuestionByID` 的可空列（`standard_answer` / `user_answer` / `extra` / `grade` / `audio_state`）要用仓库既有的 `COALESCE` 惯例，否则扫 NULL 报错。
+> 3. 题目不存在时返回包内约定的 `ErrNotFound`，不返回裸 sqlx 错误。
+>
+> 另外 `MainQuestions` / `QuestionChain` **仍不查 `audio_state`** —— 这是 Task 7 要补的（见 Task 7 Step 6 第 5 点），本任务不越界改。
+
 - [ ] **Step 11: Commit**
 
 ```bash
@@ -2127,6 +2134,7 @@ git commit -m "feat(interview): 接入语音生成触发与面试终态清理"
 - Create: `backend/internal/speech/service.go`
 - Modify: `backend/internal/httpapi/router.go`
 - Modify: `backend/internal/httpapi/interview_handler.go`
+- Modify: `backend/internal/interview/repository.go`（让题目查询带上 `audio_state`）
 - Test: `backend/internal/httpapi/voice_handler_test.go`
 
 **Interfaces:**
@@ -2579,7 +2587,19 @@ func newInterviewHandler(service *interview.Service, resumeRepo *resume.Reposito
 
 4. 所有 `interviewDTO(iv)` 调用点改成 `h.interviewDTO(iv)`。
 
-5. `create` 入口前置预检（**放在解析简历/JD 之前**）：
+5. **让题目查询带上 `audio_state`**（否则 `questionDTO` 的 `audioState` 恒为 null，前端永远看不到喇叭）：
+
+   `backend/internal/interview/repository.go` 里 `MainQuestions` 与 `QuestionChain` 的 SELECT 用的是
+   `questionColumns` 常量，**不含 `audio_state`**。HTTP 的 `GET /questions` 走的是
+   `Service.Questions` → `MainQuestions` + `QuestionChain`，因此必须把这两个查询也切到
+   带 `audio_state` 的列清单（Task 1 已引入 `questionColumnsWithAudio`），否则
+   `Question.AudioState` 永远是 nil。
+
+   具体做法：让 `MainQuestions` / `QuestionChain` 使用 `questionColumnsWithAudio`。
+   改完加一条路由级断言：`GET /api/interviews/:id/questions` 返回的每题都带
+   非空的 `audioState` 字段（值为 `null` 或四态之一）。
+
+6. `create` 入口前置预检（**放在解析简历/JD 之前**）：
 
 ```go
 	if h.service == nil {
@@ -2607,7 +2627,7 @@ Expected: PASS（既有面试测试可能因 `newInterviewHandler` 签名变化�
 - [ ] **Step 8: Commit**
 
 ```bash
-git add backend/internal/httpapi/voice_handler.go backend/internal/httpapi/voice_handler_test.go backend/internal/httpapi/router.go backend/internal/httpapi/interview_handler.go backend/internal/httpapi/interview_handler_test.go backend/internal/speech/service.go
+git add backend/internal/httpapi/voice_handler.go backend/internal/httpapi/voice_handler_test.go backend/internal/httpapi/router.go backend/internal/httpapi/interview_handler.go backend/internal/httpapi/interview_handler_test.go backend/internal/speech/service.go backend/internal/interview/repository.go
 git commit -m "feat(interview): 新增题目语音播放与录音转写接口"
 ```
 
