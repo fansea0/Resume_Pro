@@ -31,6 +31,9 @@ type fakeStateStore struct {
 	claims   int
 	releases int
 	updates  []stateUpdate
+
+	// resetInterviewErr 让 ResetAudioStateByInterview 返回错误（模拟 DB 写失败）。
+	resetInterviewErr error
 }
 
 func (f *fakeStateStore) seed(questionID, interviewID int64, state string) {
@@ -68,6 +71,13 @@ func (f *fakeStateStore) updateLog() []stateUpdate {
 	return append([]stateUpdate(nil), f.updates...)
 }
 
+// setResetInterviewError 注入 ResetAudioStateByInterview 的失败。
+func (f *fakeStateStore) setResetInterviewError(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resetInterviewErr = err
+}
+
 func (f *fakeStateStore) UpdateAudioState(_ context.Context, questionID int64, state string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -78,7 +88,13 @@ func (f *fakeStateStore) UpdateAudioState(_ context.Context, questionID int64, s
 }
 
 // ClaimAudioState 模拟条件 UPDATE：只有 NULL / failed 能被抢到。
-func (f *fakeStateStore) ClaimAudioState(_ context.Context, questionID int64) (bool, error) {
+//
+// 真实仓储用的是带 ctx 的 SQL：ctx 取消时抢占会失败。
+// 这里同样尊重 ctx，否则「请求 ctx 被取消」的用例测不出问题。
+func (f *fakeStateStore) ClaimAudioState(ctx context.Context, questionID int64) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ensure()
@@ -91,7 +107,10 @@ func (f *fakeStateStore) ClaimAudioState(_ context.Context, questionID int64) (b
 	return true, nil
 }
 
-func (f *fakeStateStore) ReleaseAudioState(_ context.Context, questionID int64) error {
+func (f *fakeStateStore) ReleaseAudioState(ctx context.Context, questionID int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ensure()
@@ -120,6 +139,9 @@ func (f *fakeStateStore) ResetAudioStateByInterview(_ context.Context, interview
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ensure()
+	if f.resetInterviewErr != nil {
+		return f.resetInterviewErr
+	}
 	for id, owner := range f.owners {
 		if owner == interviewID {
 			f.states[id] = ""
@@ -134,12 +156,13 @@ func (f *fakeStateStore) ActiveQuestionsNeedingAudio(_ context.Context) ([]inter
 	return append([]interview.PendingAudio(nil), f.pending...), nil
 }
 
-// countingSynth 是可控的假合成器：可指定前 N 次失败、可阻塞、可返回指定字节。
+// countingSynth 是可控的假合成器：可指定前 N 次失败、可阻塞、可返回指定字节、可 panic。
 type countingSynth struct {
-	mu       sync.Mutex
-	calls    int
-	failures int
-	payload  []byte
+	mu          sync.Mutex
+	calls       int
+	failures    int
+	payload     []byte
+	panicOnCall int // 第 N 次调用直接 panic（0 表示不 panic）
 
 	entered     chan struct{}
 	enteredOnce sync.Once
@@ -161,6 +184,9 @@ func (s *countingSynth) Synthesize(ctx context.Context, _ SynthesisRequest) (Syn
 		case <-ctx.Done():
 			return SynthesisResult{}, ctx.Err()
 		}
+	}
+	if s.panicOnCall > 0 && current == s.panicOnCall {
+		panic("provider exploded")
 	}
 	if current <= s.failures {
 		return SynthesisResult{}, errors.New("boom")
@@ -229,9 +255,15 @@ func waitForState(t *testing.T, store *fakeStateStore, questionID int64, want st
 
 func newTestGenerator(t *testing.T, synth Synthesizer, states *fakeStateStore, maxAttempts int) (*Generator, *AudioStore) {
 	t.Helper()
+	return newTestGeneratorWithSizes(t, synth, states, maxAttempts, generatorQueueSize, generatorBacklogSize)
+}
+
+// newTestGeneratorWithSizes 用小容量队列，避免为了测 backlog 跑几千个任务。
+func newTestGeneratorWithSizes(t *testing.T, synth Synthesizer, states *fakeStateStore, maxAttempts, queueSize, backlogLimit int) (*Generator, *AudioStore) {
+	t.Helper()
 	store := NewAudioStore(t.TempDir())
 	cfg := Config{MaxAttempts: maxAttempts, Backoff: []time.Duration{time.Millisecond}}
-	return NewGenerator(synth, store, states, cfg), store
+	return newGenerator(synth, store, states, cfg, queueSize, backlogLimit), store
 }
 
 func TestGeneratorRetriesThenMarksReady(t *testing.T) {
@@ -368,6 +400,87 @@ func TestGeneratorDoesNotStoreAfterInterviewClosed(t *testing.T) {
 	}
 }
 
+// markFailed 的「已终止」守卫：合成失败发生在面试结束之后时，不得写回 failed。
+func TestGeneratorDoesNotMarkFailedAfterInterviewClosed(t *testing.T) {
+	synth := &countingSynth{failures: 1, entered: make(chan struct{}), release: make(chan struct{})}
+	states := &fakeStateStore{}
+	states.seed(100, 10, "")
+	states.seed(300, 30, "") // 屏障题
+	generator, _ := newTestGenerator(t, synth, states, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	generator.Start(ctx)
+	defer generator.Close()
+
+	generator.Enqueue(ctx, 1, 10, 100, "题面")
+	<-synth.entered // 合成已在进行中
+
+	generator.CleanupInterview(ctx, 1, 10)
+	close(synth.release) // 放行合成 → 合成失败 → 走 markFailed
+
+	// 屏障题：变 ready 说明被清理的那题已经走完 process。
+	generator.Enqueue(ctx, 1, 30, 300, "题面")
+	waitForState(t, states, 300, "ready")
+
+	if got := states.state(100); got != "" {
+		t.Fatalf("question 100 state = %q, want empty (must not be marked failed after close)", got)
+	}
+	for _, update := range states.updateLog() {
+		if update.questionID == 100 && update.state == "failed" {
+			t.Fatalf("question 100 marked failed after the interview closed")
+		}
+	}
+}
+
+// M3：已结束面试的排队题不该再白跑一次上游合成。
+func TestGeneratorSkipsSynthesisForClosedInterview(t *testing.T) {
+	synth := &countingSynth{}
+	states := &fakeStateStore{}
+	states.seed(100, 10, "")
+	states.seed(200, 20, "") // 屏障题
+	generator, _ := newTestGenerator(t, synth, states, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 先入队，再结束面试，最后才启动 worker：队列里残留的题不该再触发合成。
+	generator.Enqueue(ctx, 1, 10, 100, "题面")
+	generator.CleanupInterview(ctx, 1, 10)
+	generator.Start(ctx)
+	defer generator.Close()
+
+	generator.Enqueue(ctx, 1, 20, 200, "题面")
+	waitForState(t, states, 200, "ready")
+
+	if got := synth.callCount(); got != 1 {
+		t.Fatalf("synthesized %d times, want 1 (closed question must be skipped)", got)
+	}
+	if got := states.state(100); got != "" {
+		t.Fatalf("question 100 state = %q, want empty", got)
+	}
+}
+
+// C1：provider panic 不能带崩进程，且 worker 必须继续工作。
+//
+// 没有 recover 时这个用例会直接把测试二进制打崩（不是断言失败）。
+func TestGeneratorRecoversFromProviderPanic(t *testing.T) {
+	synth := &countingSynth{panicOnCall: 1}
+	states := &fakeStateStore{}
+	states.seed(100, 10, "")
+	states.seed(200, 20, "") // 屏障题：验证 worker 还活着
+	generator, _ := newTestGenerator(t, synth, states, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	generator.Start(ctx)
+	defer generator.Close()
+
+	generator.Enqueue(ctx, 1, 10, 100, "题面")
+	waitForState(t, states, 100, "failed")
+
+	// worker 必须还活着：再入队一题，断言它能被正常处理。
+	generator.Enqueue(ctx, 1, 20, 200, "题面")
+	waitForState(t, states, 200, "ready")
+}
+
 // 重启重载：先把上次崩溃残留的 pending 归零，再重新入队补齐。
 //
 // Reload 必须在 Start 之前调用（见 TestGeneratorReloadAfterStartIsRejected）。
@@ -414,16 +527,16 @@ func TestGeneratorReloadAfterStartIsRejected(t *testing.T) {
 	}
 }
 
-// 队列满时必须归还生成权：否则这题永远停在 pending，只能等下次重启。
-func TestGeneratorReleasesClaimWhenQueueFull(t *testing.T) {
+// I3：队列满时任务进 backlog，不当场丢弃——backlog 也满才归还生成权。
+func TestGeneratorBacklogOverflowReleasesClaim(t *testing.T) {
 	synth := &countingSynth{}
 	states := &fakeStateStore{}
-	generator, _ := newTestGenerator(t, synth, states, 1)
+	generator, _ := newTestGeneratorWithSizes(t, synth, states, 1, 2, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 不 Start：worker 不消费，队列会被填满。
-	for i := 0; i < generatorQueueSize; i++ {
+	// 不 Start：worker 不消费，队列(2) + backlog(4) 会被填满。
+	for i := 0; i < 6; i++ {
 		questionID := int64(1000 + i)
 		states.seed(questionID, 10, "")
 		generator.Enqueue(ctx, 1, 10, questionID, "题面")
@@ -434,6 +547,97 @@ func TestGeneratorReleasesClaimWhenQueueFull(t *testing.T) {
 
 	if got := states.state(overflow); got != "" {
 		t.Fatalf("overflow question state = %q, want empty (claim released)", got)
+	}
+}
+
+// I3：进 backlog 的题最终会被处理成 ready，不会在本进程内落空。
+func TestGeneratorBacklogJobsAreProcessed(t *testing.T) {
+	synth := &countingSynth{}
+	states := &fakeStateStore{}
+	generator, _ := newTestGeneratorWithSizes(t, synth, states, 1, 2, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for i := 0; i < 5; i++ {
+		questionID := int64(1000 + i)
+		states.seed(questionID, 10, "")
+		generator.Enqueue(ctx, 1, 10, questionID, "题面")
+	}
+	generator.Start(ctx)
+	defer generator.Close()
+
+	for i := 0; i < 5; i++ {
+		waitForState(t, states, int64(1000+i), "ready")
+	}
+	if got := synth.callCount(); got != 5 {
+		t.Fatalf("synthesized %d times, want 5", got)
+	}
+}
+
+// I2：生成器关闭后入队不得再抢占生成权（否则这题永远卡在 pending）。
+func TestGeneratorEnqueueAfterCloseDoesNotClaim(t *testing.T) {
+	synth := &countingSynth{}
+	states := &fakeStateStore{}
+	states.seed(100, 10, "")
+	generator, _ := newTestGenerator(t, synth, states, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	generator.Start(ctx)
+	generator.Close()
+
+	generator.Enqueue(ctx, 1, 10, 100, "题面")
+
+	if got := states.claimCount(); got != 0 {
+		t.Fatalf("claim count = %d, want 0 (enqueue after close must not claim)", got)
+	}
+	if got := states.state(100); got != "" {
+		t.Fatalf("question 100 state = %q, want empty", got)
+	}
+}
+
+// I4：抢占属于后台任务语义，不能因为请求 ctx 被取消就放弃这题。
+func TestGeneratorEnqueueSurvivesCanceledContext(t *testing.T) {
+	synth := &countingSynth{}
+	states := &fakeStateStore{}
+	states.seed(100, 10, "")
+	generator, _ := newTestGenerator(t, synth, states, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	generator.Start(ctx)
+	defer generator.Close()
+
+	// 模拟客户端中断请求：请求 ctx 已被取消。
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	cancelRequest()
+
+	generator.Enqueue(requestCtx, 1, 10, 100, "题面")
+
+	if got := states.claimCount(); got != 1 {
+		t.Fatalf("claim count = %d, want 1 (claim must survive a canceled request ctx)", got)
+	}
+	waitForState(t, states, 100, "ready")
+}
+
+// I1：状态归零失败时不能删目录 —— 否则会出现「状态 ready 但文件不存在」。
+func TestGeneratorKeepsFilesWhenStateResetFails(t *testing.T) {
+	synth := &countingSynth{}
+	states := &fakeStateStore{}
+	states.seed(100, 10, "")
+	generator, store := newTestGenerator(t, synth, states, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	generator.Start(ctx)
+	defer generator.Close()
+
+	if err := store.SaveQuestionAudio(ctx, 1, 10, 100, testWAV()); err != nil {
+		t.Fatalf("seed audio: %v", err)
+	}
+	states.setResetInterviewError(errors.New("database is locked"))
+
+	generator.CleanupInterview(ctx, 1, 10)
+
+	if _, err := store.ReadQuestionAudio(1, 10, 100); err != nil {
+		t.Fatalf("audio file must survive when the state reset failed: %v", err)
 	}
 }
 

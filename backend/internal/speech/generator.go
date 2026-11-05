@@ -14,8 +14,11 @@ import (
 
 const (
 	// generatorQueueSize 是待生成任务队列的容量。
-	// 队列满时入队方直接放弃并归还生成权，不阻塞调用方。
+	// 队列满时任务不会当场丢弃：先进 backlog（见 Generator.backlog），worker 消费时再灌回来。
 	generatorQueueSize = 256
+	// generatorBacklogSize 是 backlog 的上限。
+	// backlog 也满时才真正放弃任务并归还生成权（兜底，避免无限占用内存与生成权）。
+	generatorBacklogSize = 4096
 	// generatorWorkerExitTimeout 是 Close 等待 worker 退出的上限：
 	// 上游 TTS 不响应 ctx 取消时，不能把进程退出卡死。
 	generatorWorkerExitTimeout = 5 * time.Second
@@ -90,6 +93,15 @@ type Generator struct {
 	done     chan struct{}
 	doneOnce sync.Once
 
+	// backlog 是队列满时的溢出区：保住「已抢占生成权」的题目，
+	// 让它们在 worker 消费时被灌回队列，而不是当场丢弃、让这题在本进程内永远没有语音。
+	//
+	// backlog 有上限（backlogLimit）：超过上限才真正放弃并归还生成权。
+	// 只有 worker 会从头部取任务（pumpBacklog），Enqueue 只往尾部追加，因此不会重复投递。
+	backlogMu    sync.Mutex
+	backlog      []Job
+	backlogLimit int
+
 	lifeMu  sync.Mutex
 	started bool
 	stopped bool
@@ -103,12 +115,21 @@ type Generator struct {
 	//
 	// 键用 interviewID 即可，前提是 interviewID 是数据库全局自增主键、跨租户唯一
 	// （interviews.id）；不需要 tenantID + interviewID 复合键，那是过度设计。
+	//
+	// 已知问题：这个 map 只增不删，每场面试约几十字节，属于有界的缓慢增长。
+	// 不改成「最大已清理 interviewID 边界」，是因为面试结束顺序不保证单调，
+	// 边界做法会误伤乱序结束的面试。
 	mu               sync.RWMutex
 	closedInterviews map[int64]struct{}
 }
 
 // NewGenerator 创建生成器（不自动启动，需显式 Start）。
 func NewGenerator(synth Synthesizer, store *AudioStore, repo AudioStateStore, cfg Config) *Generator {
+	return newGenerator(synth, store, repo, cfg, generatorQueueSize, generatorBacklogSize)
+}
+
+// newGenerator 允许覆盖队列容量与 backlog 上限（测试用小容量，避免跑几千个任务）。
+func newGenerator(synth Synthesizer, store *AudioStore, repo AudioStateStore, cfg Config, queueSize, backlogLimit int) *Generator {
 	backoff := cfg.Backoff
 	if len(backoff) == 0 {
 		backoff = []time.Duration{time.Second}
@@ -117,6 +138,12 @@ func NewGenerator(synth Synthesizer, store *AudioStore, repo AudioStateStore, cf
 	if maxAttempts < 1 {
 		maxAttempts = 1
 	}
+	if queueSize < 1 {
+		queueSize = generatorQueueSize
+	}
+	if backlogLimit < 1 {
+		backlogLimit = generatorBacklogSize
+	}
 	return &Generator{
 		synth:            synth,
 		store:            store,
@@ -124,10 +151,11 @@ func NewGenerator(synth Synthesizer, store *AudioStore, repo AudioStateStore, cf
 		maxAttempts:      maxAttempts,
 		backoff:          backoff,
 		voice:            cfg.TTSVoice,
-		jobs:             make(chan Job, generatorQueueSize),
+		jobs:             make(chan Job, queueSize),
 		closed:           make(chan struct{}),
 		done:             make(chan struct{}),
 		closedInterviews: map[int64]struct{}{},
+		backlogLimit:     backlogLimit,
 	}
 }
 
@@ -191,8 +219,15 @@ func (g *Generator) Close() {
 // 只有抢到生成权（audio_state 从 NULL/failed 变成 pending）的一方才会真正合成。
 //
 // 绝不阻塞调用方：创建面试与答题链路不能被语音拖住。
-// 队列满时直接放弃并归还生成权，等下次 Reload 补齐。
+// 队列满时任务进 backlog（生成权不归还），backlog 也满才放弃并归还生成权。
 func (g *Generator) Enqueue(ctx context.Context, tenantID, interviewID, questionID int64, text string) {
+	select {
+	case <-g.closed:
+		// 生成器已关闭：不再抢占生成权。
+		// 否则这题会卡在 pending 且没人消费（worker 已退出），内存标记也会永久泄漏。
+		return
+	default:
+	}
 	if text == "" {
 		return
 	}
@@ -202,7 +237,13 @@ func (g *Generator) Enqueue(ctx context.Context, tenantID, interviewID, question
 	if _, loaded := g.enqueue.LoadOrStore(questionID, struct{}{}); loaded {
 		return
 	}
-	claimed, err := g.repo.ClaimAudioState(ctx, questionID)
+
+	// 抢占/归还属于后台任务语义，不受调用方（HTTP 请求）ctx 的生命周期影响：
+	// 客户端中断请求会让 ctx 取消，抢占因此失败的话这题就永远没人合成
+	//（状态停在 NULL，只能等下次重启 Reload 才补齐）。
+	// 用 WithoutCancel 而不是 Background：保留 trace / 日志字段。
+	bgCtx := context.WithoutCancel(ctx)
+	claimed, err := g.repo.ClaimAudioState(bgCtx, questionID)
 	if err != nil {
 		g.enqueue.Delete(questionID)
 		logrus.WithError(err).WithField("question_id", questionID).Warn("voice: claim audio state failed")
@@ -217,12 +258,17 @@ func (g *Generator) Enqueue(ctx context.Context, tenantID, interviewID, question
 	select {
 	case g.jobs <- job:
 	default:
-		// 队列满：归还生成权，让下次 Reload 能补上。
+		// 队列满：放进 backlog，生成权仍然归我们（状态保持 pending），
+		// worker 消费时会把它灌回队列，不会让这题在本进程内永远落空。
+		if g.pushBacklog(job) {
+			return
+		}
+		// backlog 也满了：真正放弃，归还生成权，让下次 Reload 能补上。
 		g.enqueue.Delete(questionID)
-		if err := g.repo.ReleaseAudioState(ctx, questionID); err != nil {
+		if err := g.repo.ReleaseAudioState(bgCtx, questionID); err != nil {
 			logrus.WithError(err).WithField("question_id", questionID).Warn("voice: release audio state failed")
 		}
-		logrus.WithField("question_id", questionID).Warn("voice: generation queue full, skip")
+		logrus.WithField("question_id", questionID).Warn("voice: generation queue and backlog full, skip")
 	}
 }
 
@@ -264,16 +310,39 @@ func (g *Generator) Reload(ctx context.Context) error {
 //   - 正在合成中的任务在读锁内看到标记后不会落盘，
 //     不会出现「清理完之后又冒出音频文件」的孤儿。
 func (g *Generator) CleanupInterview(ctx context.Context, tenantID, interviewID int64) {
-	g.mu.Lock()
-	g.closedInterviews[interviewID] = struct{}{}
-	if err := g.repo.ResetAudioStateByInterview(ctx, interviewID); err != nil {
-		logrus.WithError(err).WithField("interview_id", interviewID).Warn("voice: reset interview audio state failed")
+	defer func() {
+		if r := recover(); r != nil {
+			// 清理路径的 panic 不能把整个后端带崩（面试主流程优先）。
+			logrus.WithFields(logrus.Fields{
+				"interview_id": interviewID,
+				"panic":        fmt.Sprintf("%v", r),
+			}).Error("voice: panic while cleaning up interview audio, recovered")
+		}
+	}()
+
+	if err := g.markInterviewClosed(ctx, interviewID); err != nil {
+		// 状态没归零就不能删目录：否则 DB 里仍是 ready、文件却没了，
+		// 前端按 ready 请求音频只会拿到 404。宁可留下孤儿文件。
+		logrus.WithError(err).WithField("interview_id", interviewID).
+			Error("voice: reset interview audio state failed, skip directory cleanup to keep state and files consistent")
+		return
 	}
-	g.mu.Unlock()
 
 	if err := g.store.CleanupInterview(tenantID, interviewID); err != nil {
 		logrus.WithError(err).WithField("interview_id", interviewID).Warn("voice: cleanup interview audio failed")
 	}
+}
+
+// markInterviewClosed 置「已终止」标记并把该面试的语音状态归零。
+//
+// 两步在同一个写锁临界区里完成：worker 的落盘与状态回写都持读锁，与此互斥，
+// 避免清理之后又出现孤儿文件或写回 failed。
+// 用 defer 解锁：仓储调用 panic 时锁也会被释放，不会把整个生成器卡死。
+func (g *Generator) markInterviewClosed(ctx context.Context, interviewID int64) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.closedInterviews[interviewID] = struct{}{}
+	return g.repo.ResetAudioStateByInterview(ctx, interviewID)
 }
 
 // isClosed 判断面试是否已终止。
@@ -299,8 +368,63 @@ func (g *Generator) run(ctx context.Context) {
 		case <-g.closed:
 			return
 		case job := <-g.jobs:
-			g.process(ctx, job)
+			g.safeProcess(ctx, job)
+			// 处理完一题就尝试把 backlog 里的任务灌回队列：
+			// 队列满时进 backlog 的题因此不会在本进程内永远落空。
+			g.pumpBacklog()
 		}
+	}
+}
+
+// safeProcess 调用 process 并兜住 panic。
+//
+// process 内部已经有一层 recover，这里是第二道防线：
+// worker goroutine 里的任何未捕获 panic 都会让 Go 直接 abort 整个进程，
+// 那样不只是语音失效，创建面试 / 答题 / 简历全部不可用。
+func (g *Generator) safeProcess(ctx context.Context, job Job) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"interview_id": job.InterviewID,
+				"question_id":  job.QuestionID,
+				"panic":        fmt.Sprintf("%v", r),
+			}).Error("voice: panic in audio generator worker, recovered")
+		}
+	}()
+	g.process(ctx, job)
+}
+
+// pushBacklog 把任务放进溢出区；backlog 已满时返回 false。
+func (g *Generator) pushBacklog(job Job) bool {
+	g.backlogMu.Lock()
+	defer g.backlogMu.Unlock()
+	if len(g.backlog) >= g.backlogLimit {
+		return false
+	}
+	g.backlog = append(g.backlog, job)
+	return true
+}
+
+// pumpBacklog 把 backlog 里的任务灌回队列。
+//
+// 只由 worker 调用（单线程），因此「看头部 → 投递 → 移除」不会重复投递；
+// Enqueue 只往尾部追加，不会影响头部。
+func (g *Generator) pumpBacklog() {
+	g.backlogMu.Lock()
+	if len(g.backlog) == 0 {
+		g.backlogMu.Unlock()
+		return
+	}
+	job := g.backlog[0]
+	g.backlogMu.Unlock()
+
+	select {
+	case g.jobs <- job:
+		g.backlogMu.Lock()
+		g.backlog = g.backlog[1:]
+		g.backlogMu.Unlock()
+	default:
+		// 队列又满了：留在 backlog，等下一次 pump。
 	}
 }
 
@@ -312,6 +436,16 @@ func (g *Generator) run(ctx context.Context) {
 //     音频字节已经拿到了，重跑一次 TTS 是白烧上游算力，直接判失败。
 func (g *Generator) process(ctx context.Context, job Job) {
 	defer g.enqueue.Delete(job.QuestionID)
+	// recover 必须在最内层：provider / 存储层 panic 时，
+	// panic 不能逃出 worker goroutine（Go 会因此 abort 整个进程）。
+	// defer 是后进先出，所以 recover 先执行、enqueue.Delete 后执行，内存标记不会漏。
+	defer g.recoverJobPanic(ctx, job)
+
+	if g.isClosed(job.InterviewID) {
+		// 面试已终止：连上游合成都不必跑。
+		// mlx-audio 是串行 worker，白跑一次会拖慢后面所有题。
+		return
+	}
 
 	var lastErr error
 	for attempt := 0; attempt < g.maxAttempts; attempt++ {
@@ -346,6 +480,23 @@ func (g *Generator) process(ctx context.Context, job Job) {
 		return
 	}
 	g.markFailed(ctx, job, lastErr)
+}
+
+// recoverJobPanic 兜住单题处理过程中的 panic。
+//
+// panic 值与题目一起记进 Error 日志，并把该题标记为 failed：
+// markFailed 自带「已终止」检查，panic 后不会给已结束的面试写回 failed。
+func (g *Generator) recoverJobPanic(ctx context.Context, job Job) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	logrus.WithFields(logrus.Fields{
+		"interview_id": job.InterviewID,
+		"question_id":  job.QuestionID,
+		"panic":        fmt.Sprintf("%v", r),
+	}).Error("voice: panic while generating question audio, recovered")
+	g.markFailed(ctx, job, fmt.Errorf("panic: %v", r))
 }
 
 // waitBackoff 等待退避间隔；返回 false 表示生成器已关闭，应当放弃。
@@ -383,6 +534,9 @@ func (g *Generator) saveAudio(ctx context.Context, job Job, audio []byte) error 
 		return fmt.Errorf("%w: %w", errPersistFailed, err)
 	}
 	if err := g.repo.UpdateAudioState(ctx, job.QuestionID, "ready"); err != nil {
+		// 已知状态：音频文件已在、状态没写成 ready（随后会被标成 failed）。
+		// 这个方向是良性的（不会出现「状态 ready 但文件不存在」那个被禁止的方向），
+		// 下次 Reload 会把这题重新拉起合成。
 		return fmt.Errorf("%w: %w", errPersistFailed, err)
 	}
 	return nil
