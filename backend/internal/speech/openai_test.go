@@ -189,6 +189,8 @@ func TestTranscribeUsesContentTypeFileExtension(t *testing.T) {
 		{contentType: "audio/ogg", wantFile: "recording.ogg"},
 		{contentType: "audio/mpeg", wantFile: "recording.mp3"},
 		{contentType: "audio/mp4", wantFile: "recording.m4a"},
+		{contentType: "audio/x-m4a", wantFile: "recording.m4a"},
+		{contentType: "audio/m4a", wantFile: "recording.m4a"},
 		{contentType: "audio/wav", wantFile: "recording.wav"},
 		{contentType: "", wantFile: "recording.wav"},
 		{contentType: "application/octet-stream", wantFile: "recording.wav"},
@@ -244,6 +246,59 @@ func TestRequestErrorDoesNotLeakBaseURLQuery(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "speech: tts request failed") {
 		t.Errorf("error = %v, want tts request failed error", err)
+	}
+}
+
+// base URL 里带账号密码（userinfo）时，错误信息里不能出现凭据。
+func TestRequestErrorDoesNotLeakBaseURLUserInfo(t *testing.T) {
+	cfg := testConfig("http://user:SUPERSECRET@127.0.0.1:1/v1", "http://user:SUPERSECRET@127.0.0.1:1/v1")
+	cfg.TTSTimeout = 2 * time.Second
+	cfg.ASRTimeout = 2 * time.Second
+	provider := NewOpenAICompatibleProvider(cfg)
+
+	_, err := provider.Synthesize(context.Background(), SynthesisRequest{Text: "x"})
+	if err == nil {
+		t.Fatal("expected request error")
+	}
+	if strings.Contains(err.Error(), "SUPERSECRET") {
+		t.Errorf("error leaks userinfo: %v", err)
+	}
+
+	_, err = provider.Transcribe(context.Background(), TranscriptionRequest{Audio: []byte("x")})
+	if err == nil {
+		t.Fatal("expected request error")
+	}
+	if strings.Contains(err.Error(), "SUPERSECRET") {
+		t.Errorf("error leaks userinfo: %v", err)
+	}
+}
+
+// base URL 非法（例如 query 里带控制字符）时，请求构造阶段的错误同样不能带出密钥。
+func TestBuildRequestErrorDoesNotLeakBaseURLQuery(t *testing.T) {
+	bad := "http://127.0.0.1:21100/v1?api_key=SUPERSECRET\u007f"
+	cfg := testConfig(bad, bad)
+	provider := NewOpenAICompatibleProvider(cfg)
+
+	_, err := provider.Synthesize(context.Background(), SynthesisRequest{Text: "x"})
+	if err == nil {
+		t.Fatal("expected build error")
+	}
+	if !strings.Contains(err.Error(), "build tts request") {
+		t.Errorf("error = %v, want build tts request error", err)
+	}
+	if strings.Contains(err.Error(), "SUPERSECRET") {
+		t.Errorf("error leaks api key: %v", err)
+	}
+
+	_, err = provider.Transcribe(context.Background(), TranscriptionRequest{Audio: []byte("x")})
+	if err == nil {
+		t.Fatal("expected build error")
+	}
+	if !strings.Contains(err.Error(), "build asr request") {
+		t.Errorf("error = %v, want build asr request error", err)
+	}
+	if strings.Contains(err.Error(), "SUPERSECRET") {
+		t.Errorf("error leaks api key: %v", err)
 	}
 }
 

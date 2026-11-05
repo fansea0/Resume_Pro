@@ -43,6 +43,25 @@ func buildWAV(spec wavSpec, dataBytes int, declaredDataSize int) []byte {
 	return buf.Bytes()
 }
 
+// buildWAVWithDataChunks 构造带多个 data 块的 WAV（验证多块时的取值策略）。
+func buildWAVWithDataChunks(spec wavSpec, chunks []int) []byte {
+	// buildWAV(spec, 0, 0) 产出 44 字节头部（末尾含一个空 data 块头），
+	// 去掉末尾 8 字节后由下面自己写多个 data 块。
+	base := buildWAV(spec, 0, 0)
+	base = base[:len(base)-8]
+	for _, size := range chunks {
+		base = append(base, []byte("data")...)
+		var header [4]byte
+		binary.LittleEndian.PutUint32(header[:], uint32(size))
+		base = append(base, header[:]...)
+		base = append(base, make([]byte, size)...)
+		if size%2 == 1 {
+			base = append(base, 0)
+		}
+	}
+	return base
+}
+
 func pcm16Mono16k() wavSpec {
 	return wavSpec{audioFormat: 1, channels: 1, sampleRate: 16000, bitsPerSample: 16}
 }
@@ -129,6 +148,48 @@ func TestValidateWAVRejectsLongAudio(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "longer than") {
 		t.Errorf("error = %v, want duration limit error", err)
+	}
+}
+
+// data 块必须按帧对齐：半帧数据不能被当成有效音频。
+func TestValidateWAVRejectsUnalignedDataChunk(t *testing.T) {
+	cases := []struct {
+		name string
+		data int
+	}{
+		{name: "1 字节（不足一帧）", data: 1},
+		{name: "3 字节（半帧）", data: 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ValidateWAV(buildWAV(pcm16Mono16k(), tc.data, tc.data))
+			if err == nil {
+				t.Fatal("expected error for unaligned data chunk")
+			}
+			if !strings.Contains(err.Error(), "invalid wav format") {
+				t.Errorf("error = %v, want invalid wav format error", err)
+			}
+		})
+	}
+}
+
+// 多个 data 块时按最大的那个算时长（与真实音频量一致）。
+func TestValidateWAVUsesLargestDataChunk(t *testing.T) {
+	cases := []struct {
+		name   string
+		chunks []int
+	}{
+		{name: "大块在前", chunks: []int{32000, 16000}},
+		{name: "大块在后", chunks: []int{16000, 32000}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			duration, err := ValidateWAV(buildWAVWithDataChunks(pcm16Mono16k(), tc.chunks))
+			if err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			assertDurationClose(t, duration, time.Second)
+		})
 	}
 }
 

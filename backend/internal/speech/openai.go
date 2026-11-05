@@ -80,7 +80,7 @@ func (p *OpenAICompatibleProvider) Synthesize(ctx context.Context, req Synthesis
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.ttsBaseURL+"/audio/speech", strings.NewReader(form.Encode()))
 	if err != nil {
-		return SynthesisResult{}, fmt.Errorf("speech: build tts request: %w", err)
+		return SynthesisResult{}, fmt.Errorf("speech: build tts request: %w", sanitizeRequestError(err, p.ttsBaseURL))
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if p.ttsAPIKey != "" {
@@ -126,7 +126,7 @@ func (p *OpenAICompatibleProvider) Transcribe(ctx context.Context, req Transcrip
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.asrBaseURL+"/audio/transcriptions", &body)
 	if err != nil {
-		return TranscriptionResult{}, fmt.Errorf("speech: build asr request: %w", err)
+		return TranscriptionResult{}, fmt.Errorf("speech: build asr request: %w", sanitizeRequestError(err, p.asrBaseURL))
 	}
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 	if p.asrAPIKey != "" {
@@ -235,7 +235,7 @@ func audioFileName(contentType string) string {
 		return "recording.ogg"
 	case "audio/mpeg", "audio/mp3":
 		return "recording.mp3"
-	case "audio/mp4", "audio/x-m4a":
+	case "audio/mp4", "audio/x-m4a", "audio/m4a":
 		return "recording.m4a"
 	default:
 		return "recording.wav"
@@ -252,16 +252,26 @@ func sanitizeRequestError(err error, baseURL string) error {
 	return err
 }
 
-// safeBaseURL 去掉 base URL 上的 query 与 fragment，只保留可用于定位服务的信息。
+// safeBaseURL 去掉 base URL 上的 query、fragment 与 userinfo（http://user:pass@host），
+// 只保留可用于定位服务的信息，避免 api key / 账号密码随错误信息进日志。
+//
+// 这里手工裁剪而不是 url.Parse：base URL 本身可能就是非法的（例如含控制字符），
+// 而它恰恰是要出现在错误信息里的那段内容，不能因为解析失败就整个丢掉。
 func safeBaseURL(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return ""
+	sanitized := raw
+	if idx := strings.Index(sanitized, "#"); idx >= 0 {
+		sanitized = sanitized[:idx]
 	}
-	parsed.RawQuery = ""
-	parsed.ForceQuery = false
-	parsed.Fragment = ""
-	return parsed.String()
+	if idx := strings.Index(sanitized, "?"); idx >= 0 {
+		sanitized = sanitized[:idx]
+	}
+	if idx := strings.Index(sanitized, "//"); idx >= 0 {
+		rest := sanitized[idx+2:]
+		if at := strings.Index(rest, "@"); at >= 0 {
+			sanitized = sanitized[:idx+2] + rest[at+1:]
+		}
+	}
+	return sanitized
 }
 
 var (

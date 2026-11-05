@@ -93,10 +93,16 @@ func ValidateWAV(data []byte) (time.Duration, error) {
 			}
 		case "data":
 			// data 块声明长度必须真的在文件里，否则是截断音频（时长也会是假的）。
+			// 长度未知的流式 WAV（data size = 0xFFFFFFFF）同样落在这里被拒绝：
+			// 前端产出的是完整 PCM WAV，不需要支持流式变体。
 			if size > int64(len(data))-body {
 				return 0, errors.New("speech: truncated wav data chunk")
 			}
-			dataSize = int(size)
+			// WAV 规范只允许一个 data 块；万一出现多个，取最大的那个——
+			// 比「取最后一个」更接近真实音频量（最后一个可能只是附加块）。
+			if int(size) > dataSize {
+				dataSize = int(size)
+			}
 		}
 		offset = body + size
 		if size%2 == 1 {
@@ -107,6 +113,11 @@ func ValidateWAV(data []byte) (time.Duration, error) {
 		return 0, errors.New("speech: incomplete wav payload")
 	}
 	if bitsPerSample <= 0 || bitsPerSample%8 != 0 {
+		return 0, errors.New("speech: invalid wav format")
+	}
+	// data 块必须按帧对齐：至少一整帧，且不能是半帧，否则算出来的时长是编造的。
+	blockAlign := channels * bitsPerSample / 8
+	if blockAlign <= 0 || dataSize < blockAlign || dataSize%blockAlign != 0 {
 		return 0, errors.New("speech: invalid wav format")
 	}
 	bytesPerSecond := int64(sampleRate) * int64(channels) * int64(bitsPerSample/8)
