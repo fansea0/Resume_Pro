@@ -579,8 +579,13 @@ func TestRepositoryActiveQuestionsNeedingAudio(t *testing.T) {
 	repo, ctx, interviewID := newRepositoryFixture(t)
 	ready := insertMainQuestion(t, repo, interviewID, "已就绪")
 	missing := insertMainQuestion(t, repo, interviewID, "未生成")
+	claimed := insertMainQuestion(t, repo, interviewID, "生成中")
 	if err := repo.UpdateAudioState(ctx, ready, "ready"); err != nil {
 		t.Fatalf("mark ready: %v", err)
+	}
+	// pending 表示「已抢占生成权」，不能被重复领取，因此不能出现在待生成列表里。
+	if err := repo.UpdateAudioState(ctx, claimed, "pending"); err != nil {
+		t.Fatalf("mark pending: %v", err)
 	}
 
 	items, err := repo.ActiveQuestionsNeedingAudio(ctx)
@@ -589,6 +594,11 @@ func TestRepositoryActiveQuestionsNeedingAudio(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].QuestionID != missing {
 		t.Fatalf("items = %+v, want only question %d", items, missing)
+	}
+	for _, item := range items {
+		if item.QuestionID == claimed {
+			t.Fatalf("pending question %d must not be listed as needing audio", claimed)
+		}
 	}
 	if items[0].Text != "未生成" || items[0].InterviewID != interviewID {
 		t.Fatalf("item payload = %+v", items[0])
@@ -662,7 +672,8 @@ func TestRepositoryClaimAudioStateCanRetryFailed(t *testing.T) {
 	}
 }
 
-// TestRepositoryReleaseAudioState 验证归还在生成权：pending 回到未生成，且不影响其他状态。
+// TestRepositoryReleaseAudioState 验证归还在生成权：pending 回到未生成；
+// ready / failed 不受影响（归还只作用于 pending，否则已就绪的语音会被静默洗掉导致重复合成）。
 func TestRepositoryReleaseAudioState(t *testing.T) {
 	repo, ctx, interviewID := newRepositoryFixture(t)
 	questionID := insertMainQuestion(t, repo, interviewID, "题面")
@@ -688,6 +699,38 @@ func TestRepositoryReleaseAudioState(t *testing.T) {
 	}
 	if !claimed {
 		t.Fatal("released question should be claimable again")
+	}
+
+	// 归还不影响其他状态：ready 保持 ready，failed 保持 failed。
+	ready := insertMainQuestion(t, repo, interviewID, "已就绪")
+	if err := repo.UpdateAudioState(ctx, ready, "ready"); err != nil {
+		t.Fatalf("mark ready: %v", err)
+	}
+	failed := insertMainQuestion(t, repo, interviewID, "已失败")
+	if err := repo.UpdateAudioState(ctx, failed, "failed"); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+
+	if err := repo.ReleaseAudioState(ctx, ready); err != nil {
+		t.Fatalf("release ready: %v", err)
+	}
+	if err := repo.ReleaseAudioState(ctx, failed); err != nil {
+		t.Fatalf("release failed: %v", err)
+	}
+
+	row, err = repo.QuestionByID(ctx, ready)
+	if err != nil {
+		t.Fatalf("question by id: %v", err)
+	}
+	if row.AudioState == nil || *row.AudioState != "ready" {
+		t.Fatalf("ready question audio state = %v, want ready", row.AudioState)
+	}
+	row, err = repo.QuestionByID(ctx, failed)
+	if err != nil {
+		t.Fatalf("question by id: %v", err)
+	}
+	if row.AudioState == nil || *row.AudioState != "failed" {
+		t.Fatalf("failed question audio state = %v, want failed", row.AudioState)
 	}
 }
 
