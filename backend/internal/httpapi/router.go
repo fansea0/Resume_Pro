@@ -14,6 +14,7 @@ import (
 	"resumepro/backend/internal/interview"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/resumesvc"
+	"resumepro/backend/internal/speech"
 	"resumepro/backend/internal/targetjob"
 	"resumepro/backend/internal/templates"
 )
@@ -38,6 +39,10 @@ type RouterConfig struct {
 	// InterviewService is nil when Redis or the Responses model is unavailable;
 	// the authenticated routes remain registered and return an explicit 503.
 	InterviewService *interview.Service
+	// VoiceService is nil when voice features are disabled (VOICE_ENABLED 未开)
+	// or the speech provider is unavailable; the authenticated routes remain
+	// registered and return an explicit 503.
+	VoiceService *speech.VoiceService
 }
 
 var avatarFilenamePattern = regexp.MustCompile(`^[a-f0-9]{64}-[a-f0-9]{64}\.avatar$`)
@@ -105,7 +110,8 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 	aiRoutes.POST("/resumes/generate", aiHandler.generateResume)
 	aiRoutes.POST("/resumes/:id/section/rewrite", aiHandler.rewriteSection)
 
-	interviewHandler := newInterviewHandler(config.InterviewService, resumeRepository, config.TargetJobService)
+	voiceEnabled := config.VoiceService != nil
+	interviewHandler := newInterviewHandler(config.InterviewService, resumeRepository, config.TargetJobService, voiceEnabled)
 	interviews := router.Group("/api/interviews")
 	interviews.Use(requireAuthentication(service))
 	interviews.POST("", interviewHandler.create)
@@ -114,6 +120,12 @@ func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Reposit
 	interviews.POST("/:id/answer", interviewHandler.answer)
 	interviews.GET("/:id/questions", interviewHandler.questions)
 	interviews.POST("/:id/abort", interviewHandler.abort)
+
+	// 语音路由无条件注册：语音未启用或依赖缺失时由 handler 返回 503，
+	// 而不是让调用方拿到「路由不存在」的 404。
+	voiceHandler := newVoiceHandler(config.InterviewService, config.VoiceService)
+	interviews.GET("/:id/questions/:qid/audio", voiceHandler.audio)
+	interviews.POST("/:id/questions/:qid/transcribe", voiceHandler.transcribe)
 
 	return router
 }

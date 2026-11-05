@@ -262,7 +262,7 @@ func (r *Repository) GetInterviewByID(ctx context.Context, id int64) (*Interview
 func (r *Repository) MainQuestions(ctx context.Context, interviewID int64) ([]Question, error) {
 	list := []Question{}
 	err := r.db.SelectContext(ctx, &list, `
-		SELECT `+questionColumns+`
+		SELECT `+questionColumnsWithAudio+`
 		FROM interview_questions
 		WHERE interview_id = ? AND parent_id IS NULL
 		ORDER BY id`, interviewID)
@@ -276,7 +276,7 @@ func (r *Repository) MainQuestions(ctx context.Context, interviewID int64) ([]Qu
 func (r *Repository) QuestionChain(ctx context.Context, interviewID, parentID int64) ([]Question, error) {
 	list := []Question{}
 	err := r.db.SelectContext(ctx, &list, `
-		SELECT `+questionColumns+`
+		SELECT `+questionColumnsWithAudio+`
 		FROM interview_questions
 		WHERE interview_id = ? AND (id = ? OR parent_id = ?)
 		ORDER BY id`, interviewID, parentID, parentID)

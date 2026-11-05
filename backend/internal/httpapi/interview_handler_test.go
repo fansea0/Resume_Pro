@@ -16,6 +16,7 @@ import (
 	"resumepro/backend/internal/interview"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/resumesvc"
+	"resumepro/backend/internal/speech"
 	"resumepro/backend/internal/store"
 	"resumepro/backend/internal/targetjob"
 	"resumepro/backend/internal/templates"
@@ -39,8 +40,14 @@ const stubQuestionPayload = `{"questions":[` +
 
 const stubGradePayload = `{"grade":"B+","followUp":""}`
 
-func setupInterviewAPI(t *testing.T) (http.Handler, *http.Cookie, *sqlx.DB) {
+// setupInterviewAPI 组装面试路由的测试环境。
+// voices 可选：传入语音服务时路由带上语音能力（VoiceService 非 nil）。
+func setupInterviewAPI(t *testing.T, voices ...*speech.VoiceService) (http.Handler, *http.Cookie, *sqlx.DB) {
 	t.Helper()
+	var voice *speech.VoiceService
+	if len(voices) > 0 {
+		voice = voices[0]
+	}
 	db, err := sqlx.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +81,7 @@ func setupInterviewAPI(t *testing.T) (http.Handler, *http.Cookie, *sqlx.DB) {
 		TargetJobService: targetSvc,
 		ResumesvcService: resumesvc.NewService(resumeRepo, nil, targetSvc),
 		InterviewService: interviewSvc,
+		VoiceService:     voice,
 	})
 	return router, registerAuthUser(t, router, "interview@example.com"), db
 }

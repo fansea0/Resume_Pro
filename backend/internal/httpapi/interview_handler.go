@@ -23,10 +23,12 @@ type interviewHandler struct {
 	service    *interview.Service
 	resumeRepo *resume.Repository
 	targetSvc  *targetjob.Service
+	// voiceEnabled 表示语音能力是否启用（前端据此隐藏语音按钮）。
+	voiceEnabled bool
 }
 
-func newInterviewHandler(service *interview.Service, resumeRepo *resume.Repository, targetSvc *targetjob.Service) *interviewHandler {
-	return &interviewHandler{service: service, resumeRepo: resumeRepo, targetSvc: targetSvc}
+func newInterviewHandler(service *interview.Service, resumeRepo *resume.Repository, targetSvc *targetjob.Service, voiceEnabled bool) *interviewHandler {
+	return &interviewHandler{service: service, resumeRepo: resumeRepo, targetSvc: targetSvc, voiceEnabled: voiceEnabled}
 }
 
 type createInterviewInput struct {
@@ -43,6 +45,17 @@ func (h *interviewHandler) create(ginCtx *gin.Context) {
 	}
 	if h.service == nil {
 		writeError(ginCtx, http.StatusServiceUnavailable, "AI interviews disabled (Redis required)")
+		return
+	}
+	// 预检最前置：已有进行中的面试时直接拒绝，不去加载简历与 JD，
+	// 避免白跑一次 LLM 生题。
+	hasActive, err := h.service.HasActiveInterview(ginCtx.Request.Context(), principal.TenantID)
+	if err != nil {
+		writeError(ginCtx, http.StatusInternalServerError, "could not check active interview")
+		return
+	}
+	if hasActive {
+		writeError(ginCtx, http.StatusConflict, interview.ErrActiveInterviewExists.Error())
 		return
 	}
 	var input createInterviewInput
@@ -94,7 +107,7 @@ func (h *interviewHandler) create(ginCtx *gin.Context) {
 	}
 	// 新面试恒为 active：首题同样不下发标准答案与考察点，避免在面试开始前就透题。
 	writeJSON(ginCtx, http.StatusCreated, map[string]any{
-		"interview":     interviewDTO(iv),
+		"interview":     h.interviewDTO(iv),
 		"firstQuestion": questionDTO(first, false),
 	})
 }
@@ -116,7 +129,7 @@ func (h *interviewHandler) list(ginCtx *gin.Context) {
 	}
 	dtos := make([]any, 0, len(items))
 	for i := range items {
-		dtos = append(dtos, interviewDTO(&items[i]))
+		dtos = append(dtos, h.interviewDTO(&items[i]))
 	}
 	writeJSON(ginCtx, http.StatusOK, dtos)
 }
@@ -141,7 +154,7 @@ func (h *interviewHandler) get(ginCtx *gin.Context) {
 			return
 		}
 	}
-	writeJSON(ginCtx, http.StatusOK, interviewDTO(iv))
+	writeJSON(ginCtx, http.StatusOK, h.interviewDTO(iv))
 }
 
 type answerInput struct {
@@ -243,7 +256,7 @@ func (h *interviewHandler) abort(ginCtx *gin.Context) {
 		writeError(ginCtx, http.StatusInternalServerError, "could not load interview after abort")
 		return
 	}
-	writeJSON(ginCtx, http.StatusOK, interviewDTO(iv))
+	writeJSON(ginCtx, http.StatusOK, h.interviewDTO(iv))
 }
 
 func interviewRouteID(context *gin.Context) (int64, bool) {
@@ -280,7 +293,7 @@ func handleInterviewError(context *gin.Context, err error) bool {
 // interviewDTO 把落库 Interview 转成前端 Interview 形状：
 // configSnapshot 由 JSON 字符串解析为对象（InterviewConfig 的 camelCase tag），
 // 其余字段 json tag 已对齐。
-func interviewDTO(iv *interview.Interview) map[string]any {
+func (h *interviewHandler) interviewDTO(iv *interview.Interview) map[string]any {
 	var config any = map[string]any{}
 	if iv.ConfigSnapshot != "" {
 		var cfg interview.InterviewConfig
@@ -299,6 +312,7 @@ func interviewDTO(iv *interview.Interview) map[string]any {
 		"createdAt":      iv.CreatedAt,
 		"updatedAt":      iv.UpdatedAt,
 		"completedAt":    iv.CompletedAt,
+		"voice":          map[string]any{"enabled": h.voiceEnabled},
 	}
 }
 
@@ -322,6 +336,8 @@ func questionDTO(q *interview.Question, withSolutions bool) map[string]any {
 		"userAnswer":    nullableText(q.UserAnswer),
 		"grade":         nullableText(q.Grade),
 		"createdAt":     q.CreatedAt,
+		// audioState 是题目语音状态：null=未入队、pending=生成中、ready=已就绪、failed=失败。
+		"audioState": q.AudioState,
 	}
 	if withSolutions {
 		dto["standardAnswer"] = nullableText(q.StandardAnswer)
