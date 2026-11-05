@@ -1,7 +1,11 @@
 /** 语音识别常用的目标采样率：16kHz 单声道。 */
 export const TARGET_SAMPLE_RATE = 16000;
 
-/** 把多声道混成单声道（各声道取平均）。 */
+/**
+ * 把多声道混成单声道（各声道取平均）。
+ * 已知取舍：各声道长度不齐时，缺失的采样按 0 计（音量会略沉）。
+ * 浏览器的各声道长度一致，实际不会触发。
+ */
 export function mixToMono(channels: Float32Array[]): Float32Array {
   if (channels.length === 0) return new Float32Array(0);
   if (channels.length === 1) return channels[0];
@@ -18,7 +22,10 @@ export function mixToMono(channels: Float32Array[]): Float32Array {
   return output;
 }
 
-/** 线性插值重采样。 */
+/**
+ * 线性插值重采样。
+ * 已知取舍：采样率相同时直接返回入参引用（不复制），调用方不要就地改写结果。
+ */
 export function resample(
   input: Float32Array,
   inputRate: number,

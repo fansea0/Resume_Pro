@@ -32,6 +32,47 @@ vi.mock('../hooks/useVoiceRecorder', () => ({
   },
 }));
 
+// jsdom 没有真正的媒体播放：Audio 与 URL.createObjectURL 都要打桩。
+class FakeAudio {
+  static instances: FakeAudio[] = [];
+  /** 模拟浏览器拦截自动播放。 */
+  static playBlocked = false;
+
+  play = vi.fn(() => (FakeAudio.playBlocked
+    ? Promise.reject(new Error('autoplay blocked'))
+    : Promise.resolve()));
+
+  addEventListener = vi.fn();
+
+  constructor(public src: string) {
+    FakeAudio.instances.push(this);
+  }
+}
+
+const originalCreateObjectURL = (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+
+function stubAudio() {
+  Object.defineProperty(URL, 'createObjectURL', {
+    value: vi.fn(() => 'blob:mock'),
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    value: vi.fn(),
+    configurable: true,
+    writable: true,
+  });
+  vi.stubGlobal('Audio', FakeAudio);
+}
+
+function restoreUrlMethod(name: 'createObjectURL' | 'revokeObjectURL', original: unknown) {
+  if (original) {
+    Object.defineProperty(URL, name, { value: original, configurable: true, writable: true });
+  } else {
+    delete (URL as unknown as Record<string, unknown>)[name];
+  }
+}
 const interview: Interview = {
   id: 3,
   targetJobId: 7,
@@ -69,7 +110,12 @@ function makeQuestion(overrides: Partial<InterviewQuestion>): InterviewQuestion 
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+  restoreUrlMethod('createObjectURL', originalCreateObjectURL);
+  restoreUrlMethod('revokeObjectURL', originalRevokeObjectURL);
+  FakeAudio.instances = [];
+  FakeAudio.playBlocked = false;
 });
 
 describe('InterviewChat', () => {
@@ -77,6 +123,7 @@ describe('InterviewChat', () => {
     vi.clearAllMocks();
     // jsdom 没有 scrollIntoView，组件用它把当前题滚入视野。
     Element.prototype.scrollIntoView = vi.fn();
+    stubAudio();
   });
 
   it('renders the conversation with grades, waiting marker and progress', async () => {
@@ -290,5 +337,118 @@ describe('InterviewChat', () => {
     });
 
     await waitFor(() => expect(screen.getByLabelText('回答输入')).toHaveValue('前缀中间后缀'));
+    // 光标要落在插入文本之后（前 2 字 + 插入 2 字 = 4）。
+    await waitFor(() => expect(area.selectionStart).toBe(4));
+  });
+  it('auto plays the current question when its audio is ready', async () => {
+    getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 7, audioState: 'ready' })]);
+    render(
+      <InterviewChat
+        interview={{ ...interview, voice: { enabled: true } }}
+        onFinished={vi.fn()}
+        onExit={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(fetchQuestionAudio).toHaveBeenCalledTimes(1));
+    expect(fetchQuestionAudio).toHaveBeenCalledWith(3, 7);
+    expect(FakeAudio.instances).toHaveLength(1);
+  });
+
+  it('does not request audio when voice is disabled', async () => {
+    getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1, audioState: 'ready' })]);
+    render(
+      <InterviewChat
+        interview={{ ...interview, voice: { enabled: false } }}
+        onFinished={vi.fn()}
+        onExit={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText('Go 的 channel 底层数据结构是怎样的？')).toBeInTheDocument();
+    expect(fetchQuestionAudio).not.toHaveBeenCalled();
+  });
+
+  it('does not request audio when the question audio has failed', async () => {
+    getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1, audioState: 'failed' })]);
+    render(
+      <InterviewChat
+        interview={{ ...interview, voice: { enabled: true } }}
+        onFinished={vi.fn()}
+        onExit={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText('Go 的 channel 底层数据结构是怎样的？')).toBeInTheDocument();
+    expect(fetchQuestionAudio).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /朗读题目/ })).not.toBeInTheDocument();
+  });
+
+  it('gives the follow-up question its own speaker button', async () => {
+    getInterviewQuestions.mockResolvedValue([
+      makeQuestion({ id: 1, userAnswer: '答过了', grade: 'B' }),
+      makeQuestion({
+        id: 9,
+        parentId: 1,
+        followUpRound: 1,
+        question: '追问：ctx.Err() 怎么区分？',
+        audioState: 'ready',
+      }),
+    ]);
+    render(
+      <InterviewChat
+        interview={{ ...interview, voice: { enabled: true } }}
+        onFinished={vi.fn()}
+        onExit={vi.fn()}
+      />,
+    );
+
+    const followUpButton = await screen.findByRole('button', { name: '朗读题目 9' });
+    fetchQuestionAudio.mockClear();
+    fireEvent.click(followUpButton);
+
+    await waitFor(() => expect(fetchQuestionAudio).toHaveBeenCalledWith(3, 9));
+  });
+
+  it('asks the user to click the speaker when autoplay is blocked', async () => {
+    FakeAudio.playBlocked = true;
+    getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1, audioState: 'ready' })]);
+    render(
+      <InterviewChat
+        interview={{ ...interview, voice: { enabled: true } }}
+        onFinished={vi.fn()}
+        onExit={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText('点击喇叭播放本题')).toBeInTheDocument();
+  });
+
+  it('limits polling when the question carries no audio state', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchQuestionAudio.mockRejectedValue(Object.assign(new Error('pending'), { status: 409 }));
+      getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1 })]);
+      render(
+        <InterviewChat
+          interview={{ ...interview, voice: { enabled: true } }}
+          onFinished={vi.fn()}
+          onExit={vi.fn()}
+        />,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(fetchQuestionAudio).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      // 首次请求 + 最多 3 次轮询。
+      expect(fetchQuestionAudio).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

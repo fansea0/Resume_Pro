@@ -22,8 +22,15 @@ const GRADE_CLASS: Record<InterviewGrade, string> = {
 /** 当前题的语音自动播放：就绪即播，未就绪则轮询等待。 */
 const AUDIO_POLL_INTERVAL_MS = 1500;
 const AUDIO_POLL_MAX_ATTEMPTS = 40;
+/** 题目没带 audioState（后端没返回状态）时的轮询上限：最多 3 次，避免无谓请求。 */
+const AUDIO_POLL_MAX_ATTEMPTS_UNKNOWN = 3;
 
-/* 语音控件的样式：styles/global.css 属于其他会话的改动范围，这里用行内样式保证观感一致。 */
+/*
+ * 语音控件的样式：styles/global.css 属于其他会话的改动范围，这里用行内样式保证观感一致。
+ * TODO(样式迁移)：等 styles/global.css 的归属清晰后，删掉下面三个行内样式对象，
+ * 只保留 JSX 里已占位的 class（interview-msg__speak / interview-msg__audiopending /
+ * interview-chat__voiceerror），样式改回 CSS 文件维护。
+ */
 const VOICE_SPEAK_STYLE: CSSProperties = {
   background: 'transparent',
   border: '1px solid #cbd5e1',
@@ -56,7 +63,13 @@ function playAudioBlob(blob: Blob, onBlocked: () => void) {
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
   // 播完再释放：过早 revoke 会把正在播放的音频掐断。
-  const release = () => URL.revokeObjectURL(url);
+  const release = () => {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // 环境不支持 revoke 时不影响播放。
+    }
+  };
   audio.addEventListener('ended', release);
   audio.addEventListener('error', release);
   void audio.play().catch(() => {
@@ -71,6 +84,7 @@ function useQuestionAudio(
   questionId: number | null,
   enabled: boolean,
   audioState: AudioState | null | undefined,
+  onBlocked: () => void,
 ) {
   const [status, setStatus] = useState<'idle' | 'pending' | 'failed'>('idle');
 
@@ -78,6 +92,10 @@ function useQuestionAudio(
     if (!enabled || questionId === null) return;
     // 明确生成失败就不再请求：语音是附加层，不做无谓轮询。
     if (audioState === 'failed') return;
+    // 题目没带 audioState 时不知道语音是否在生成，只做少量轮询。
+    const maxAttempts = audioState == null
+      ? AUDIO_POLL_MAX_ATTEMPTS_UNKNOWN
+      : AUDIO_POLL_MAX_ATTEMPTS;
     let cancelled = false;
     let timer: number | undefined;
     let attempts = 0;
@@ -86,13 +104,12 @@ function useQuestionAudio(
       try {
         const blob = await fetchQuestionAudio(interviewId, questionId);
         if (cancelled) return;
-        playAudioBlob(blob, () => {
-          // 浏览器拦截自动播放：静默兜住，用户可以点喇叭重听。
-        });
+        // 浏览器拦截自动播放：提示用户点喇叭重听（追问同样有喇叭按钮）。
+        playAudioBlob(blob, onBlocked);
         setStatus('idle');
       } catch (error) {
         const code = (error as { status?: number }).status;
-        if (code === 409 && attempts < AUDIO_POLL_MAX_ATTEMPTS) {
+        if (code === 409 && attempts < maxAttempts) {
           attempts += 1;
           setStatus('pending');
           timer = window.setTimeout(() => void play(), AUDIO_POLL_INTERVAL_MS);
@@ -188,8 +205,16 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
   const voiceEnabled = interview.voice?.enabled ?? false;
   const currentQuestionId = current?.id ?? null;
   const currentAudioState = current?.audioState ?? null;
-  const { status: audioStatus } = useQuestionAudio(interview.id, currentQuestionId, voiceEnabled, currentAudioState);
   const [voiceError, setVoiceError] = useState('');
+  // 自动播放被浏览器拦截时的提示：用稳定的回调，避免每次渲染都重置自动播放 effect。
+  const onAutoPlayBlocked = useCallback(() => setVoiceError('点击喇叭播放本题'), []);
+  const { status: audioStatus } = useQuestionAudio(
+    interview.id,
+    currentQuestionId,
+    voiceEnabled,
+    currentAudioState,
+    onAutoPlayBlocked,
+  );
 
   // 识别文本插入到当前光标位置（不是追加到末尾）。
   const insertAtCursor = useCallback((text: string) => {
@@ -225,6 +250,30 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
       setVoiceError('语音暂不可用，可继续打字');
     }
   }, [interview.id]);
+
+  // 喇叭按钮：主问题与追问共用，保证追问在自动播放被拦时也有补救入口。
+  const renderSpeakButton = (question: InterviewQuestion) => (
+    voiceEnabled && question.audioState === 'ready' ? (
+      <button
+        aria-label={`朗读题目 ${question.id}`}
+        className="interview-msg__speak"
+        onClick={() => void speakQuestion(question.id)}
+        style={VOICE_SPEAK_STYLE}
+        title="朗读题目"
+        type="button"
+      >
+        🔊
+      </button>
+    ) : null
+  );
+
+  // 「语音生成中…」只挂在当前题上（当前题可能是追问）。
+  const renderAudioHint = (question: InterviewQuestion) => (
+    voiceEnabled && current?.id === question.id
+      && (question.audioState === 'pending' || audioStatus === 'pending') ? (
+        <span className="interview-msg__audiopending" style={VOICE_PENDING_STYLE}>语音生成中…</span>
+      ) : null
+  );
 
   useEffect(() => {
     if (!current) return;
@@ -302,21 +351,8 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
         </header>
         <p className="interview-msg__question">
           {question.question}
-          {voiceEnabled && question.audioState === 'ready' ? (
-            <button
-              aria-label={`朗读题目 ${question.id}`}
-              className="interview-msg__speak"
-              onClick={() => void speakQuestion(question.id)}
-              style={VOICE_SPEAK_STYLE}
-              title="朗读题目"
-              type="button"
-            >
-              🔊
-            </button>
-          ) : null}
-          {voiceEnabled && isCurrent && (question.audioState === 'pending' || audioStatus === 'pending') ? (
-            <span className="interview-msg__audiopending" style={VOICE_PENDING_STYLE}>语音生成中…</span>
-          ) : null}
+          {renderSpeakButton(question)}
+          {renderAudioHint(question)}
         </p>
         {renderQuestionBody(question)}
         {followUps.map((followUp) => {
@@ -331,7 +367,11 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
                   <span className={`interview-grade interview-grade--${GRADE_CLASS[followUp.grade]}`}>{followUp.grade}</span>
                 ) : null}
               </header>
-              <p className="interview-msg__question">{followUp.question}</p>
+              <p className="interview-msg__question">
+                {followUp.question}
+                {renderSpeakButton(followUp)}
+                {renderAudioHint(followUp)}
+              </p>
               {renderQuestionBody(followUp)}
             </div>
           );
@@ -403,21 +443,24 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
             {answer.length ? <span className="interview-dock__count">{answer.length} 字</span> : null}
             <div className="interview-dock__actions">
               {voiceEnabled ? (
+                // TODO(样式迁移)：录音态的红色高亮等样式待 styles/global.css 归属清晰后补。
                 <button
                   aria-label="录音回答"
                   className={`interview-dock__mic interview-dock__mic--${recorder.state}`}
-                  disabled={recorder.state === 'transcribing' || !current}
+                  disabled={recorder.state === 'starting' || recorder.state === 'transcribing' || !current}
                   onClick={() => {
                     if (recorder.state === 'recording') recorder.stop();
                     else void recorder.start();
                   }}
                   type="button"
                 >
-                  {recorder.state === 'recording'
-                    ? `停止 ${recorder.seconds}s`
-                    : recorder.state === 'transcribing'
-                      ? '识别中…'
-                      : '🎤'}
+                  {recorder.state === 'starting'
+                    ? '准备中…'
+                    : recorder.state === 'recording'
+                      ? `停止 ${recorder.seconds}s`
+                      : recorder.state === 'transcribing'
+                        ? '识别中…'
+                        : '🎤'}
                 </button>
               ) : null}
               <button className="interview-dock__skip" disabled={submitting} onClick={() => void submit(true)} type="button">跳过 · 不会</button>

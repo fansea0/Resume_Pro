@@ -27,6 +27,10 @@ class FakeStream {
 
 class FakeMediaRecorder {
   static instances: FakeMediaRecorder[] = [];
+  /** 构造失败：模拟浏览器不支持该音频格式。 */
+  static failOnConstruct = false;
+  /** 启动失败：模拟设备被占用。 */
+  static failOnStart = false;
 
   state: 'inactive' | 'recording' | 'paused' = 'inactive';
   mimeType = 'audio/webm';
@@ -34,10 +38,12 @@ class FakeMediaRecorder {
   onstop: (() => void) | null = null;
 
   constructor(public stream: FakeStream) {
+    if (FakeMediaRecorder.failOnConstruct) throw new Error('constructor failed');
     FakeMediaRecorder.instances.push(this);
   }
 
   start() {
+    if (FakeMediaRecorder.failOnStart) throw new Error('start failed');
     this.state = 'recording';
   }
 
@@ -49,11 +55,15 @@ class FakeMediaRecorder {
 }
 
 class FakeAudioContext {
+  /** 解码出来的采样数：0 用来模拟「录得太短」。 */
+  static sampleCount = 480;
+
   async decodeAudioData() {
     return {
       numberOfChannels: 2,
       sampleRate: 48000,
-      getChannelData: (index: number) => new Float32Array(480).fill(index === 0 ? 0.5 : -0.5),
+      getChannelData: (index: number) =>
+        new Float32Array(FakeAudioContext.sampleCount).fill(index === 0 ? 0.5 : -0.5),
     };
   }
 
@@ -71,15 +81,14 @@ async function readBytes(blob: Blob): Promise<Uint8Array> {
   });
 }
 
-/** 装一套假的浏览器录音环境，返回可断言的麦克风流。 */
+/** 装一套假的浏览器录音环境。 */
 function stubBrowser() {
   const stream = new FakeStream();
-  vi.stubGlobal('navigator', {
-    mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
-  });
+  const getUserMedia = vi.fn().mockResolvedValue(stream);
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
   vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
   vi.stubGlobal('AudioContext', FakeAudioContext);
-  return stream;
+  return { stream, getUserMedia };
 }
 
 afterEach(() => {
@@ -87,6 +96,9 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
   FakeMediaRecorder.instances = [];
+  FakeMediaRecorder.failOnConstruct = false;
+  FakeMediaRecorder.failOnStart = false;
+  FakeAudioContext.sampleCount = 480;
 });
 
 describe('useVoiceRecorder', () => {
@@ -111,7 +123,7 @@ describe('useVoiceRecorder', () => {
   });
 
   it('uploads a 16k mono wav and reports the recognised text', async () => {
-    const stream = stubBrowser();
+    const { stream } = stubBrowser();
     transcribeRecording.mockResolvedValue('识别文本');
     const onText = vi.fn();
 
@@ -187,7 +199,7 @@ describe('useVoiceRecorder', () => {
   });
 
   it('releases the microphone when the component unmounts', async () => {
-    const stream = stubBrowser();
+    const { stream } = stubBrowser();
     const { result, unmount } = renderHook(() =>
       useVoiceRecorder({ interviewId: 1, questionId: 2, onText: vi.fn(), onError: vi.fn() }),
     );
@@ -199,5 +211,133 @@ describe('useVoiceRecorder', () => {
 
     expect(stream.tracks[0].stopped).toBe(true);
     expect(transcribeRecording).not.toHaveBeenCalled();
+  });
+
+  it('releases the microphone when the recorder constructor fails', async () => {
+    const { stream } = stubBrowser();
+    FakeMediaRecorder.failOnConstruct = true;
+    const onError = vi.fn();
+
+    const { result } = renderHook(() =>
+      useVoiceRecorder({ interviewId: 1, questionId: 2, onText: vi.fn(), onError }),
+    );
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(stream.tracks[0].stopped).toBe(true);
+    expect(onError).toHaveBeenCalledWith('无法使用麦克风，可继续打字');
+    expect(result.current.state).toBe('idle');
+  });
+
+  it('releases the microphone when starting the recorder fails', async () => {
+    const { stream } = stubBrowser();
+    FakeMediaRecorder.failOnStart = true;
+    const onError = vi.fn();
+
+    const { result } = renderHook(() =>
+      useVoiceRecorder({ interviewId: 1, questionId: 2, onText: vi.fn(), onError }),
+    );
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(stream.tracks[0].stopped).toBe(true);
+    expect(onError).toHaveBeenCalledWith('无法使用麦克风，可继续打字');
+    expect(result.current.state).toBe('idle');
+  });
+
+  it('ignores a second start while the microphone is still being acquired', async () => {
+    const { stream, getUserMedia } = stubBrowser();
+
+    const { result } = renderHook(() =>
+      useVoiceRecorder({ interviewId: 1, questionId: 2, onText: vi.fn(), onError: vi.fn() }),
+    );
+
+    await act(async () => {
+      const first = result.current.start();
+      const second = result.current.start();
+      await Promise.all([first, second]);
+    });
+
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+
+    await act(async () => {
+      result.current.stop();
+    });
+    expect(stream.tracks[0].stopped).toBe(true);
+  });
+
+  it('resets the elapsed seconds after stopping', async () => {
+    vi.useFakeTimers();
+    try {
+      stubBrowser();
+      const { result } = renderHook(() =>
+        useVoiceRecorder({ interviewId: 1, questionId: 2, onText: vi.fn(), onError: vi.fn() }),
+      );
+
+      await act(async () => {
+        await result.current.start();
+      });
+      act(() => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(result.current.seconds).toBe(3);
+
+      await act(async () => {
+        result.current.stop();
+      });
+      expect(result.current.seconds).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports a too short recording instead of uploading an empty wav', async () => {
+    stubBrowser();
+    FakeAudioContext.sampleCount = 0;
+    const onError = vi.fn();
+
+    const { result } = renderHook(() =>
+      useVoiceRecorder({ interviewId: 1, questionId: 2, onText: vi.fn(), onError }),
+    );
+
+    await act(async () => {
+      await result.current.start();
+    });
+    await act(async () => {
+      result.current.stop();
+    });
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('录音太短，请重新录音或打字'));
+    expect(transcribeRecording).not.toHaveBeenCalled();
+  });
+
+  it('stops automatically at the recording time limit', async () => {
+    vi.useFakeTimers();
+    try {
+      const { stream } = stubBrowser();
+      const onError = vi.fn();
+
+      const { result } = renderHook(() =>
+        useVoiceRecorder({ interviewId: 1, questionId: 2, onText: vi.fn(), onError }),
+      );
+
+      await act(async () => {
+        await result.current.start();
+      });
+      act(() => {
+        vi.advanceTimersByTime(300_000);
+      });
+
+      expect(FakeMediaRecorder.instances[0].state).toBe('inactive');
+      expect(stream.tracks[0].stopped).toBe(true);
+      expect(onError).toHaveBeenCalledWith('已达 5 分钟录音上限，已自动停止');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
