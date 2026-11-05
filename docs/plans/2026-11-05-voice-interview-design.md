@@ -261,7 +261,16 @@ WHERE id = ? AND (audio_state IS NULL OR audio_state = 'failed')
 
 **兜底：入队失败要归还生成权**
 
-队列满时任务不会真正被处理，`pending` 会卡住。因此入队失败必须调用 `ReleaseAudioState` 把 `pending` 放回 `NULL`，让下次 `Reload` 能补上。
+队列满时任务不会真正被处理，`pending` 会卡住。因此**最终**没能入队的任务必须调用 `ReleaseAudioState` 把 `pending` 放回 `NULL`，让下次 `Reload` 能补上。
+
+两级缓冲：队列（容量 256）满了先放进**进程内 backlog**（上限 4096），worker 每处理完一题就把 backlog 灌回队列——这样启动时一次性补齐上百道题也不会丢。只有 backlog 也满了，才真正丢弃并归还生成权。
+
+> 为什么不用「worker 空闲时回扫数据库续拉」：那条路会反复捞起 `failed` 的题（扫描条件是 `audio_state IS NULL OR 'failed'`），变成对同一道坏题的无限重试。
+
+**另外两处一致性约束**
+
+- **`Reload` 必须在 `Start` 之前调用**：`ResetStalePendingAudio` 会把进行中面试的所有 `pending` 归零，而 `pending` 表示「已抢占生成权」；worker 一旦开始消费，归零就会打断在途任务、导致重复合成。生成器用 `ErrReloadAfterStart` 挡住误用。
+- **`CleanupInterview` 先归零状态、再删目录**：归零失败就**跳过删目录**并记 Error 级日志。宁可留下文件，也不能留下「状态 `ready` 但文件不存在」的僵尸——那样前端按 `ready` 请求音频只会拿到 404。
 
 **跨进程兜底**
 
