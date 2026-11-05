@@ -662,6 +662,8 @@ tools/voice-server/stub_server.py            零依赖 OpenAI 兼容桩服务（
 7. **上传体积在解析前限制**：multipart 解析会把整个 body 读进内存/临时文件，必须先 `Content-Length` 判断 + `MaxBytesReader` 兜底，否则用户录音会短暂落盘。
 8. **前端只产出 PCM16 WAV**：`MediaRecorder` 默认 webm/opus，必须自己重采样到 16kHz 单声道并封装 RIFF/WAVE，否则后端 `ValidateWAV` 直接拒。
 9. **校对结果剥掉包裹标记**：prompt 要求模型「只输出纯文本」，但模型经常回 Markdown 围栏、加粗或引号；这些标记进了输入框就是脏数据。只剥「成对且包裹整个文本」的标记，文本内部的引号属于正常内容不能动。
+10. **TTS 请求体用 JSON**：`POST /audio/speech` 发 `application/json`（`{model, input, voice, response_format}`），不发 `form-urlencoded`。OpenAI 官方的同名端点用的就是 JSON body；本地 mlx-audio 0.6.4 更是只接受 JSON —— 发 form 会直接 422，所有题目语音都会生成失败。ASR 那条仍是 multipart（`file` + `model` + `response_format=json`），与上游一致。
+    - 代价：Azure OpenAI 的 TTS 端点只吃 form，需要那种上游时后端得改（当前按 OpenAI + mlx-audio 覆盖，不留开关）。
 
 ### 已知限制（实现后确认）
 

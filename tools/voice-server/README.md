@@ -14,9 +14,32 @@
 
 ## 一、启动真实推理服务（mlx-audio）
 
+### 安装（mlx-audio 0.6.4 / Apple Silicon）
+
+`pip install mlx-audio` **不足以启动 server**：mlx-audio 0.6.4 没把自己的运行时依赖
+（`uvicorn` / `fastapi` / `python-multipart` / `webrtcvad`）写进依赖表，缺一个就直接
+`ModuleNotFoundError`。完整装法：
+
 ```bash
-pip install mlx-audio
-mlx_audio.server --host 127.0.0.1 --port 21100
+# 1) 独立 venv：系统 Python 与 Homebrew Python 都被 PEP 668 保护，不能直接装
+uv venv --python 3.12 ~/.venvs/mlx-audio
+
+# 2) 装 mlx-audio 与 server 缺的运行时依赖
+UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple \
+uv pip install --python ~/.venvs/mlx-audio/bin/python \
+  mlx-audio uvicorn fastapi python-multipart webrtcvad 'setuptools<81'
+
+# 3) 验证 GPU 可用（应为 True）
+~/.venvs/mlx-audio/bin/python -c "import mlx.core as mx; print(mx.metal.is_available())"
+```
+
+> `setuptools<81` 是硬约束：`webrtcvad` 还在 `import pkg_resources`，而 setuptools 81+
+> 已经把它删了。装成新版会在启动时抛 `No module named 'pkg_resources'`。
+
+启动：
+
+```bash
+~/.venvs/mlx-audio/bin/mlx_audio.server --host 127.0.0.1 --port 21100
 ```
 
 ### 模型
@@ -24,22 +47,68 @@ mlx_audio.server --host 127.0.0.1 --port 21100
 首次请求会自动下载（合计约 3.5GB），下载完才有响应：
 
 - TTS：`mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit`
-- ASR：`mlx-community/Qwen3-ASR-1.7B-8bit`
+- ASR：`mlx-community/Qwen3-ASR-1.7B-8bit`（`Qwen3-ASR-0.6B-8bit` 更小，约 1.0GB，识别精度略低）
 
 TTS 与 ASR 各自独立配置，可以分别指向不同服务（本地 mlx-audio 与云端 API 混用也支持）。
 
+### 模型下载：国内网络会卡死，必须绕一下
+
+本网络下 **HF 上单个大 safetensors 会下到 0 字节就卡死**（xet 与普通 HTTP 都一样），
+而同一仓库里的小文件正常。ASR 1.7B 的 `model.safetensors` 是 2.46GB，必卡。
+
+绕法（实测有效，1.0GB 约 6 分钟）：
+
+1. 用 `hf-mirror` + range 请求分片并行下载：
+
+   ```bash
+   export URL='https://hf-mirror.com/mlx-community/Qwen3-ASR-0.6B-8bit/resolve/main/model.safetensors'
+   # 按 16MB 一片、16 并发下载到 /tmp/asr_parts/part_N
+   # 每片用 curl -r <start>-<end>
+   ```
+
+2. **按数字序**合并（`cat part_*` 是字典序，`part_10` 会排在 `part_2` 前面，合并后校验必然失败）：
+
+   ```bash
+   for i in $(seq 0 59); do cat /tmp/asr_parts/part_$i; done > /tmp/model.safetensors
+   echo '<sha256>  /tmp/model.safetensors' | shasum -a 256 -c -
+   ```
+
+3. 放进 HF 缓存并建符号链接（blob 文件名就是 sha256，snapshot 目录里要软链过去）：
+
+   ```bash
+   B=~/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-0.6B-8bit
+   cp /tmp/model.safetensors $B/blobs/<sha256>
+   ln -sf ../../blobs/<sha256> $B/snapshots/<commit>/model.safetensors
+   ```
+
+4. 模型已经在本地时，用**离线模式**启动，避免服务端再次尝试联网拉取而卡住：
+
+   ```bash
+   HF_HUB_OFFLINE=1 ~/.venvs/mlx-audio/bin/mlx_audio.server --host 127.0.0.1 --port 21100
+   ```
+
 ### 单独验证服务
+
+> **请求体格式**：mlx-audio 0.6.4 的 `/v1/audio/speech` 只吃 **JSON body**（FastAPI 的
+> `SpeechRequest`），发 `application/x-www-form-urlencoded` 会直接 **422**。
+> `/v1/audio/transcriptions` 是 **multipart**（`file` + `model` + `response_format`），与后端一致。
 
 ```bash
 # TTS：应产出一个 WAV 文件
 curl -s -X POST http://127.0.0.1:21100/v1/audio/speech \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d 'model=mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit&input=你好&response_format=wav' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit","input":"你好","response_format":"wav","voice":"Vivian"}' \
   -o /tmp/tts.wav && file /tmp/tts.wav
 
 # ASR：应返回 {"text":"..."}
-curl -s -X POST http://127.0.0.1:21100/v1/audio/transcriptions -F 'file=@/tmp/tts.wav'
+curl -s -X POST http://127.0.0.1:21100/v1/audio/transcriptions \
+  -F 'file=@/tmp/tts.wav' \
+  -F 'model=mlx-community/Qwen3-ASR-0.6B-8bit' \
+  -F 'response_format=json'
 ```
+
+实测产物：`file` 显示 `RIFF (little-endian) data, WAVE audio, Microsoft PCM, 16 bit, mono 24000 Hz`
+（**24kHz**，不是 16kHz；后端 `ValidateWAV` 不硬卡采样率，能正常放行）。
 
 ---
 
