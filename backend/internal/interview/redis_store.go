@@ -14,6 +14,12 @@ const (
 	// checkpointKeyPrefix 是面试 checkpoint 的 Redis key 前缀：
 	// 完整 key 为 interview:cp:{checkPointID}。
 	checkpointKeyPrefix = "interview:cp:"
+	// interruptKeyPrefix 是 interruptID 的 Redis key 前缀：
+	// 完整 key 为 interview:interrupt:{checkPointID}。
+	//
+	// 与 checkpointKeyPrefix 是互不相交的命名空间：checkpoint 是「图跑到哪了」，
+	// interruptID 是「定向恢复那个中断点的句柄」，两者生命周期一致但语义不同。
+	interruptKeyPrefix = "interview:interrupt:"
 	// lockKeyPrefix 是并发锁的 Redis key 前缀：完整 key 为 interview:lock:{key}。
 	//
 	// 它与 checkpointKeyPrefix 是两个互不相交的命名空间：即便 checkPointID 与
@@ -111,7 +117,10 @@ func (s *RedisStore) Set(ctx context.Context, checkPointID string, cp []byte) er
 	return err
 }
 
-// Delete 删除 checkpoint；key 不存在时也不报错（幂等）。
+// Delete 删除 checkpoint 与对应的 interruptID；key 不存在时也不报错（幂等）。
+//
+// interruptID 与 checkpoint 同生共死：checkpoint 没了，interruptID 也就没有意义，
+// 留着只会让下一次「按面试 id 恢复」拿到过期句柄。
 func (s *RedisStore) Delete(ctx context.Context, checkPointID string) error {
 	conn, err := s.pool.GetContext(ctx)
 	if err != nil {
@@ -119,8 +128,46 @@ func (s *RedisStore) Delete(ctx context.Context, checkPointID string) error {
 	}
 	defer conn.Close()
 
-	_, err = conn.Do("DEL", checkpointKeyPrefix+checkPointID)
+	_, err = conn.Do("DEL", checkpointKeyPrefix+checkPointID, interruptKeyPrefix+checkPointID)
 	return err
+}
+
+// SetInterrupt 持久化某场面试最近一次中断的 interruptID（TTL 与 checkpoint 一致）。
+//
+// 为什么必须持久化：interruptID 是「定向恢复 ask_question 中断」的句柄。
+// 只放进程内存的话，后端一重启就丢，只能退回「回放一轮」的补救路径 —— 而回放在
+// 「中断节点的输出已经存进 checkpoint」的场景会跳过该节点直接跑后续的评分节点，
+// 评分节点拿不到用户答案，最终报 invalid grade（2026-11-05 实测踩过）。
+func (s *RedisStore) SetInterrupt(ctx context.Context, checkPointID, interruptID string) error {
+	conn, err := s.pool.GetContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	_, err = conn.Do("SET", interruptKeyPrefix+checkPointID, interruptID, "EX", int(checkpointTTL.Seconds()))
+	return err
+}
+
+// GetInterrupt 读取持久化的 interruptID；不存在时返回 ("", false, nil)。
+func (s *RedisStore) GetInterrupt(ctx context.Context, checkPointID string) (string, bool, error) {
+	conn, err := s.pool.GetContext(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	defer conn.Close()
+
+	value, err := redis.String(conn.Do("GET", interruptKeyPrefix+checkPointID))
+	if errors.Is(err, redis.ErrNil) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if value == "" {
+		return "", false, nil
+	}
+	return value, true, nil
 }
 
 // TryLock 尝试对 key 加锁（SET key 1 NX EX ttl）。

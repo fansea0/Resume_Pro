@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/cloudwego/eino/schema"
 )
 
 // graphTestConfig 是图测试用的小配置：2 道主问题、追问预算 1、单问上限 1。
@@ -49,13 +51,17 @@ func gradeJSON(grade, followUp string) string {
 
 // graphTestStore 是图测试用的内存 checkpoint store：零网络依赖（不用 Redis），
 // 实现 compose.CheckPointStore 三方法 + CheckPointDeleter.Delete。
+//
+// 额外实现 interruptStore（SetInterrupt/GetInterrupt），模拟 *RedisStore 的
+// interruptID 持久化能力：进程重启后新建的 Graph 必须能从 store 取回 interruptID。
 type graphTestStore struct {
-	mu sync.Mutex
-	m  map[string][]byte
+	mu         sync.Mutex
+	m          map[string][]byte
+	interrupts map[string]string
 }
 
 func newGraphTestStore() *graphTestStore {
-	return &graphTestStore{m: map[string][]byte{}}
+	return &graphTestStore{m: map[string][]byte{}, interrupts: map[string]string{}}
 }
 
 func (s *graphTestStore) Get(_ context.Context, checkPointID string) ([]byte, bool, error) {
@@ -76,7 +82,22 @@ func (s *graphTestStore) Delete(_ context.Context, checkPointID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.m, checkPointID)
+	delete(s.interrupts, checkPointID)
 	return nil
+}
+
+func (s *graphTestStore) SetInterrupt(_ context.Context, checkPointID, interruptID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.interrupts[checkPointID] = interruptID
+	return nil
+}
+
+func (s *graphTestStore) GetInterrupt(_ context.Context, checkPointID string) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.interrupts[checkPointID]
+	return id, ok, nil
 }
 
 // startTwoQuestionInterview 造数并启动面试图，返回第一题。
@@ -195,9 +216,15 @@ func TestGraphFollowUpChain(t *testing.T) {
 	if res2.NextQuestion.ParentID != nil {
 		t.Errorf("next question should be main question 2, got %+v", res2.NextQuestion)
 	}
-	// 追问轮只传新回答（1 条 user 消息），不重拼题目上下文
-	if len(fake.inputs[1]) != 1 {
-		t.Errorf("follow-up grade input messages = %d, want 1", len(fake.inputs[1]))
+	// 追问轮必须自带评分上下文（system + 题目 JSON + 本轮回答）。
+	//
+	// 旧实现只发 1 条 user 消息、靠 previous_response_id 续上下文，上游不支持该参数
+	// 会静默忽略 —— 模型收不到评分指令，把答案当聊天请求，返回技术方案而非评分 JSON。
+	if len(fake.inputs[1]) != 3 {
+		t.Fatalf("follow-up grade input messages = %d, want 3", len(fake.inputs[1]))
+	}
+	if role := fake.inputs[1][0].Role; role != schema.AgenticRoleTypeSystem {
+		t.Errorf("follow-up first message role = %v, want system", role)
 	}
 }
 
@@ -282,6 +309,51 @@ func TestGraphFollowUpBudgetExhausted(t *testing.T) {
 	}
 	if want := graphQuestions()[1].Question; res.NextQuestion.Question != want {
 		t.Errorf("next question = %q, want %q", res.NextQuestion.Question, want)
+	}
+}
+
+// TestGraphFollowUpAnswerSurvivesProcessRestart 重启后提交「追问」必须成功。
+//
+// 背景（2026-11-05 实测）：interruptID 只存进程内存时，后端重启后走「回放」兜底，
+// 而 checkpoint 里已经存过追问节点的输出 → 回放跳过该节点直接跑评分节点，
+// 评分节点拿不到用户答案 → invalid grade → 前端只看到「interview operation failed」。
+// interruptID 持久化后，重启后的 Graph 直接取回句柄定向恢复，不走回放。
+func TestGraphFollowUpAnswerSurvivesProcessRestart(t *testing.T) {
+	fake := &fakeResponses{
+		payloads: []string{
+			gradeJSON("B+", "追问一下？"),
+			gradeJSON("A", ""),
+		},
+		// 模拟真实模型：拿不到用户答案就返回空 grade（会被 schema 校验拒绝）。
+		// 固定 payload 的 fake 测不出「回放路径把评分节点跑空了」这个真实故障。
+		requireAnyOf: []string{"回答 1", "回答 2（追问）"},
+	}
+	repo, iv, graph, store := startTwoQuestionInterview(t, graphTestConfig(), fake)
+	ctx := context.Background()
+
+	// 第一次提交：主问题 → 生成追问
+	first, err := graph.Answer(ctx, iv.ID, answerPayload{Answer: "回答 1"})
+	if err != nil {
+		t.Fatalf("answer 1: %v", err)
+	}
+	if first.NextQuestion == nil || first.NextQuestion.ParentID == nil {
+		t.Fatalf("expected a follow-up question, got %+v", first.NextQuestion)
+	}
+
+	// 模拟重启：新建 Graph（共享 repo 与 store），进程内存里的 interruptID 为空
+	rebuilt, err := BuildGraph(repo, fake, store)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	res, err := rebuilt.Answer(ctx, iv.ID, answerPayload{Answer: "回答 2（追问）"})
+	if err != nil {
+		t.Fatalf("answer follow-up after restart: %v", err)
+	}
+	if res.Finished || res.NextQuestion == nil {
+		t.Fatalf("expected next question after restart, got %+v", res)
+	}
+	if fake.calls != 2 {
+		t.Errorf("llm calls = %d, want 2（重启后不应触发额外的评分调用）", fake.calls)
 	}
 }
 

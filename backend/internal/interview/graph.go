@@ -10,12 +10,11 @@ import (
 	"sync"
 	"text/template"
 
-	"github.com/cloudwego/eino-ext/components/model/agenticopenai"
-	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
 	"resumepro/backend/internal/interview/prompts"
+	"resumepro/backend/internal/logging"
 )
 
 // 面试图的五个节点（spec「Eino Graph 节点编排图」）：
@@ -244,7 +243,7 @@ func (g *Graph) StartInterview(ctx context.Context, interviewID int64) (*schema.
 			return nil, err
 		}
 		ic := info.InterruptContexts[0]
-		g.rememberInterrupt(checkPointID, ic.ID)
+		g.rememberInterrupt(ctx, checkPointID, ic.ID)
 		aq, ok := ic.Info.(*askQuestionInfo)
 		if !ok {
 			return nil, fmt.Errorf("interview: unexpected interrupt info %T", ic.Info)
@@ -269,18 +268,23 @@ func (g *Graph) Answer(ctx context.Context, interviewID int64, payload answerPay
 		return graphResult{}, ErrSessionNotFound
 	}
 
-	interruptID, ok := g.lastInterruptID(checkPointID)
+	interruptID, ok := g.lastInterruptID(ctx, checkPointID)
 	if !ok {
-		// interruptID 只存在进程内存（见 rememberInterrupt 注释）：进程重启等场景
-		// 丢失时，先重放一轮让 ask_question 重新中断（该节点只读库，幂等安全），
-		// 拿到新的 interruptID 后再定向恢复。
+		// 兜底路径：interruptID 既不在进程内存也不在持久化存储里（老数据、或持久化失败）。
+		// 先重放一轮让 ask_question 重新中断（该节点只读库，幂等安全），拿到新的
+		// interruptID 后再定向恢复。
+		//
+		// 注意这条兜底并不可靠：重放只在「中断节点的输出还没进 checkpoint」时才会再次
+		// 中断在同一节点；若 checkpoint 里已存过该节点的输出，重放会跳过它直接跑后续的
+		// 评分节点，而评分节点此时拿不到用户答案 → invalid grade。
+		// interruptID 持久化就是为了让这条兜底路径基本用不上。
 		if _, err := g.runnable.Invoke(ctx, "", compose.WithCheckPointID(checkPointID)); err != nil {
 			info, existed := compose.ExtractInterruptInfo(err)
 			if !existed || len(info.InterruptContexts) == 0 {
 				return graphResult{}, err
 			}
 			interruptID = info.InterruptContexts[0].ID
-			g.rememberInterrupt(checkPointID, interruptID)
+			g.rememberInterrupt(ctx, checkPointID, interruptID)
 		} else {
 			return graphResult{}, errors.New("interview: expected re-interrupt on replay, got normal completion")
 		}
@@ -297,7 +301,7 @@ func (g *Graph) Answer(ctx context.Context, interviewID int64, payload answerPay
 			return graphResult{}, err
 		}
 		ic := info.InterruptContexts[0]
-		g.rememberInterrupt(checkPointID, ic.ID)
+		g.rememberInterrupt(ctx, checkPointID, ic.ID)
 		aq, ok := ic.Info.(*askQuestionInfo)
 		if !ok {
 			return graphResult{}, fmt.Errorf("interview: unexpected interrupt info %T", ic.Info)
@@ -319,22 +323,70 @@ func (g *Graph) Answer(ctx context.Context, interviewID int64, payload answerPay
 	}, nil
 }
 
+// interruptStore 是可选能力：把 interruptID 持久化到与 checkpoint 同级的存储里。
+//
+// Graph 的 store 是 eino 的 compose.CheckPointStore（只有 Get/Set），所以用结构化
+// 断言探测：生产用 *RedisStore（支持）；测试用的内存实现不支持时自动退回进程内存，
+// 行为与从前一致。
+type interruptStore interface {
+	SetInterrupt(ctx context.Context, checkPointID, interruptID string) error
+	GetInterrupt(ctx context.Context, checkPointID string) (string, bool, error)
+}
+
 // rememberInterrupt 记录某场面试最近一次中断的 interruptID，供下一次 Answer 定向恢复。
 //
 // eino 的 interruptID 是每次中断随机生成的 uuid（core.Interrupt → uuid.NewString()），
-// 不是稳定的节点地址，因此必须在中断返回时捕获。它只存进程内存：重启后由 Answer 的
-// 重放兜底路径重新获取。
-func (g *Graph) rememberInterrupt(checkPointID, interruptID string) {
+// 不是稳定的节点地址，因此必须在中断返回时捕获。
+//
+// 同时写进程内存与持久化存储：内存读得快，持久化保证后端重启后仍能恢复。
+// 只存内存会让重启后的「回放」兜底路径跳过已存过输出的中断节点、直接跑评分节点，
+// 评分节点拿不到用户答案，最终报 invalid grade（2026-11-05 实测踩过）。
+func (g *Graph) rememberInterrupt(ctx context.Context, checkPointID, interruptID string) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	g.lastInterrupt[checkPointID] = interruptID
+	g.mu.Unlock()
+
+	persistent, supported := g.store.(interruptStore)
+	if !supported {
+		return
+	}
+	if err := persistent.SetInterrupt(ctx, checkPointID, interruptID); err != nil {
+		// 持久化失败不阻断本次流程：内存里还有，后端不重启就能继续用。
+		logging.WithError(err).WithFields(logging.Fields{
+			"interview_id": checkPointID,
+		}).Warn("interview: persist interrupt id failed")
+	}
 }
 
-func (g *Graph) lastInterruptID(checkPointID string) (string, bool) {
+// lastInterruptID 取最近一次中断的 interruptID。
+//
+// 顺序：进程内存 → 持久化存储 → 都没有才算 miss（由调用方走回放兜底）。
+func (g *Graph) lastInterruptID(ctx context.Context, checkPointID string) (string, bool) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	id, ok := g.lastInterrupt[checkPointID]
-	return id, ok
+	g.mu.Unlock()
+	if ok && id != "" {
+		return id, true
+	}
+
+	persistent, supported := g.store.(interruptStore)
+	if !supported {
+		return "", false
+	}
+	stored, found, err := persistent.GetInterrupt(ctx, checkPointID)
+	if err != nil {
+		logging.WithError(err).WithFields(logging.Fields{
+			"interview_id": checkPointID,
+		}).Warn("interview: load interrupt id failed")
+		return "", false
+	}
+	if !found || stored == "" {
+		return "", false
+	}
+	g.mu.Lock()
+	g.lastInterrupt[checkPointID] = stored
+	g.mu.Unlock()
+	return stored, true
 }
 
 // ---- ask_question ----
@@ -432,7 +484,8 @@ func (dep graphDeps) currentQuestion(ctx context.Context, state *InterviewState)
 // ---- grade_answer ----
 
 // gradeAnswer 节点：skip=true 不调 LLM（首答结算 C / 追问中保持链最高等级）；
-// 正常首答拼完整题目上下文，追问轮只传新回答 + WithHeadPreviousResponseID 续聊。
+// 首答与追问轮都拼完整题目上下文：追问轮不能只传新回答、靠 previous_response_id
+// 续上下文，上游不支持该参数（详见 gradeWithModel 里的说明）。
 // 输出 {grade, followUp} JSON；解析失败按契约修复模式重试一次。
 func (dep graphDeps) gradeAnswer(ctx context.Context, in string) (string, error) {
 	var payload answerPayload
@@ -515,31 +568,67 @@ func (dep graphDeps) gradeWithModel(ctx context.Context, state *InterviewState, 
 			schema.UserAgenticMessage(payload.Answer),
 		}
 	} else {
-		// 追问轮：题目上下文由 Responses 服务端经 previous_response_id 续上
-		msgs = []*schema.AgenticMessage{schema.UserAgenticMessage(payload.Answer)}
+		// 追问轮：同样带上评分 system prompt 与题目上下文。
+		//
+		// 不能只靠 previous_response_id 续上下文：上游（MiniMax 的 Responses 兼容端点）
+		// 不支持该参数，会被静默忽略 —— 模型收不到「你是评分器」的 system 指令，
+		// 把用户答案当成聊天请求，返回一段技术方案而不是评分 JSON（2026-11-05 实测）。
+		// 上下文一律自带，所有上游行为一致。
+		system, err := renderPrompt(dep.tmpl, "grading.tmpl")
+		if err != nil {
+			return gradeResult{}, err
+		}
+		must, bonus := dep.repo.ExtraFields(row.Extra)
+		questionCtx, err := json.Marshal(gradingContext{
+			Question:       row.Question,
+			Label:          labelNames[row.Label],
+			StandardAnswer: row.StandardAnswer,
+			MustPoints:     must,
+			BonusPoints:    bonus,
+		})
+		if err != nil {
+			return gradeResult{}, fmt.Errorf("interview: marshal grading context: %w", err)
+		}
+		msgs = []*schema.AgenticMessage{
+			schema.SystemAgenticMessage(system),
+			schema.UserAgenticMessage(string(questionCtx)),
+			schema.UserAgenticMessage(payload.Answer),
+		}
 	}
 
-	var opts []model.Option
-	if state.FollowUpRound > 0 && state.ResponseID != "" {
-		opts = append(opts, agenticopenai.WithHeadPreviousResponseID(state.ResponseID))
-	}
-
-	resp, err := dep.cm.Generate(ctx, msgs, opts...)
+	resp, err := dep.cm.Generate(ctx, msgs)
 	if err != nil {
 		return gradeResult{}, fmt.Errorf("interview: grade llm call: %w", err)
 	}
 	content := agenticMessageText(resp)
 	res, parseErr := parseGradeResult(content)
 	if parseErr != nil {
+		// 解析失败必须记原始输出：只报 invalid grade "" 的话，线上根本看不出
+		// 是模型返回了空 grade、返回了非 JSON、还是被上游截断（2026-11-05 踩过）。
+		logging.WithFields(logging.Fields{
+			"interview_id":    state.InterviewID,
+			"question_id":     row.ID,
+			"follow_up_round": state.FollowUpRound,
+			"has_response_id": state.ResponseID != "",
+			"raw_output":      truncateForLog(content, 500),
+			"parse_error":     parseErr.Error(),
+		}).Warn("interview: grade output invalid, retrying with repair prompt")
 		if ctx.Err() != nil {
 			return gradeResult{}, ctx.Err()
 		}
-		retryResp, retryErr := dep.cm.Generate(ctx, repairGradeMessages(msgs, content, parseErr), opts...)
+		retryResp, retryErr := dep.cm.Generate(ctx, repairGradeMessages(msgs, content, parseErr))
 		if retryErr != nil {
 			return gradeResult{}, fmt.Errorf("interview: grade llm call: %w", retryErr)
 		}
 		content = agenticMessageText(retryResp)
 		if res, parseErr = parseGradeResult(content); parseErr != nil {
+			logging.WithFields(logging.Fields{
+				"interview_id":    state.InterviewID,
+				"question_id":     row.ID,
+				"follow_up_round": state.FollowUpRound,
+				"raw_output":      truncateForLog(content, 500),
+				"parse_error":     parseErr.Error(),
+			}).Error("interview: grade output still invalid after repair")
 			return gradeResult{}, parseErr
 		}
 		resp = retryResp
@@ -560,6 +649,14 @@ type gradingContext struct {
 	StandardAnswer string   `json:"standardAnswer,omitempty"`
 	MustPoints     []string `json:"mustPoints,omitempty"`
 	BonusPoints    []string `json:"bonusPoints,omitempty"`
+}
+
+// truncateForLog 截断日志字段长度：模型输出可能很长，全量进日志会淹没其它信息。
+func truncateForLog(text string, limit int) string {
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	return text[:limit] + "...(truncated)"
 }
 
 // parseGradeResult 解析并校验评分输出：单个 JSON 对象；grade ∈ 六档；followUp 可为空串。

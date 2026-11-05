@@ -16,6 +16,13 @@ type fakeResponses struct {
 	payloads []string
 	calls    int
 	inputs   [][]*schema.AgenticMessage
+
+	// requireAnyOf 非空时：模型输入里必须出现其中至少一个标记，否则返回空 grade。
+	//
+	// 用来模拟真实模型的行为 —— 拿不到用户答案时它会返回 {"grade":""}，
+	// 而空 grade 会被输出 schema 校验拒绝（invalid grade ""）。
+	// 固定 payload 的 fake 掩盖了这个真实故障，测不出「回放路径」的问题。
+	requireAnyOf []string
 }
 
 func (f *fakeResponses) Generate(_ context.Context, in []*schema.AgenticMessage, _ ...model.Option) (*schema.AgenticMessage, error) {
@@ -25,7 +32,39 @@ func (f *fakeResponses) Generate(_ context.Context, in []*schema.AgenticMessage,
 	if index >= len(f.payloads) {
 		index = len(f.payloads) - 1
 	}
-	return assistantAgenticMessage(f.payloads[index]), nil
+	payload := f.payloads[index]
+	if len(f.requireAnyOf) > 0 && !agenticMessagesContainAny(in, f.requireAnyOf) {
+		payload = `{"grade":"","followUp":""}`
+	}
+	return assistantAgenticMessage(payload), nil
+}
+
+// agenticMessagesContainAny 判断模型输入里是否出现任一标记。
+func agenticMessagesContainAny(in []*schema.AgenticMessage, markers []string) bool {
+	var builder strings.Builder
+	for _, message := range in {
+		if message == nil {
+			continue
+		}
+		for _, block := range message.ContentBlocks {
+			if block == nil {
+				continue
+			}
+			if block.UserInputText != nil {
+				builder.WriteString(block.UserInputText.Text)
+			}
+			if block.AssistantGenText != nil {
+				builder.WriteString(block.AssistantGenText.Text)
+			}
+		}
+	}
+	text := builder.String()
+	for _, marker := range markers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func questionsPayload(t *testing.T, questions ...map[string]any) string {
