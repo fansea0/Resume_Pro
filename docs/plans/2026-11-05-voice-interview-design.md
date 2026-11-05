@@ -406,7 +406,9 @@ uploads/voice/{tenantID}/{interviewID}/q{questionID}.wav
 | 401 | 未认证 | `{"error":"authentication required"}` |
 | 404 | 面试/题目不存在或不属于当前租户 | `{"error":"interview not found"}` |
 | 409 | 未就绪（`pending` / `NULL`） | `{"state":"pending"}` |
-| 503 | 生成失败 | `{"state":"failed"}` |
+| 503 | 语音未启用或不可用 | `{"error":"voice features disabled"}` |
+| 503 | 生成失败（`audio_state=failed`） | `{"state":"failed"}` |
+| 404 | 状态是 `ready` 但音频文件已不在 | `{"error":"question audio not found"}` |
 
 前端：`ready` → 播放；`pending` → 显示“生成中”；`failed` → 不显示喇叭。
 
@@ -427,7 +429,9 @@ multipart 上传录音，返回经 AI 修复错别字后的文本。
 | 状态码 | 含义 | 响应体 |
 | --- | --- | --- |
 | 200 | 成功 | `{"text":"修复后的文本"}` |
-| 400 | 音频格式非法或超限 | `{"error":"invalid audio"}` |
+| 400 | 音频格式非法或超限 | `{"error":"invalid audio file"}` |
+| 400 | 缺少文件字段 | `{"error":"audio file is required"}` |
+| 400 | 体积超过 20MB | `{"error":"audio file is too large"}` |
 | 401 | 未认证 | `{"error":"authentication required"}` |
 | 404 | 面试/题目不存在或不属于当前租户 | `{"error":"interview not found"}` |
 | 503 | ASR 不可用 | `{"error":"transcription unavailable"}` |
@@ -457,7 +461,9 @@ multipart 上传录音，返回经 AI 修复错别字后的文本。
 { "id": 1, "status": "active", "voice": { "enabled": true } }
 ```
 
-`enabled` 只反映 `VOICE_ENABLED` 配置，不反映运行时可达性。
+`enabled` 反映的是**语音能力是否装配成功**（即 `VoiceService != nil`）：`VOICE_ENABLED` 未开、
+或 provider 装配失败时为 `false`，前端据此隐藏语音控件。比「只反映配置」更保守 —— 装配失败时前端
+不会显示一个必然失败的喇叭按钮。
 
 ### 错误码汇总
 
@@ -593,13 +599,77 @@ frontend/src/components/InterviewChat.tsx    自动播放 / 光标插入 / 按�
 - `UpdateAudioState(ctx, questionID, state)`：生成 worker 回写状态。
 - `ActiveQuestionsNeedingAudio(ctx)`：`Reload` 扫描 active 面试中 `audio_state ∈ {NULL, pending, failed}` 的题。
 
-## 已知限制
 
-- 本地推理服务需手动启动（`mlx_audio.server`），后端不代管其生命周期。
-- 生成是串行队列，创建面试到全部题目就绪之间有延迟；前端用“生成中”状态与自动播放轮询覆盖。
-- 追问题音在追问落库后入队，排在主问题之后；若主问题较多，追问音频可能延迟就绪。
-- TTS 输出 24kHz WAV，约 24KB/秒，缓存占用可接受。
-- 错别字修复复用 `OPENAI_MODEL`；该模型不可用时退化为 ASR 原文。
+## 实现说明（落地后回写）
+
+### 实际落地结构
+
+```
+backend/internal/interview/audio.go          AudioHooks 窄接口 + PendingAudio
+backend/internal/interview/repository.go     audio_state 四态 + 抢占式 6 方法
+backend/internal/interview/service.go        WithAudioHooks / HasActiveInterview / QuestionForAudio
+backend/internal/interview/graph.go          追问落库（追问音频在 service 层统一入队）
+backend/internal/speech/speech.go            Synthesizer / Transcriber / TextModel + ValidateWAV
+backend/internal/speech/config.go            Config + LoadConfigFromEnv（VOICE_ENABLED 默认关闭）
+backend/internal/speech/openai.go            OpenAI 兼容 provider（同时实现 TTS 与 ASR）
+backend/internal/speech/store.go             AudioStore 落盘（临时文件 + rename 原子提交）
+backend/internal/speech/generator.go         后台串行生成器（抢占去重 + 读写锁 + 启动归零）
+backend/internal/speech/correct.go           错别字修复（独立模型实例，ReasoningEffort=low）
+backend/internal/speech/service.go            VoiceService 门面
+backend/internal/httpapi/voice_handler.go    播放 / 转写两个接口
+backend/internal/httpapi/router.go           路由无条件注册（缺依赖 → 503）
+backend/cmd/server/main.go                   buildVoiceServices + Reload → Start 接线
+frontend/src/api/voice.ts                    语音接口层
+frontend/src/utils/wav.ts                    重采样 + PCM16 WAV 封装
+frontend/src/hooks/useVoiceRecorder.ts       录音 → WAV → 上传（麦克风释放 + 连点保护）
+frontend/src/components/InterviewChat.tsx    自动播放 / 喇叭 / 麦克风 / 光标插入
+tools/voice-server/README.md                 mlx-audio 操作手册 + 端到端验证清单
+tools/voice-server/stub_server.py            零依赖 OpenAI 兼容桩服务（无 GPU 也能联调）
+```
+
+### 状态机与归属
+
+| `audio_state` | 含义 | 谁写 | 前端表现 |
+| --- | --- | --- | --- |
+| `NULL` | 未生成（尚未入队，或已归还生成权） | `ReleaseAudioState` / `ResetAudioStateByInterview` | 不显示喇叭 |
+| `pending` | 已抢占生成权 | `ClaimAudioState` | 显示「生成中」，轮询重试 |
+| `ready` | 音频已落盘 | `UpdateAudioState` | 显示喇叭，自动播放 |
+| `failed` | 重试耗尽 / 音频非法 | `UpdateAudioState` | 不显示喇叭 |
+
+生成权的唯一真源是数据库条件 UPDATE（`ClaimAudioState`：仅 `NULL`/`failed` 可抢）。
+进程内 `sync.Map` 去重只是省掉一次无谓 UPDATE，不是真源。
+
+### 降级矩阵
+
+| 场景 | 表现 |
+| --- | --- |
+| `VOICE_ENABLED` 未开 | 路由仍注册 → 503；前端隐藏语音控件；面试全程正常 |
+| mlx-audio 未启动 | 该题 `failed`；其它题照常；面试全程正常 |
+| 上游超时 / 报错 | 重试（退避 + `MaxAttempts`），耗尽后 `failed` |
+| AI 错别字修复失败 | 返回 ASR 原文，不清空用户说的话 |
+| 浏览器拒绝麦克风 | 提示「无法使用麦克风，可继续打字」，页面不崩 |
+| 浏览器拦截自动播放 | 提示「点击喇叭播放本题」，主问题与追问都有喇叭 |
+| TTS 产物不是合法 WAV | 判为合成失败，不落盘 |
+
+### 关键实现约定（踩过的坑）
+
+1. **`Reload` 必须在 `Start` 之前**：归零 pending 与 worker 消费在途任务互斥，生成器用 `ErrReloadAfterStart` 挡住误用。
+2. **路由无条件注册**：语音缺席时返回 503 而不是 404「路由不存在」，调用方才能区分两者。
+3. **播放只读文件**：绝不在请求内同步合成（TTS 单题数秒到数十秒）。
+4. **两级缓冲**：队列（256）满了先进进程内 backlog（4096），worker 优先消费 backlog；两者都满才丢弃并归还生成权。
+5. **worker 三层 recover**：provider 一次 panic 不能打挂整个后端进程。
+6. **落盘前校验**：存储层不校验音频格式（那是它的契约），由生成器在落盘前 `ValidateWAV` 兜一次。
+7. **上传体积在解析前限制**：multipart 解析会把整个 body 读进内存/临时文件，必须先 `Content-Length` 判断 + `MaxBytesReader` 兜底，否则用户录音会短暂落盘。
+8. **前端只产出 PCM16 WAV**：`MediaRecorder` 默认 webm/opus，必须自己重采样到 16kHz 单声道并封装 RIFF/WAVE，否则后端 `ValidateWAV` 直接拒。
+
+### 已知限制（实现后确认）
+
+- 本地推理服务需手动启动（`mlx_audio.server`），后端不代管其生命周期；`tools/voice-server/stub_server.py` 可在无 GPU 时替代联调。
+- 生成是串行队列，创建面试到全部题目就绪之间有延迟；前端用「生成中」状态与轮询覆盖。
+- 追问题音在追问落库后入队，排在主问题之后；主问题多时追问音频可能延迟就绪。
+- **被丢弃的 active 面试没有回收机制**：`ActiveQuestionsNeedingAudio` 只按 `status='active'` 过滤，没有时间上界。既没答完也没 abort 的面试会永远停在 `active`，其音频每次重启都被重新合成（TTS 成本重复消耗）。需要运维定期清理，或后续给该查询加时间上界。
+- 错别字修复用**独立的模型实例**（`ReasoningEffort=low`、独立超时），不复用面试出题模型 —— 校对任务不需要长思考。
 - **面试结束即清理音频**，报告页只能看文字与评分。
 - 音频目录以 interviewID 为清理单元，不跨面试复用。
-- 清理只覆盖“面试状态变终态”这一路径；进程崩溃残留由下次启动的 `Reload` + 清理对账兜底。
+- 清理只覆盖「面试状态变终态」这一路径；进程崩溃残留由下次启动的 `Reload` + 清理对账兜底。
+- 浏览器侧要求 HTTPS 才能用麦克风；Safari 的 `decodeAudioData` 解 MediaRecorder 产物可能失败（落到「识别失败」分支，页面不崩）。
