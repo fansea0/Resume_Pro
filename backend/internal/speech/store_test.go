@@ -297,3 +297,177 @@ func TestAudioStoreRootReturnsConfiguredDirectory(t *testing.T) {
 		t.Errorf("root = %q, want %q", store.Root(), root)
 	}
 }
+
+// 面试目录被换成软链时，写/读/清理都必须拒绝，不能把数据写到 root 之外。
+func TestAudioStoreRejectsSymlinkedInterviewDir(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	store := NewAudioStore(root)
+	ctx := context.Background()
+
+	if err := os.MkdirAll(filepath.Join(root, "1"), 0o755); err != nil {
+		t.Fatalf("mkdir tenant dir: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "1", "10")); err != nil {
+		t.Fatalf("symlink interview dir: %v", err)
+	}
+
+	if err := store.SaveQuestionAudio(ctx, 1, 10, 100, []byte("a")); err == nil {
+		t.Error("save through symlinked interview dir should be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "q100.wav")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("audio must not be written outside root: %v", err)
+	}
+	if _, err := store.ReadQuestionAudio(1, 10, 100); err == nil {
+		t.Error("read through symlinked interview dir should be rejected")
+	}
+	if err := store.CleanupInterview(1, 10); err == nil {
+		t.Error("cleanup through symlinked interview dir should be rejected")
+	}
+	// 外部目录不能被清理掉。
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("outside dir must survive: %v", err)
+	}
+}
+
+// 租户目录被换成软链时同样必须拒绝。
+func TestAudioStoreRejectsSymlinkedTenantDir(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	store := NewAudioStore(root)
+	ctx := context.Background()
+
+	if err := os.Symlink(outside, filepath.Join(root, "1")); err != nil {
+		t.Fatalf("symlink tenant dir: %v", err)
+	}
+
+	if err := store.SaveQuestionAudio(ctx, 1, 10, 100, []byte("a")); err == nil {
+		t.Error("save through symlinked tenant dir should be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "10", "q100.wav")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("audio must not be written outside root: %v", err)
+	}
+	if _, err := store.ReadQuestionAudio(1, 10, 100); err == nil {
+		t.Error("read through symlinked tenant dir should be rejected")
+	}
+}
+
+// 音频文件本身是软链时读取必须拒绝：否则会把 root 之外的内容读出来。
+func TestAudioStoreRejectsSymlinkedAudioFile(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.wav")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	store := NewAudioStore(root)
+	dir := filepath.Join(root, "1", "10")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir interview dir: %v", err)
+	}
+	if err := os.Symlink(secret, filepath.Join(dir, "q100.wav")); err != nil {
+		t.Fatalf("symlink audio file: %v", err)
+	}
+
+	data, err := store.ReadQuestionAudio(1, 10, 100)
+	if err == nil {
+		t.Fatalf("read through symlinked audio file should be rejected, got %q", data)
+	}
+	if len(data) != 0 {
+		t.Errorf("no content should be returned, got %q", data)
+	}
+	// 软链不是「文件不存在」：不能被上层当成 404。
+	if errors.Is(err, ErrAudioNotFound) {
+		t.Errorf("symlink must not be reported as ErrAudioNotFound: %v", err)
+	}
+}
+
+// 写入时 rename 会把软链本身替换掉，而不是改写软链指向的文件。
+func TestAudioStoreSaveReplacesSymlinkedAudioFile(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.wav")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	store := NewAudioStore(root)
+	dir := filepath.Join(root, "1", "10")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir interview dir: %v", err)
+	}
+	target := filepath.Join(dir, "q100.wav")
+	if err := os.Symlink(secret, target); err != nil {
+		t.Fatalf("symlink audio file: %v", err)
+	}
+
+	if err := store.SaveQuestionAudio(context.Background(), 1, 10, 100, []byte("new")); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if content, err := os.ReadFile(secret); err != nil || string(content) != "secret" {
+		t.Errorf("external file must not be modified: content=%q err=%v", content, err)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		t.Fatalf("lstat audio file: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Error("audio file should be a regular file after save")
+	}
+}
+
+// 存储层必须有体积上限：异常的大响应不能把磁盘撑爆。
+func TestAudioStoreRejectsOversizedAudio(t *testing.T) {
+	root := t.TempDir()
+	store := NewAudioStore(root)
+	oversized := make([]byte, MaxAudioBytes+1)
+
+	err := store.SaveQuestionAudio(context.Background(), 1, 10, 100, oversized)
+	if err == nil {
+		t.Fatal("oversized audio should be rejected")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Errorf("err = %v, want a too-large error", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "1", "10", "q100.wav")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("oversized audio must not be written: %v", err)
+	}
+}
+
+// 刚好等于上限的音频要能写进去（边界不误伤）。
+func TestAudioStoreAcceptsAudioAtSizeLimit(t *testing.T) {
+	root := t.TempDir()
+	store := NewAudioStore(root)
+	atLimit := make([]byte, MaxAudioBytes)
+
+	if err := store.SaveQuestionAudio(context.Background(), 1, 10, 100, atLimit); err != nil {
+		t.Fatalf("save at size limit: %v", err)
+	}
+	got, err := store.ReadQuestionAudio(1, 10, 100)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(got) != MaxAudioBytes {
+		t.Errorf("len = %d, want %d", len(got), MaxAudioBytes)
+	}
+}
+
+// Root 返回绝对化后的目录：相对路径构造时也必须是绝对路径。
+func TestAudioStoreRootIsAbsoluteForRelativeRoot(t *testing.T) {
+	t.Chdir(t.TempDir())
+	store := NewAudioStore("rel-audio-root")
+
+	root := store.Root()
+	if !filepath.IsAbs(root) {
+		t.Fatalf("root = %q, want an absolute path", root)
+	}
+	if root == "rel-audio-root" {
+		t.Fatalf("root = %q, want it to be absolutized", root)
+	}
+	// 落盘位置跟随绝对化后的 root。
+	if err := store.SaveQuestionAudio(context.Background(), 1, 10, 100, []byte("a")); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "1", "10", "q100.wav")); err != nil {
+		t.Errorf("expected audio under %s: %v", root, err)
+	}
+}

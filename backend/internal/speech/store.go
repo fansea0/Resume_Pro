@@ -45,7 +45,10 @@ func NewAudioStore(root string) *AudioStore {
 	return &AudioStore{root: absolute}
 }
 
-// Root 返回音频根目录（启动日志用）。
+// Root 返回绝对化后的音频根目录（启动日志用）。
+//
+// 传相对路径给 NewAudioStore 时，返回的是转成绝对路径后的值：
+// 它可能与配置里的原始字符串（Config.CacheDir）不相等，两者不要直接比较。
 func (s *AudioStore) Root() string {
 	return s.root
 }
@@ -74,9 +77,13 @@ func (s *AudioStore) questionPath(tenantID, interviewID, questionID int64) (stri
 	return s.ensureUnderRoot(filepath.Join(dir, fmt.Sprintf("q%d.wav", questionID)))
 }
 
-// ensureUnderRoot 防御性检查：拼出来的路径必须落在 root 之下。
+// ensureUnderRoot 防御性检查：拼出来的路径必须落在 root 之下（词法判断）。
 //
-// ID 已经被校验成正整数，路径逃逸在结构上不可能发生；这里只是把「不可能」变成「一旦发生就报错」。
+// 这里只覆盖「路径分量」层面的逃逸：ID 已经被校验成正整数，分量里不可能出现
+// ".." 或路径分隔符，因此词法上不会逃出 root。
+//
+// 注意：词法判断不解析符号链接，目录分量被换成软链时它依然成立——
+// 符号链接层面的兜底见 ensureNoSymlink。
 func (s *AudioStore) ensureUnderRoot(path string) (string, error) {
 	relative, err := filepath.Rel(s.root, path)
 	if err != nil {
@@ -86,6 +93,39 @@ func (s *AudioStore) ensureUnderRoot(path string) (string, error) {
 		return "", fmt.Errorf("speech: audio path escapes root: %s", path)
 	}
 	return path, nil
+}
+
+// ensureNoSymlink 检查路径本身不是符号链接；路径不存在时视为通过。
+func ensureNoSymlink(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("speech: inspect audio path %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("speech: audio path is a symlink: %s", path)
+	}
+	return nil
+}
+
+// ensureSafeDirs 检查 root 以下的租户目录与面试目录都不是符号链接。
+//
+// 目录分量被换成软链时，词法上的 ensureUnderRoot 依然成立，
+// 但实际落盘/读取位置会跑到 root 之外，因此这里用 Lstat 逐级拒绝。
+//
+// 已知限制：Lstat 与后续文件操作之间存在 TOCTOU 窗口，
+// 需要彻底消除得用 openat/O_NOFOLLOW 系列系统调用（当前不引入新依赖）。
+func (s *AudioStore) ensureSafeDirs(tenantID, interviewID int64) error {
+	tenantDir := filepath.Join(s.root, strconv.FormatInt(tenantID, 10))
+	interviewDir := filepath.Join(tenantDir, strconv.FormatInt(interviewID, 10))
+	for _, dir := range []string{tenantDir, interviewDir} {
+		if err := ensureNoSymlink(dir); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // validateAudioID 校验 ID 必须为正数。
@@ -104,8 +144,11 @@ func validateAudioID(kind string, id int64) error {
 // 先写同目录下的临时文件再 rename：生成 worker 与读取方并发时不会读到半个文件。
 // 临时名带唯一后缀，同一题被并发写入时不会互相覆盖临时文件。
 //
-// 只校验「非空」：音频格式由调用方保证（TTS 侧由 provider 契约保证，
+// 只校验「非空」与「体积」：音频格式由调用方保证（TTS 侧由 provider 契约保证，
 // 上传转写侧由 ValidateWAV 保证），存储层不做格式判断。
+//
+// 体积上限用 MaxAudioBytes：上游 provider 是无上限读体的，异常响应可能很大，
+// 存储层必须自己挡住把磁盘撑爆的情况。
 func (s *AudioStore) SaveQuestionAudio(ctx context.Context, tenantID, interviewID, questionID int64, audio []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -116,8 +159,15 @@ func (s *AudioStore) SaveQuestionAudio(ctx context.Context, tenantID, interviewI
 	if len(audio) == 0 {
 		return errors.New("speech: empty question audio")
 	}
+	if len(audio) > MaxAudioBytes {
+		return fmt.Errorf("speech: question audio too large: %d bytes", len(audio))
+	}
 	path, err := s.questionPath(tenantID, interviewID, questionID)
 	if err != nil {
+		return err
+	}
+	// 目录分量不能是软链，否则会写到 root 之外；必须在 MkdirAll 之前检查。
+	if err := s.ensureSafeDirs(tenantID, interviewID); err != nil {
 		return err
 	}
 	dir := filepath.Dir(path)
@@ -156,13 +206,20 @@ func (s *AudioStore) SaveQuestionAudio(ctx context.Context, tenantID, interviewI
 // ReadQuestionAudio 读取题目语音字节。
 //
 // 文件不存在时返回包住 ErrAudioNotFound 的错误：上层据此返回 404，
-// 其他错误（权限、IO 故障）才按 500 处理。
+// 其他错误（权限、IO 故障、符号链接）才按 500 处理。
 func (s *AudioStore) ReadQuestionAudio(tenantID, interviewID, questionID int64) ([]byte, error) {
 	if s.root == "" {
 		return nil, errors.New("speech: audio root is required")
 	}
 	path, err := s.questionPath(tenantID, interviewID, questionID)
 	if err != nil {
+		return nil, err
+	}
+	// 目录分量或音频文件本身是软链时拒绝读取：否则会把 root 之外的内容读出来。
+	if err := s.ensureSafeDirs(tenantID, interviewID); err != nil {
+		return nil, err
+	}
+	if err := ensureNoSymlink(path); err != nil {
 		return nil, err
 	}
 	data, err := os.ReadFile(path)
@@ -178,12 +235,17 @@ func (s *AudioStore) ReadQuestionAudio(tenantID, interviewID, questionID int64) 
 // CleanupInterview 删除一场面试的全部音频目录（含遗留的临时文件）。
 //
 // 目录不存在时返回 nil：清理是幂等的，面试终态清理可以放心重复调用。
+//
+// 目录分量是软链时拒绝清理：否则 RemoveAll 会把 root 之外的目录删掉。
 func (s *AudioStore) CleanupInterview(tenantID, interviewID int64) error {
 	if s.root == "" {
 		return errors.New("speech: audio root is required")
 	}
 	dir, err := s.interviewDir(tenantID, interviewID)
 	if err != nil {
+		return err
+	}
+	if err := s.ensureSafeDirs(tenantID, interviewID); err != nil {
 		return err
 	}
 	if err := os.RemoveAll(dir); err != nil {
