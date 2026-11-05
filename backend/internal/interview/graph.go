@@ -96,14 +96,14 @@ type decisionOutput struct {
 
 // reviewOutput 是 generate_review → finish 的负载，也是图的最终输出。
 type reviewOutput struct {
-	Grade         Grade `json:"grade"`
+	Grade         Grade  `json:"grade"`
 	FollowUp      string `json:"followUp"`
-	OverallGrade  Grade `json:"overallGrade"`
+	OverallGrade  Grade  `json:"overallGrade"`
 	OverallReview string `json:"overallReview"`
 }
 
 // askQuestionInfo 是 ask_question 中断时经 InterruptCtx.Info 返回给调用方的信息
-//（只在进程内传递，不进 checkpoint）。
+// （只在进程内传递，不进 checkpoint）。
 type askQuestionInfo struct {
 	// Message 问题原文（assistant 消息），前端按消息渲染。
 	Message *schema.AgenticMessage
@@ -406,7 +406,7 @@ func (dep graphDeps) askQuestion(ctx context.Context, in string) (string, error)
 }
 
 // currentQuestion 定位当前待答题：FollowUpRound > 0 时是追问链的最后一行
-//（decide_follow_up 刚插入的追问），否则是主问题 Index 指向的行。只读库，重入安全。
+// （decide_follow_up 刚插入的追问），否则是主问题 Index 指向的行。只读库，重入安全。
 func (dep graphDeps) currentQuestion(ctx context.Context, state *InterviewState) (Question, error) {
 	mains, err := dep.repo.MainQuestions(ctx, state.InterviewID)
 	if err != nil {
@@ -464,8 +464,8 @@ func (dep graphDeps) gradeAnswer(ctx context.Context, in string) (string, error)
 }
 
 // settleSkipGrade 处理 skip：不调 LLM。主问题首答结算 C；追问中保持当前链最高等级
-//（已答的不作废、父等级不降）。等级写回当前行，user_answer 保持为空
-//（spec「用户跳过问题」：user_answer 记为空，不消耗追问预算）。
+// （已答的不作废、父等级不降）。等级写回当前行，user_answer 保持为空
+// （spec「用户跳过问题」：user_answer 记为空，不消耗追问预算）。
 func (dep graphDeps) settleSkipGrade(ctx context.Context, state *InterviewState, row Question) (gradeResult, error) {
 	settled := GradeC
 	if state.FollowUpRound > 0 {
@@ -771,7 +771,7 @@ func (dep graphDeps) generateReview(ctx context.Context, in string) (string, err
 // ---- finish ----
 
 // finishNode 节点：status=completed 落库（总评等级 + 总评文本）→ 删除 checkpoint
-//（store 实现 CheckPointDeleter 时）→ 输出透传总评结果作为图输出。
+// （store 实现 CheckPointDeleter 时）→ 输出透传总评结果作为图输出。
 func (dep graphDeps) finishNode(ctx context.Context, in string) (string, error) {
 	var out reviewOutput
 	if err := json.Unmarshal([]byte(in), &out); err != nil {

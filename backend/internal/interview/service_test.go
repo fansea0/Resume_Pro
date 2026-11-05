@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,8 +45,8 @@ func defaultConfigQuestionsPayload(t *testing.T) string {
 // newTestService 组装真 repo + miniredis store + fake 模型的完整 Service：
 // genPayloads 喂生题器（主问题 JSON），gradePayloads 喂面试图（评分 JSON）。
 // 同一 *RedisStore 实例同时充当 graph 的 checkpoint store 与 Service 的并发锁
-//（RedisStore 两边都满足），与生产 T9 的注入方式一致；miniredis 替身不依赖外部 Redis。
-func newTestService(t *testing.T, genPayloads, gradePayloads []string) (*Repository, *Service, *RedisStore, *miniredis.Miniredis) {
+// （RedisStore 两边都满足），与生产 T9 的注入方式一致；miniredis 替身不依赖外部 Redis。
+func newTestService(t *testing.T, genPayloads, gradePayloads []string, options ...ServiceOption) (*Repository, *Service, *RedisStore, *miniredis.Miniredis) {
 	t.Helper()
 	repo, db := newTestRepo(t)
 	t.Cleanup(func() { _ = db.Close() })
@@ -55,7 +56,7 @@ func newTestService(t *testing.T, genPayloads, gradePayloads []string) (*Reposit
 		t.Fatalf("build graph: %v", err)
 	}
 	gen := NewQuestionGenerator(&fakeResponses{payloads: genPayloads}, 1)
-	return repo, NewService(repo, store, gen, graph), store, mr
+	return repo, NewService(repo, store, gen, graph, options...), store, mr
 }
 
 func twoQuestionGenPayload(t *testing.T) []string {
@@ -71,7 +72,7 @@ func testJD() *JDContext {
 
 // TestServiceCreateAndAnswer 创建 → 首题 → 回答评分。
 // 简报 Step 1 语义保留；造数按控制器裁定 F3 修正为「合法题集 + 题数一致的 cfg」
-//（简报草图的空 questions[] 与 `payload string` 字段均与实际 API 不符）。
+// （简报草图的空 questions[] 与 `payload string` 字段均与实际 API 不符）。
 func TestServiceCreateAndAnswer(t *testing.T) {
 	repo, svc, _, _ := newTestService(t, twoQuestionGenPayload(t), []string{gradeJSON("A", "")})
 	ctx := context.Background()
@@ -407,7 +408,7 @@ func TestServiceQuestionsFlattensFollowUps(t *testing.T) {
 }
 
 // TestServiceCreatePassesJDToGenerator 创建时把 JD 上下文传入生题器
-//（spec「生题」：生题输入 = JD + 简历 + 配置），防止参数在编排层被静默丢弃。
+// （spec「生题」：生题输入 = JD + 简历 + 配置），防止参数在编排层被静默丢弃。
 func TestServiceCreatePassesJDToGenerator(t *testing.T) {
 	repo, db := newTestRepo(t)
 	t.Cleanup(func() { _ = db.Close() })
@@ -443,5 +444,231 @@ func TestServiceCreatePassesJDToGenerator(t *testing.T) {
 	}
 	if sent.ResumeText != "简历文本" {
 		t.Errorf("generator payload resumeText = %q, want 简历文本", sent.ResumeText)
+	}
+}
+
+// ---- 语音接入（AudioHooks） ----
+
+// fakeAudioHooks 记录入队与清理调用。
+type fakeAudioHooks struct {
+	mu       sync.Mutex
+	enqueued [][]int64 // {tenantID, interviewID, questionID}
+	cleaned  []int64
+}
+
+func (f *fakeAudioHooks) Enqueue(_ context.Context, tenantID, interviewID, questionID int64, _ string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enqueued = append(f.enqueued, []int64{tenantID, interviewID, questionID})
+}
+
+func (f *fakeAudioHooks) CleanupInterview(_ context.Context, _ int64, interviewID int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cleaned = append(f.cleaned, interviewID)
+}
+
+// enqueueCount 返回入队次数（并发安全）。
+func (f *fakeAudioHooks) enqueueCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.enqueued)
+}
+
+// cleanupCount 返回清理次数（并发安全）。
+func (f *fakeAudioHooks) cleanupCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.cleaned)
+}
+
+// newAudioServiceFixture 组装带语音钩子的 Service：真 repo + miniredis + stub 模型。
+// tenantID 固定为 1，与既有 service 测试一致。
+func newAudioServiceFixture(t *testing.T, options ...ServiceOption) (*Repository, *Service) {
+	t.Helper()
+	repo, svc, _, _ := newTestService(t, twoQuestionGenPayload(t), []string{gradeJSON("A", "")}, options...)
+	return repo, svc
+}
+
+// TestCreateInterviewEnqueuesAllMainQuestions 创建面试后逐题入队（后台生成语音）。
+func TestCreateInterviewEnqueuesAllMainQuestions(t *testing.T) {
+	hooks := &fakeAudioHooks{}
+	repo, svc := newAudioServiceFixture(t, WithAudioHooks(hooks))
+	ctx := context.Background()
+	cfg := serviceTestConfig()
+
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历正文", nil, &cfg)
+	if err != nil {
+		t.Fatalf("create interview: %v", err)
+	}
+	mains, err := repo.MainQuestions(ctx, iv.ID)
+	if err != nil {
+		t.Fatalf("main questions: %v", err)
+	}
+	if hooks.enqueueCount() != len(mains) {
+		t.Fatalf("enqueued %d questions, want %d", hooks.enqueueCount(), len(mains))
+	}
+	for _, entry := range hooks.enqueued {
+		if entry[0] != 1 || entry[1] != iv.ID {
+			t.Fatalf("enqueue entry = %v, want tenant 1 / interview %d", entry, iv.ID)
+		}
+	}
+}
+
+// TestAnswerEnqueuesNextQuestion 回答后入队下一题（主问题或追问）。
+func TestAnswerEnqueuesNextQuestion(t *testing.T) {
+	hooks := &fakeAudioHooks{}
+	_, svc := newAudioServiceFixture(t, WithAudioHooks(hooks))
+	ctx := context.Background()
+	cfg := serviceTestConfig()
+
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历正文", nil, &cfg)
+	if err != nil {
+		t.Fatalf("create interview: %v", err)
+	}
+	before := hooks.enqueueCount()
+
+	if _, err := svc.Answer(ctx, 1, iv.ID, AnswerPayload{Answer: "回答"}); err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	if hooks.enqueueCount() <= before {
+		t.Fatal("next question was not enqueued for audio generation")
+	}
+}
+
+// TestAnswerFinishedCleansUpAudio 面试结束（答完全部题目）时清理本场音频。
+func TestAnswerFinishedCleansUpAudio(t *testing.T) {
+	hooks := &fakeAudioHooks{}
+	_, svc := newAudioServiceFixture(t, WithAudioHooks(hooks))
+	ctx := context.Background()
+	cfg := serviceTestConfig()
+
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历正文", nil, &cfg)
+	if err != nil {
+		t.Fatalf("create interview: %v", err)
+	}
+	// 两道主问题：第一次回答推进到第二题，第二次回答结束面试。
+	if _, err := svc.Answer(ctx, 1, iv.ID, AnswerPayload{Answer: "回答一"}); err != nil {
+		t.Fatalf("first answer: %v", err)
+	}
+	res, err := svc.Answer(ctx, 1, iv.ID, AnswerPayload{Answer: "回答二"})
+	if err != nil {
+		t.Fatalf("second answer: %v", err)
+	}
+	if !res.Finished {
+		t.Fatal("finished = false, want true after answering all questions")
+	}
+	if hooks.cleanupCount() != 1 {
+		t.Fatalf("cleanup count = %d, want 1", hooks.cleanupCount())
+	}
+	if hooks.cleaned[0] != iv.ID {
+		t.Fatalf("cleaned interview = %d, want %d", hooks.cleaned[0], iv.ID)
+	}
+}
+
+// TestAbortCleansUpAudio 中止面试时清理本场音频。
+func TestAbortCleansUpAudio(t *testing.T) {
+	hooks := &fakeAudioHooks{}
+	_, svc := newAudioServiceFixture(t, WithAudioHooks(hooks))
+	ctx := context.Background()
+	cfg := serviceTestConfig()
+
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历正文", nil, &cfg)
+	if err != nil {
+		t.Fatalf("create interview: %v", err)
+	}
+	if err := svc.Abort(ctx, 1, iv.ID); err != nil {
+		t.Fatalf("abort: %v", err)
+	}
+	if hooks.cleanupCount() != 1 || hooks.cleaned[0] != iv.ID {
+		t.Fatalf("cleaned = %v, want interview %d", hooks.cleaned, iv.ID)
+	}
+}
+
+// TestServiceWithoutAudioHooks 语音缺席（WithAudioHooks(nil)）时面试照常工作。
+func TestServiceWithoutAudioHooks(t *testing.T) {
+	_, svc := newAudioServiceFixture(t, WithAudioHooks(nil))
+	ctx := context.Background()
+	cfg := serviceTestConfig()
+
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历正文", nil, &cfg)
+	if err != nil {
+		t.Fatalf("create interview without audio hooks: %v", err)
+	}
+	if _, err := svc.Answer(ctx, 1, iv.ID, AnswerPayload{Answer: "回答"}); err != nil {
+		t.Fatalf("answer without audio hooks: %v", err)
+	}
+	if err := svc.Abort(ctx, 1, iv.ID); err != nil {
+		t.Fatalf("abort without audio hooks: %v", err)
+	}
+}
+
+// TestQuestionForAudioReturnsQuestion 语音播放接口的取题路径：返回带 AudioState 的题目行。
+func TestQuestionForAudioReturnsQuestion(t *testing.T) {
+	repo, svc := newAudioServiceFixture(t)
+	ctx := context.Background()
+	cfg := serviceTestConfig()
+
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历正文", nil, &cfg)
+	if err != nil {
+		t.Fatalf("create interview: %v", err)
+	}
+	mains, err := repo.MainQuestions(ctx, iv.ID)
+	if err != nil || len(mains) == 0 {
+		t.Fatalf("main questions: %v", err)
+	}
+	question, err := svc.QuestionForAudio(ctx, 1, iv.ID, mains[0].ID)
+	if err != nil {
+		t.Fatalf("question for audio: %v", err)
+	}
+	if question.ID != mains[0].ID {
+		t.Fatalf("question id = %d, want %d", question.ID, mains[0].ID)
+	}
+}
+
+// TestQuestionForAudioRejectsCrossTenant 跨租户取题按「不存在」处理（404 语义，不泄露存在性）。
+func TestQuestionForAudioRejectsCrossTenant(t *testing.T) {
+	repo, svc := newAudioServiceFixture(t)
+	ctx := context.Background()
+	cfg := serviceTestConfig()
+
+	iv, err := svc.CreateInterview(ctx, 1, 1, 1, "简历正文", nil, &cfg)
+	if err != nil {
+		t.Fatalf("create interview: %v", err)
+	}
+	mains, err := repo.MainQuestions(ctx, iv.ID)
+	if err != nil || len(mains) == 0 {
+		t.Fatalf("main questions: %v", err)
+	}
+	if _, err := svc.QuestionForAudio(ctx, 2, iv.ID, mains[0].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross tenant err = %v, want ErrNotFound", err)
+	}
+	if _, err := svc.QuestionForAudio(ctx, 1, iv.ID, mains[0].ID+9999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown question err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestHasActiveInterview 供 HTTP 层做创建预检。
+func TestHasActiveInterview(t *testing.T) {
+	_, svc := newAudioServiceFixture(t)
+	ctx := context.Background()
+	cfg := serviceTestConfig()
+
+	hasActive, err := svc.HasActiveInterview(ctx, 1)
+	if err != nil {
+		t.Fatalf("has active interview: %v", err)
+	}
+	if hasActive {
+		t.Fatal("hasActive = true, want false before create")
+	}
+	if _, err := svc.CreateInterview(ctx, 1, 1, 1, "简历正文", nil, &cfg); err != nil {
+		t.Fatalf("create interview: %v", err)
+	}
+	hasActive, err = svc.HasActiveInterview(ctx, 1)
+	if err != nil {
+		t.Fatalf("has active interview: %v", err)
+	}
+	if !hasActive {
+		t.Fatal("hasActive = false, want true after create")
 	}
 }

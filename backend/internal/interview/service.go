@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Service 编排 AI 模拟面试的用例层：承上（repo 持久化 / graph 面试图 / gen 生题 /
@@ -22,11 +24,31 @@ type Service struct {
 	store *RedisStore
 	gen   *QuestionGenerator
 	graph *Graph
+	// audio 是可选的语音能力；nil 表示语音缺席（纯文字模式），面试照常工作。
+	audio AudioHooks
+}
+
+// ServiceOption 是 Service 的可选配置。
+type ServiceOption func(*Service)
+
+// WithAudioHooks 注入语音能力。
+// 不注入时语音链路整体缺席，面试照常工作（纯文字模式）。
+// 传入 nil 是安全的：等价于不启用语音。
+func WithAudioHooks(hooks AudioHooks) ServiceOption {
+	return func(s *Service) {
+		s.audio = hooks
+	}
 }
 
 // NewService 创建 Service。
-func NewService(repo *Repository, store *RedisStore, gen *QuestionGenerator, graph *Graph) *Service {
-	return &Service{repo: repo, store: store, gen: gen, graph: graph}
+func NewService(repo *Repository, store *RedisStore, gen *QuestionGenerator, graph *Graph, options ...ServiceOption) *Service {
+	service := &Service{repo: repo, store: store, gen: gen, graph: graph}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service
 }
 
 var (
@@ -55,7 +77,7 @@ const answerLockTTLSeconds = 60
 // 的题目才贴合目标岗位（spec「生题」：生题输入 = JD + 简历 + 配置）。
 //
 // cfg 为 nil 时用 DefaultInterviewConfig.Resolved()；非 nil 时用 cfg.Resolved()
-//（FollowUpBudget<0 同样解析为 N/2）。同租户已有 active 面试返回 ErrActiveInterviewExists。
+// （FollowUpBudget<0 同样解析为 N/2）。同租户已有 active 面试返回 ErrActiveInterviewExists。
 //
 // 成功后图已挂起在第一题上；第一题通过 FirstQuestion 获取（保持契约 §1 的
 // (*Interview, error) 签名，见 FirstQuestion 注释）。
@@ -106,6 +128,19 @@ func (s *Service) CreateInterview(ctx context.Context, tenantID, targetJobID, re
 			return nil, fmt.Errorf("interview: start graph: %v (abort cleanup failed: %v)", err, abortErr)
 		}
 		return nil, fmt.Errorf("interview: start graph: %w", err)
+	}
+
+	// 题目语音在后台生成：面试主链路不等语音（语音不可用也不影响创建）。
+	// 读取主问题失败只记日志：此时面试已创建成功，不能因为语音链路把创建结果变成失败
+	// （设计文档「降级（关键）」：CreateInterview 仍返回 201）。
+	if s.audio != nil {
+		mains, err := s.repo.MainQuestions(ctx, iv.ID)
+		if err != nil {
+			logrus.WithError(err).WithField("interview_id", iv.ID).Warn("interview: load main questions for audio")
+		}
+		for _, q := range mains {
+			s.audio.Enqueue(ctx, tenantID, iv.ID, q.ID, q.Question)
+		}
 	}
 	return iv, nil
 }
@@ -164,6 +199,16 @@ func (s *Service) Answer(ctx context.Context, tenantID, interviewID int64, paylo
 		}
 		return graphResult{}, err
 	}
+
+	// 下一题的语音在后台生成；面试结束时清理本场音频。
+	// 语音链路的问题不影响答题结果（设计文档「清理失败不影响答题返回值」）。
+	if s.audio != nil {
+		if res.Finished {
+			s.audio.CleanupInterview(ctx, tenantID, interviewID)
+		} else if res.NextQuestion != nil {
+			s.audio.Enqueue(ctx, tenantID, interviewID, res.NextQuestion.ID, res.NextQuestion.Question)
+		}
+	}
 	return res, nil
 }
 
@@ -178,6 +223,10 @@ func (s *Service) Abort(ctx context.Context, tenantID, interviewID int64) error 
 	}
 	if err := s.store.Delete(ctx, strconv.FormatInt(interviewID, 10)); err != nil {
 		return fmt.Errorf("interview: delete checkpoint %d: %w", interviewID, err)
+	}
+	// 面试终态清理本场音频：清理失败只影响语音，不影响面试终态。
+	if s.audio != nil {
+		s.audio.CleanupInterview(ctx, tenantID, interviewID)
 	}
 	return nil
 }
@@ -212,6 +261,29 @@ func (s *Service) Questions(ctx context.Context, tenantID, id int64) ([]Question
 		out = append(out, chain...)
 	}
 	return out, nil
+}
+
+// HasActiveInterview 报告该租户是否已有进行中的面试（创建入口预检）。
+func (s *Service) HasActiveInterview(ctx context.Context, tenantID int64) (bool, error) {
+	return s.repo.HasActiveInterview(ctx, tenantID)
+}
+
+// QuestionForAudio 校验面试与题目的归属并返回题目行（含 AudioState）。
+//
+// 题目不属于该面试、或面试不属于该租户时，一律返回 ErrNotFound：
+// 不区分「不存在」与「不属于你」，避免泄露资源是否存在。
+func (s *Service) QuestionForAudio(ctx context.Context, tenantID, interviewID, questionID int64) (*Question, error) {
+	if _, err := s.repo.GetInterview(ctx, tenantID, interviewID); err != nil {
+		return nil, err
+	}
+	row, err := s.repo.QuestionByID(ctx, questionID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	if row.InterviewID != interviewID {
+		return nil, ErrNotFound
+	}
+	return &row, nil
 }
 
 // getActiveInterview 校验面试存在、属于该租户且 status=active，三者缺一即拒绝：
