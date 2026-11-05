@@ -8,6 +8,7 @@ import {
   type InterviewLabel,
   type InterviewQuestion,
 } from '../api/interviews';
+import { ApiError } from '../api/client';
 import { fetchQuestionAudio } from '../api/voice';
 import type { AudioState } from '../api/voice';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
@@ -309,8 +310,12 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
       }
       setAnswer('');
       await load();
-    } catch {
-      if (mounted.current) setSubmitError('评分失败，请重试。');
+    } catch (error) {
+      if (mounted.current) {
+        // 服务端错误带上后端给的请求编号：用户报障时报编号就能定位到后端日志。
+        const requestId = error instanceof ApiError ? error.requestId : undefined;
+        setSubmitError(requestId ? `评分失败，请重试。（错误编号 ${requestId}）` : '评分失败，请重试。');
+      }
     } finally {
       if (mounted.current) setSubmitting(false);
     }

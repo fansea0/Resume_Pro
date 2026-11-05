@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiError } from '../api/client';
 import type { Interview, InterviewQuestion } from '../api/interviews';
 import { InterviewChat } from './InterviewChat';
 
@@ -261,6 +262,18 @@ describe('InterviewChat', () => {
     fireEvent.click(screen.getByRole('button', { name: '评分中…' }));
     expect(answerInterview).toHaveBeenCalledTimes(1);
     release({ grade: 'B', followUp: '' });
+  });
+
+  it('shows the backend request id when evaluation fails', async () => {
+    // 5xx 时后端会带 request_id：用户报障时报这个编号就能定位到后端日志。
+    getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1, userAnswer: null, grade: null })]);
+    answerInterview.mockRejectedValueOnce(new ApiError('interview operation failed', 500, 'abc123def456'));
+
+    render(<InterviewChat interview={interview} onFinished={vi.fn()} onExit={vi.fn()} />);
+    fireEvent.change(await screen.findByLabelText('回答输入'), { target: { value: '回答' } });
+    fireEvent.click(screen.getByRole('button', { name: '提交回答' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('abc123def456');
   });
 
   it('surfaces an evaluation failure and allows retrying', async () => {
