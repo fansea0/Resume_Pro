@@ -424,6 +424,34 @@ describe('InterviewChat', () => {
     expect(await screen.findByText('点击喇叭播放本题')).toBeInTheDocument();
   });
 
+  it('dismisses the transcription failure notice automatically', async () => {
+    vi.useFakeTimers();
+    try {
+      getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1, audioState: 'ready' })]);
+      render(
+        <InterviewChat
+          interview={{ ...interview, voice: { enabled: true } }}
+          onFinished={vi.fn()}
+          onExit={vi.fn()}
+        />,
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      act(() => recorderOptions.current?.onError('识别失败，可继续打字'));
+      expect(screen.getByText('识别失败，可继续打字')).toBeInTheDocument();
+
+      // 提示只是辅助信息，几秒后必须自己消失，不能一直挂在页面上。
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4500);
+      });
+      expect(screen.queryByText('识别失败，可继续打字')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('limits polling when the question carries no audio state', async () => {
     vi.useFakeTimers();
     try {

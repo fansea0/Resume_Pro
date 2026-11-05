@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 
 import {
   answerInterview,
@@ -25,38 +25,36 @@ const AUDIO_POLL_MAX_ATTEMPTS = 40;
 /** 题目没带 audioState（后端没返回状态）时的轮询上限：最多 3 次，避免无谓请求。 */
 const AUDIO_POLL_MAX_ATTEMPTS_UNKNOWN = 3;
 
-/*
- * 语音控件的样式：styles/global.css 属于其他会话的改动范围，这里用行内样式保证观感一致。
- * TODO(样式迁移)：等 styles/global.css 的归属清晰后，删掉下面三个行内样式对象，
- * 只保留 JSX 里已占位的 class（interview-msg__speak / interview-msg__audiopending /
- * interview-chat__voiceerror），样式改回 CSS 文件维护。
- */
-const VOICE_SPEAK_STYLE: CSSProperties = {
-  background: 'transparent',
-  border: '1px solid #cbd5e1',
-  borderRadius: '999px',
-  cursor: 'pointer',
-  fontSize: '.8rem',
-  lineHeight: 1,
-  marginLeft: '.4rem',
-  padding: '.2rem .45rem',
-  verticalAlign: 'middle',
-};
-const VOICE_PENDING_STYLE: CSSProperties = {
-  color: '#536176',
-  fontSize: '.72rem',
-  fontWeight: 400,
-  marginLeft: '.4rem',
-};
-const VOICE_ERROR_STYLE: CSSProperties = {
-  background: '#fff8e6',
-  border: '1px solid #f2d391',
-  borderRadius: '9px',
-  color: '#8a5a00',
-  fontSize: '.82rem',
-  margin: 0,
-  padding: '.6rem .8rem',
-};
+/** 语音提示自动消失时长：报错不再一直挂在页面上。 */
+const VOICE_NOTICE_TTL_MS = 4000;
+
+/** 录音计时显示成 0:07，避免按钮宽度随秒数变化来回跳。 */
+function formatDuration(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+/** 与页面其它按钮一致的线性图标，替代 emoji 喇叭。 */
+function SpeakerIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="M11 5 6.5 9H3.5v6h3L11 19z" />
+      <path d="M15.2 9.2a4 4 0 0 1 0 5.6" />
+      <path d="M18 6.6a8 8 0 0 1 0 10.8" />
+    </svg>
+  );
+}
+
+/** 与页面其它按钮一致的线性图标，替代 emoji 麦克风。 */
+function MicIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <rect height="11" rx="3.2" width="6" x="9" y="3" />
+      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6" />
+    </svg>
+  );
+}
 
 /** 播放一段音频。自动播放被浏览器拦截时交给调用方决定提示，静默兜住。 */
 function playAudioBlob(blob: Blob, onBlocked: () => void) {
@@ -206,6 +204,12 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
   const currentQuestionId = current?.id ?? null;
   const currentAudioState = current?.audioState ?? null;
   const [voiceError, setVoiceError] = useState('');
+  // 语音提示只是辅助信息：几秒后自动消失，不长期占用页面。
+  useEffect(() => {
+    if (!voiceError) return;
+    const timer = window.setTimeout(() => setVoiceError(''), VOICE_NOTICE_TTL_MS);
+    return () => window.clearTimeout(timer);
+  }, [voiceError]);
   // 自动播放被浏览器拦截时的提示：用稳定的回调，避免每次渲染都重置自动播放 effect。
   const onAutoPlayBlocked = useCallback(() => setVoiceError('点击喇叭播放本题'), []);
   const { status: audioStatus } = useQuestionAudio(
@@ -258,11 +262,10 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
         aria-label={`朗读题目 ${question.id}`}
         className="interview-msg__speak"
         onClick={() => void speakQuestion(question.id)}
-        style={VOICE_SPEAK_STYLE}
         title="朗读题目"
         type="button"
       >
-        🔊
+        <SpeakerIcon />
       </button>
     ) : null
   );
@@ -271,7 +274,7 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
   const renderAudioHint = (question: InterviewQuestion) => (
     voiceEnabled && current?.id === question.id
       && (question.audioState === 'pending' || audioStatus === 'pending') ? (
-        <span className="interview-msg__audiopending" style={VOICE_PENDING_STYLE}>语音生成中…</span>
+        <span className="interview-msg__audiopending">语音生成中…</span>
       ) : null
   );
 
@@ -418,13 +421,16 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
       )}
 
       {submitError && <p className="interview-chat__error" role="alert">{submitError}</p>}
-      {voiceError && <p className="interview-chat__voiceerror" role="status" style={VOICE_ERROR_STYLE}>{voiceError}</p>}
+      {voiceError && <p className="interview-chat__voiceerror" role="status">{voiceError}</p>}
 
       {current ? (
         <div aria-busy={submitting} className="interview-dock">
           <textarea
             aria-label="回答输入"
-            onChange={(event) => setAnswer(event.target.value)}
+            onChange={(event) => {
+              setVoiceError('');
+              setAnswer(event.target.value);
+            }}
             onKeyDown={handleKeyDown}
             placeholder="输入你的回答…"
             readOnly={submitting}
@@ -438,29 +444,41 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
                   <span aria-hidden="true" className="interview-typing__dots"><i /><i /><i /></span>
                   面试官正在评分，约需 3~8 秒…
                 </>
-              ) : '⌘ / Ctrl + Enter 提交；不会答可跳过'}
+              ) : recorder.state === 'recording' ? '录音中 · 点击停止后自动转写' : '⌘ / Ctrl + Enter 提交；不会答可跳过'}
             </span>
             {answer.length ? <span className="interview-dock__count">{answer.length} 字</span> : null}
             <div className="interview-dock__actions">
               {voiceEnabled ? (
-                // TODO(样式迁移)：录音态的红色高亮等样式待 styles/global.css 归属清晰后补。
                 <button
-                  aria-label="录音回答"
+                  aria-label={recorder.state === 'recording' ? '停止录音' : '录音回答'}
                   className={`interview-dock__mic interview-dock__mic--${recorder.state}`}
                   disabled={recorder.state === 'starting' || recorder.state === 'transcribing' || !current}
                   onClick={() => {
+                    setVoiceError('');
                     if (recorder.state === 'recording') recorder.stop();
                     else void recorder.start();
                   }}
+                  title={recorder.state === 'recording' ? '停止录音并识别' : '录音回答'}
                   type="button"
                 >
-                  {recorder.state === 'starting'
-                    ? '准备中…'
-                    : recorder.state === 'recording'
-                      ? `停止 ${recorder.seconds}s`
-                      : recorder.state === 'transcribing'
-                        ? '识别中…'
-                        : '🎤'}
+                  {recorder.state === 'recording' ? (
+                    <>
+                      <span aria-hidden="true" className="interview-dock__mic-wave">
+                        <i /><i /><i /><i />
+                      </span>
+                      <span className="interview-dock__mic-time">{formatDuration(recorder.seconds)}</span>
+                      <span aria-hidden="true" className="interview-dock__mic-stop" />
+                    </>
+                  ) : recorder.state === 'starting' || recorder.state === 'transcribing' ? (
+                    <>
+                      <span className="interview-dock__mic-label">
+                        {recorder.state === 'starting' ? '准备中' : '识别中'}
+                      </span>
+                      <span aria-hidden="true" className="interview-typing__dots"><i /><i /><i /></span>
+                    </>
+                  ) : (
+                    <MicIcon />
+                  )}
                 </button>
               ) : null}
               <button className="interview-dock__skip" disabled={submitting} onClick={() => void submit(true)} type="button">跳过 · 不会</button>

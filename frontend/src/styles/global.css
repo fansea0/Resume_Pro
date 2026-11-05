@@ -715,6 +715,8 @@ body { margin: 0; }
 .interview-live-bar > button:hover { background: #ffece8; }
 .interview-chat__status { color: var(--int-muted); font-size: .86rem; margin: 0; }
 .interview-chat__error { background: #fff5f3; border: 1px solid #f3c8c2; border-radius: 9px; color: #b42318; font-size: .82rem; margin: 0; padding: .6rem .8rem; }
+/* 语音提示是辅助信息，前端会在几秒后自动清掉，样式沿用中性提示色。 */
+.interview-chat__voiceerror { background: #fff8e6; border: 1px solid #f2d391; border-radius: 9px; color: #8a5a00; font-size: .82rem; margin: 0; padding: .6rem .8rem; }
 .interview-chat__stream { align-content: start; display: grid; gap: .75rem; }
 
 .interview-msg { background: #fff; border: 1px solid var(--int-line); border-radius: 12px; box-shadow: 0 8px 20px rgba(28, 51, 84, .05); color: var(--int-ink); display: grid; gap: .55rem; padding: .85rem 1rem; }
@@ -758,6 +760,35 @@ body { margin: 0; }
 .interview-dock__count { color: var(--int-muted); font-size: .72rem; font-variant-numeric: tabular-nums; }
 .interview-dock__actions { display: flex; gap: .45rem; margin-left: auto; }
 .interview-dock__actions .interview-dock__skip:hover:not(:disabled) { border-color: #b42318; color: #b42318; }
+/* 语音控件统一换成线性 SVG 图标，不再使用 emoji。喇叭是轻量圆钮，不抢题面注意力。 */
+.interview-msg__speak { align-items: center; background: #f2f5f9; border: 0; border-radius: 50%; color: #536176; cursor: pointer; display: inline-flex; height: 1.6rem; justify-content: center; margin-left: .4rem; padding: 0; transition: background-color .16s ease, color .16s ease; vertical-align: middle; width: 1.6rem; }
+.interview-msg__speak:hover { background: #e8f3ff; color: var(--int-accent); }
+.interview-msg__speak svg { fill: none; height: .92rem; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.9; width: .92rem; }
+.interview-msg__audiopending { color: #7c8aa0; font-size: .72rem; font-weight: 400; margin-left: .4rem; }
+/* 麦克风：空闲为描边圆钮；录音中变成红色胶囊（声波条 + 计时 + 停止块）并带呼吸光圈。 */
+.interview-dock__actions .interview-dock__mic { align-items: center; background: #f2f5f9; border: 0; border-radius: 999px; color: #536176; display: inline-flex; font-size: .8rem; gap: .4rem; height: 2.35rem; justify-content: center; min-width: 2.35rem; padding: 0 .55rem; }
+.interview-dock__actions .interview-dock__mic:hover:not(:disabled):not(.interview-dock__mic--recording) { background: #e8f3ff; color: var(--int-accent); }
+.interview-dock__actions .interview-dock__mic:disabled { cursor: progress; opacity: 1; }
+.interview-dock__mic svg { fill: none; height: 1.05rem; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.9; width: 1.05rem; }
+.interview-dock__mic--starting, .interview-dock__mic--transcribing { background: #eef2f8; color: #667085; }
+.interview-dock__mic-label { font-size: .78rem; }
+.interview-dock__mic--transcribing .interview-typing__dots i { background: #8ba3c4; }
+.interview-dock__actions .interview-dock__mic--recording { animation: interview-mic-pulse 1.9s ease-out infinite; background: #fff1ef; border: 1px solid #ffd0c8; color: #f2403b; }
+.interview-dock__mic-wave { align-items: center; display: inline-flex; gap: 2px; height: .9rem; }
+.interview-dock__mic-wave i { animation: interview-mic-wave .9s ease-in-out infinite; background: currentColor; border-radius: 999px; height: 100%; width: 2px; }
+.interview-dock__mic-wave i:nth-child(2) { animation-delay: .12s; }
+.interview-dock__mic-wave i:nth-child(3) { animation-delay: .24s; }
+.interview-dock__mic-wave i:nth-child(4) { animation-delay: .36s; }
+.interview-dock__mic-time { font-size: .78rem; font-variant-numeric: tabular-nums; font-weight: 650; letter-spacing: .01em; min-width: 2.15rem; text-align: right; }
+.interview-dock__mic-stop { background: currentColor; border-radius: 2px; height: .6rem; width: .6rem; }
+@keyframes interview-mic-wave {
+  0%, 100% { transform: scaleY(.28); }
+  50% { transform: scaleY(1); }
+}
+@keyframes interview-mic-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(242, 64, 59, .26); }
+  70%, 100% { box-shadow: 0 0 0 .42rem rgba(242, 64, 59, 0); }
+}
 /* 评分等待：三点打字动效放在输入坞提示里，始终停在视线内，不随长对话被顶出屏幕。 */
 .interview-typing__dots { align-items: flex-end; display: inline-flex; flex: 0 0 auto; gap: .22rem; height: .75rem; }
 .interview-typing__dots i { animation: interview-typing 1.05s ease-in-out infinite; background: #9db6dd; border-radius: 50%; height: .34rem; width: .34rem; }
@@ -861,10 +892,13 @@ body { margin: 0; }
   .interview-review__body { padding-left: 0; }
   .interview-dock__actions { justify-content: stretch; width: 100%; }
   .interview-dock__actions button { flex: 1 1 auto; }
+  .interview-dock__actions .interview-dock__mic { flex: 0 0 auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   .interview-stat--live span, .interview-msg__wait span { animation: none; }
   .interview-msg--current, .interview-typing__dots i, .interview-generating__rail i { animation: none; }
+  .interview-dock__mic--recording, .interview-dock__mic-wave i { animation: none; }
+  .interview-dock__mic-wave i { transform: scaleY(.6); }
   .interview-dock, .interview-progress__seg { transition: none; }
   .interview-typing__dots i { opacity: .8; }
   .interview-generating__rail i { background: #c3d8f8; }
