@@ -1,4 +1,5 @@
 import { apiFetch } from './client';
+import type { AudioState } from './voice';
 
 export type InterviewGrade = 'C' | 'B-' | 'B' | 'B+' | 'A' | 'S';
 export type InterviewStatus = 'active' | 'completed' | 'aborted';
@@ -19,6 +20,8 @@ export interface Interview {
   resumeId: number;
   configSnapshot: InterviewConfig;
   status: InterviewStatus;
+  /** 语音能力开关；缺省表示后端未启用语音。 */
+  voice?: { enabled: boolean };
   overallGrade?: InterviewGrade | null;
   overallReview?: string | null;
   createdAt: string;
@@ -42,6 +45,8 @@ export interface InterviewQuestion {
   userAnswer?: string | null;
   extra?: InterviewQuestionExtra | null;
   grade?: InterviewGrade | null;
+  /** 题目语音状态；缺省表示后端未启用语音。 */
+  audioState?: AudioState | null;
   createdAt: string;
 }
 

@@ -1,15 +1,14 @@
-import { ApiError } from './client';
-
 /** 题目语音状态：pending=生成中，ready=已就绪，failed=生成失败。 */
 export type AudioState = 'pending' | 'ready' | 'failed';
 
 /**
- * 语音接口错误。与仓库既有的 ApiError 同形（带 status），
- * 这样「409 还没生成好 / 503 语音没启用」可以按状态码统一判断。
+ * 语音接口错误。带状态码：409=还没生成好，503=语音没启用。
+ * 这里不继承 api/client 的 ApiError：那份模块在部分测试里是整体 mock 的，
+ * 独立定义可以避免语音接口被无关的 mock 牵连。
  */
-export class VoiceApiError extends ApiError {
-  constructor(message: string, status: number) {
-    super(message, status);
+export class VoiceApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
     this.name = 'VoiceApiError';
   }
 }

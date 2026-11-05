@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 
 import {
   answerInterview,
@@ -8,6 +8,9 @@ import {
   type InterviewLabel,
   type InterviewQuestion,
 } from '../api/interviews';
+import { fetchQuestionAudio } from '../api/voice';
+import type { AudioState } from '../api/voice';
+import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 
 const LABEL_NAMES: Record<InterviewLabel, string> = { '0': '八股', '1': '算法', '2': '项目' };
 // 与 .interview-dock textarea 的 max-height 保持一致（12rem @16px）。
@@ -15,6 +18,99 @@ const DOCK_MAX_HEIGHT_PX = 192;
 const GRADE_CLASS: Record<InterviewGrade, string> = {
   C: 'c', 'B-': 'bm', B: 'b', 'B+': 'bp', A: 'a', S: 's',
 };
+
+/** 当前题的语音自动播放：就绪即播，未就绪则轮询等待。 */
+const AUDIO_POLL_INTERVAL_MS = 1500;
+const AUDIO_POLL_MAX_ATTEMPTS = 40;
+
+/* 语音控件的样式：styles/global.css 属于其他会话的改动范围，这里用行内样式保证观感一致。 */
+const VOICE_SPEAK_STYLE: CSSProperties = {
+  background: 'transparent',
+  border: '1px solid #cbd5e1',
+  borderRadius: '999px',
+  cursor: 'pointer',
+  fontSize: '.8rem',
+  lineHeight: 1,
+  marginLeft: '.4rem',
+  padding: '.2rem .45rem',
+  verticalAlign: 'middle',
+};
+const VOICE_PENDING_STYLE: CSSProperties = {
+  color: '#536176',
+  fontSize: '.72rem',
+  fontWeight: 400,
+  marginLeft: '.4rem',
+};
+const VOICE_ERROR_STYLE: CSSProperties = {
+  background: '#fff8e6',
+  border: '1px solid #f2d391',
+  borderRadius: '9px',
+  color: '#8a5a00',
+  fontSize: '.82rem',
+  margin: 0,
+  padding: '.6rem .8rem',
+};
+
+/** 播放一段音频。自动播放被浏览器拦截时交给调用方决定提示，静默兜住。 */
+function playAudioBlob(blob: Blob, onBlocked: () => void) {
+  const url = URL.createObjectURL(blob);
+  const audio = new Audio(url);
+  // 播完再释放：过早 revoke 会把正在播放的音频掐断。
+  const release = () => URL.revokeObjectURL(url);
+  audio.addEventListener('ended', release);
+  audio.addEventListener('error', release);
+  void audio.play().catch(() => {
+    release();
+    onBlocked();
+  });
+};
+
+/** 当前题的语音自动播放：就绪即播，未就绪则轮询等待。 */
+function useQuestionAudio(
+  interviewId: number,
+  questionId: number | null,
+  enabled: boolean,
+  audioState: AudioState | null | undefined,
+) {
+  const [status, setStatus] = useState<'idle' | 'pending' | 'failed'>('idle');
+
+  useEffect(() => {
+    if (!enabled || questionId === null) return;
+    // 明确生成失败就不再请求：语音是附加层，不做无谓轮询。
+    if (audioState === 'failed') return;
+    let cancelled = false;
+    let timer: number | undefined;
+    let attempts = 0;
+
+    const play = async () => {
+      try {
+        const blob = await fetchQuestionAudio(interviewId, questionId);
+        if (cancelled) return;
+        playAudioBlob(blob, () => {
+          // 浏览器拦截自动播放：静默兜住，用户可以点喇叭重听。
+        });
+        setStatus('idle');
+      } catch (error) {
+        const code = (error as { status?: number }).status;
+        if (code === 409 && attempts < AUDIO_POLL_MAX_ATTEMPTS) {
+          attempts += 1;
+          setStatus('pending');
+          timer = window.setTimeout(() => void play(), AUDIO_POLL_INTERVAL_MS);
+          return;
+        }
+        setStatus(code === 503 ? 'failed' : 'idle');
+      }
+    };
+
+    void play();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [interviewId, questionId, enabled, audioState]);
+
+  return { status };
+}
 
 export interface InterviewChatFinishedResult {
   overallGrade: InterviewGrade;
@@ -89,6 +185,46 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
   const currentNumber = currentMainId == null
     ? Math.min(answeredMains + 1, totalMains)
     : visibleThrough + 1;
+  const voiceEnabled = interview.voice?.enabled ?? false;
+  const currentQuestionId = current?.id ?? null;
+  const currentAudioState = current?.audioState ?? null;
+  const { status: audioStatus } = useQuestionAudio(interview.id, currentQuestionId, voiceEnabled, currentAudioState);
+  const [voiceError, setVoiceError] = useState('');
+
+  // 识别文本插入到当前光标位置（不是追加到末尾）。
+  const insertAtCursor = useCallback((text: string) => {
+    const area = textareaRef.current;
+    if (!area) {
+      setAnswer((previous) => previous + text);
+      return;
+    }
+    const start = area.selectionStart ?? area.value.length;
+    const end = area.selectionEnd ?? start;
+    const next = area.value.slice(0, start) + text + area.value.slice(end);
+    setAnswer(next);
+    window.requestAnimationFrame(() => {
+      area.focus();
+      const caret = start + text.length;
+      area.setSelectionRange(caret, caret);
+    });
+  }, []);
+
+  const recorder = useVoiceRecorder({
+    interviewId: interview.id,
+    questionId: currentQuestionId ?? 0,
+    onText: insertAtCursor,
+    onError: setVoiceError,
+  });
+
+  const speakQuestion = useCallback(async (questionId: number) => {
+    setVoiceError('');
+    try {
+      const blob = await fetchQuestionAudio(interview.id, questionId);
+      playAudioBlob(blob, () => setVoiceError('浏览器拦截了播放，请再点一次喇叭。'));
+    } catch {
+      setVoiceError('语音暂不可用，可继续打字');
+    }
+  }, [interview.id]);
 
   useEffect(() => {
     if (!current) return;
@@ -164,7 +300,24 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
             <span className={`interview-grade interview-grade--${GRADE_CLASS[question.grade]}`}>{question.grade}</span>
           ) : null}
         </header>
-        <p className="interview-msg__question">{question.question}</p>
+        <p className="interview-msg__question">
+          {question.question}
+          {voiceEnabled && question.audioState === 'ready' ? (
+            <button
+              aria-label={`朗读题目 ${question.id}`}
+              className="interview-msg__speak"
+              onClick={() => void speakQuestion(question.id)}
+              style={VOICE_SPEAK_STYLE}
+              title="朗读题目"
+              type="button"
+            >
+              🔊
+            </button>
+          ) : null}
+          {voiceEnabled && isCurrent && (question.audioState === 'pending' || audioStatus === 'pending') ? (
+            <span className="interview-msg__audiopending" style={VOICE_PENDING_STYLE}>语音生成中…</span>
+          ) : null}
+        </p>
         {renderQuestionBody(question)}
         {followUps.map((followUp) => {
           const isCurrentFollowUp = current?.id === followUp.id;
@@ -225,6 +378,7 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
       )}
 
       {submitError && <p className="interview-chat__error" role="alert">{submitError}</p>}
+      {voiceError && <p className="interview-chat__voiceerror" role="status" style={VOICE_ERROR_STYLE}>{voiceError}</p>}
 
       {current ? (
         <div aria-busy={submitting} className="interview-dock">
@@ -248,6 +402,24 @@ export function InterviewChat({ interview, onExit, onFinished }: InterviewChatPr
             </span>
             {answer.length ? <span className="interview-dock__count">{answer.length} 字</span> : null}
             <div className="interview-dock__actions">
+              {voiceEnabled ? (
+                <button
+                  aria-label="录音回答"
+                  className={`interview-dock__mic interview-dock__mic--${recorder.state}`}
+                  disabled={recorder.state === 'transcribing' || !current}
+                  onClick={() => {
+                    if (recorder.state === 'recording') recorder.stop();
+                    else void recorder.start();
+                  }}
+                  type="button"
+                >
+                  {recorder.state === 'recording'
+                    ? `停止 ${recorder.seconds}s`
+                    : recorder.state === 'transcribing'
+                      ? '识别中…'
+                      : '🎤'}
+                </button>
+              ) : null}
               <button className="interview-dock__skip" disabled={submitting} onClick={() => void submit(true)} type="button">跳过 · 不会</button>
               <button disabled={submitting || !answer.trim()} onClick={() => void submit()} type="button">
                 {submitting ? '评分中…' : '提交回答'}

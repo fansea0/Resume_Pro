@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Interview, InterviewQuestion } from '../api/interviews';
@@ -10,6 +10,26 @@ const answerInterview = vi.fn();
 vi.mock('../api/interviews', () => ({
   getInterviewQuestions: (...args: unknown[]) => getInterviewQuestions(...args),
   answerInterview: (...args: unknown[]) => answerInterview(...args),
+}));
+
+const fetchQuestionAudio = vi.fn();
+const transcribeRecording = vi.fn();
+
+vi.mock('../api/voice', () => ({
+  fetchQuestionAudio: (...args: unknown[]) => fetchQuestionAudio(...args),
+  transcribeRecording: (...args: unknown[]) => transcribeRecording(...args),
+}));
+
+// 录音 hook 自己在 useVoiceRecorder.test.ts 里测；这里只关心它回调回来的识别文本。
+const recorderOptions = vi.hoisted(() => ({
+  current: null as { onText: (text: string) => void; onError: (message: string) => void } | null,
+}));
+
+vi.mock('../hooks/useVoiceRecorder', () => ({
+  useVoiceRecorder: (options: { onText: (text: string) => void; onError: (message: string) => void }) => {
+    recorderOptions.current = options;
+    return { state: 'idle', seconds: 0, start: vi.fn(), stop: vi.fn() };
+  },
 }));
 
 const interview: Interview = {
@@ -207,5 +227,68 @@ describe('InterviewChat', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('评分失败，请重试');
     expect(screen.getByRole('button', { name: '提交回答' })).toBeEnabled();
     expect(screen.getByLabelText('回答输入')).not.toHaveAttribute('readonly');
+  });
+
+  it('hides voice controls when voice is disabled', async () => {
+    getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1 })]);
+    render(
+      <InterviewChat
+        interview={{ ...interview, voice: { enabled: false } }}
+        onFinished={vi.fn()}
+        onExit={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText('Go 的 channel 底层数据结构是怎样的？')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /朗读题目/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /录音回答/ })).not.toBeInTheDocument();
+  });
+
+  it('shows a play button when the question audio is ready', async () => {
+    getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1, audioState: 'ready' })]);
+    render(
+      <InterviewChat
+        interview={{ ...interview, voice: { enabled: true } }}
+        onFinished={vi.fn()}
+        onExit={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole('button', { name: /朗读题目/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /录音回答/ })).toBeInTheDocument();
+  });
+
+  it('shows a generating hint while the audio is pending', async () => {
+    getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1, audioState: 'pending' })]);
+    render(
+      <InterviewChat
+        interview={{ ...interview, voice: { enabled: true } }}
+        onFinished={vi.fn()}
+        onExit={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText('语音生成中…')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /朗读题目/ })).not.toBeInTheDocument();
+  });
+
+  it('inserts the recognised text at the cursor position', async () => {
+    getInterviewQuestions.mockResolvedValue([makeQuestion({ id: 1, audioState: 'ready' })]);
+    render(
+      <InterviewChat
+        interview={{ ...interview, voice: { enabled: true } }}
+        onFinished={vi.fn()}
+        onExit={vi.fn()}
+      />,
+    );
+
+    const area = await screen.findByLabelText('回答输入') as HTMLTextAreaElement;
+    fireEvent.change(area, { target: { value: '前缀后缀' } });
+    area.setSelectionRange(2, 2);
+    act(() => {
+      recorderOptions.current?.onText('中间');
+    });
+
+    await waitFor(() => expect(screen.getByLabelText('回答输入')).toHaveValue('前缀中间后缀'));
   });
 });
