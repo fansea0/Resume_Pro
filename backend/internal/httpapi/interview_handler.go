@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"resumepro/backend/internal/interview"
+	"resumepro/backend/internal/logging"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/targetjob"
 )
@@ -283,6 +284,14 @@ func handleInterviewError(context *gin.Context, err error) bool {
 	case errors.Is(err, interview.ErrSessionExpired):
 		writeError(context, http.StatusGone, err.Error())
 	default:
+		// 未识别的错误必须落日志：响应体只有一句泛化文案，不记日志等于
+		// 线上出问题时无从查起（2026-11-05 排查追问提交 500 就是卡在这里）。
+		logging.WithError(err).WithFields(logging.Fields{
+			"interview_id": context.Param("id"),
+			"question_id":  context.Param("qid"),
+			"method":       context.Request.Method,
+			"path":         context.FullPath(),
+		}).Error("interview operation failed")
 		writeError(context, http.StatusInternalServerError, "interview operation failed")
 	}
 	return false

@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/schema"
-	"github.com/sirupsen/logrus"
+
+	"resumepro/backend/internal/logging"
 )
 
 // correctSystemPrompt 约束模型只做错别字校对。
@@ -55,7 +56,7 @@ func (c *Corrector) Correct(ctx context.Context, text string) string {
 		schema.UserAgenticMessage(trimmed),
 	})
 	if err != nil {
-		logrus.WithError(err).Warn("voice: text correction failed, use raw transcript")
+		logging.WithError(err).Warn("voice: text correction failed, use raw transcript")
 		return text
 	}
 	corrected := stripWrappers(strings.TrimSpace(agenticText(resp)))

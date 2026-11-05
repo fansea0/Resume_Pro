@@ -3,7 +3,7 @@ package ai
 import (
 	"context"
 
-	"github.com/sirupsen/logrus"
+	"resumepro/backend/internal/logging"
 )
 
 type CallInfo struct {
@@ -28,10 +28,10 @@ type Hooks struct {
 	OnCallFailed   func(context.Context, CallInfo, error)
 }
 
-func NewLogrusHooks(logger *logrus.Logger) *Hooks {
+func NewHooks(logger logging.Logger) *Hooks {
 	return &Hooks{
 		OnCallStarted: func(_ context.Context, info CallInfo) {
-			logger.WithFields(logrus.Fields{
+			logger.WithFields(logging.Fields{
 				"event":        "ai_call_started",
 				"tenant_id":    info.TenantID,
 				"operation":    info.Operation,
@@ -39,7 +39,7 @@ func NewLogrusHooks(logger *logrus.Logger) *Hooks {
 			}).Info("AI call started")
 		},
 		OnCallFinished: func(_ context.Context, info CallInfo, result CallResult) {
-			logger.WithFields(logrus.Fields{
+			logger.WithFields(logging.Fields{
 				"event":                "ai_call_finished",
 				"tenant_id":            info.TenantID,
 				"operation":            info.Operation,
@@ -54,7 +54,7 @@ func NewLogrusHooks(logger *logrus.Logger) *Hooks {
 			}).Info("AI call finished")
 		},
 		OnCallFailed: func(_ context.Context, info CallInfo, err error) {
-			logger.WithFields(logrus.Fields{
+			logger.WithFields(logging.Fields{
 				"event":        "ai_call_failed",
 				"tenant_id":    info.TenantID,
 				"operation":    info.Operation,

@@ -387,9 +387,21 @@ func writeJSON(context *gin.Context, status int, value any) {
 }
 
 func writeError(context *gin.Context, status int, message string, serverErrors ...error) {
-	payload := map[string]string{"error": message}
+	payload := map[string]any{"error": message}
 	if len(serverErrors) > 0 && serverErrors[0] != nil {
 		payload["server_err"] = serverErrors[0].Error()
+		// 5xx 的内部错误交给 requestLogger 中间件统一落日志：
+		// 散在各处 writeError 里打日志，漏一处就又变成「只有一句泛化文案」。
+		if status >= http.StatusInternalServerError {
+			context.Set(serverErrorContextKey, serverErrors[0])
+		}
+	}
+	// 服务端错误带上请求 ID：前端只拿到「interview operation failed」这种文案时，
+	// 用户报障时报这个 ID，就能直接定位到后端那一条日志。
+	if status >= http.StatusInternalServerError {
+		if requestID := requestIDFrom(context); requestID != "" {
+			payload["request_id"] = requestID
+		}
 	}
 	writeJSON(context, status, payload)
 }

@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/sirupsen/logrus"
+
 	"github.com/stretchr/testify/assert"
+	"resumepro/backend/internal/logging"
 
 	"resumepro/backend/internal/ai"
 )
@@ -17,7 +19,7 @@ func TestLogrusHooks_FiresAllCallbacks(t *testing.T) {
 	logger.SetOutput(&byteSliceWriter{p: &buf})
 	logger.SetFormatter(&logrus.JSONFormatter{})
 
-	hooks := ai.NewLogrusHooks(logger)
+	hooks := ai.NewHooks(logging.NewLogrus(logger))
 	info := ai.CallInfo{TenantID: 1, Operation: "section_rewrite", SectionType: "project"}
 	hooks.OnCallStarted(context.Background(), info)
 	hooks.OnCallFinished(context.Background(), info, ai.CallResult{

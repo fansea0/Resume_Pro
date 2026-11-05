@@ -89,7 +89,11 @@ func TestAIRoutesReturnServiceUnavailableWhenDisabled(t *testing.T) {
 
 			assert.Equal(t, http.StatusServiceUnavailable, response.Code)
 			assert.Equal(t, "application/json", response.Header().Get("Content-Type"))
-			assert.JSONEq(t, `{"error":"AI features disabled"}`, response.Body.String())
+			// 5xx 一律带 request_id：前端只显示泛化文案时靠它定位日志。
+			var body map[string]any
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+			assert.Equal(t, "AI features disabled", body["error"])
+			assert.NotEmpty(t, body["request_id"])
 		})
 	}
 }
@@ -310,7 +314,11 @@ func TestAIRewriteReturnsJSONWhenStreamCannotStart(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, response.Code)
 	assert.Equal(t, "application/json", response.Header().Get("Content-Type"))
-	assert.JSONEq(t, `{"error":"could not start AI rewrite"}`, response.Body.String())
+	// 5xx 响应体带 request_id：前端只显示泛化文案时，靠它定位后端日志。
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	assert.Equal(t, "could not start AI rewrite", body["error"])
+	assert.NotEmpty(t, body["request_id"])
 	assert.NotContains(t, response.Body.String(), "chat model")
 }
 

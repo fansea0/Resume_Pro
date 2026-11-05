@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/sirupsen/logrus"
+	"resumepro/backend/internal/logging"
 )
 
 // Service 编排 AI 模拟面试的用例层：承上（repo 持久化 / graph 面试图 / gen 生题 /
@@ -136,7 +136,7 @@ func (s *Service) CreateInterview(ctx context.Context, tenantID, targetJobID, re
 	if s.audio != nil {
 		mains, err := s.repo.MainQuestions(ctx, iv.ID)
 		if err != nil {
-			logrus.WithError(err).WithField("interview_id", iv.ID).Warn("interview: load main questions for audio")
+			logging.WithError(err).WithFields(logging.Fields{"interview_id": iv.ID}).Warn("interview: load main questions for audio")
 		}
 		for _, q := range mains {
 			s.audio.Enqueue(ctx, tenantID, iv.ID, q.ID, q.Question)

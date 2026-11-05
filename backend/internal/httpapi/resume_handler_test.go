@@ -164,8 +164,16 @@ func TestResumeCreateDoesNotPersistAvatarWhenRetentionFails(t *testing.T) {
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("create status = %d: %s", response.Code, response.Body.String())
 	}
-	if response.Body.String() != "{\"error\":\"could not retain avatar image\"}\n" {
-		t.Fatalf("create body = %q", response.Body.String())
+	// 5xx 响应体带 request_id：前端只显示泛化文案时靠它定位后端日志。
+	var createBody map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&createBody); err != nil {
+		t.Fatal(err)
+	}
+	if createBody["error"] != "could not retain avatar image" {
+		t.Fatalf("create body = %v", createBody)
+	}
+	if createBody["request_id"] == "" || createBody["request_id"] == nil {
+		t.Fatalf("create body missing request_id: %v", createBody)
 	}
 	response = requestJSON(t, router, http.MethodGet, "/api/resumes", "", session)
 	var items []resume.Resume
@@ -193,8 +201,16 @@ func TestResumeUpdatePreservesAvatarRetentionFailureResponse(t *testing.T) {
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("update status = %d: %s", response.Code, response.Body.String())
 	}
-	if response.Body.String() != "{\"error\":\"could not retain avatar image\"}\n" {
-		t.Fatalf("update body = %q", response.Body.String())
+	// 5xx 响应体带 request_id：前端只显示泛化文案时靠它定位后端日志。
+	var updateBody map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&updateBody); err != nil {
+		t.Fatal(err)
+	}
+	if updateBody["error"] != "could not retain avatar image" {
+		t.Fatalf("update body = %v", updateBody)
+	}
+	if updateBody["request_id"] == "" || updateBody["request_id"] == nil {
+		t.Fatalf("update body missing request_id: %v", updateBody)
 	}
 }
 

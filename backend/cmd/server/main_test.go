@@ -15,9 +15,11 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/jmoiron/sqlx"
 	"github.com/sirupsen/logrus"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
+	"resumepro/backend/internal/logging"
 
 	"resumepro/backend/internal/ai"
 	"resumepro/backend/internal/auth"
@@ -34,7 +36,7 @@ const testJWTSecret = "test-secret-32-chars-minimum-len-padding"
 func TestBuildRouterConfigDevelopmentWithoutAPIKeyKeepsAuthenticatedAIRoutesAvailable(t *testing.T) {
 	db := openServerTestDB(t)
 	resumeRepository := resume.NewRepository(db)
-	config, _, err := buildRouterConfig(db, resumeRepository, logrus.New(), serverOptions{
+	config, _, err := buildRouterConfig(db, resumeRepository, logging.NewLogrus(logrus.New()), serverOptions{
 		JWTSecret:       testJWTSecret,
 		AppEnv:          "development",
 		UploadDirectory: t.TempDir(),
@@ -59,14 +61,18 @@ func TestBuildRouterConfigDevelopmentWithoutAPIKeyKeepsAuthenticatedAIRoutesAvai
 
 	assert.Equal(t, http.StatusServiceUnavailable, response.Code)
 	assert.Equal(t, "application/json", response.Header().Get("Content-Type"))
-	assert.JSONEq(t, `{"error":"AI features disabled"}`, response.Body.String())
+	// 5xx 一律带 request_id：前端只显示泛化文案时靠它定位后端日志。
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	assert.Equal(t, "AI features disabled", body["error"])
+	assert.NotEmpty(t, body["request_id"])
 }
 
 func TestBuildRouterConfigProductionWithoutAPIKeyReturnsStartupError(t *testing.T) {
 	db := openServerTestDB(t)
 	resumeRepository := resume.NewRepository(db)
 
-	_, _, err := buildRouterConfig(db, resumeRepository, logrus.New(), serverOptions{
+	_, _, err := buildRouterConfig(db, resumeRepository, logging.NewLogrus(logrus.New()), serverOptions{
 		JWTSecret:       testJWTSecret,
 		AppEnv:          "production",
 		UploadDirectory: t.TempDir(),
@@ -88,7 +94,7 @@ func TestBuildRouterConfigUsesSingleCallOptimizationProtocol(t *testing.T) {
 			`{"edits":[{"target":{"itemId":null,"field":"markdown"},"newText":"valid single-call optimization","issues":[]}],"analysis":{"jdAlignment":{"status":"skipped","matchedKeywords":[],"excludedKeywords":[],"missingKeywords":[]},"evidenceRequests":[],"warnings":[]}}`,
 		},
 	}
-	config, _, err := buildRouterConfig(db, resumeRepository, logrus.New(), serverOptions{
+	config, _, err := buildRouterConfig(db, resumeRepository, logging.NewLogrus(logrus.New()), serverOptions{
 		JWTSecret:       testJWTSecret,
 		AppEnv:          "development",
 		UploadDirectory: t.TempDir(),
@@ -192,7 +198,7 @@ func TestBuildVoiceServicesDisabledByDefault(t *testing.T) {
 	t.Setenv("VOICE_ENABLED", "")
 	db := openServerTestDB(t)
 
-	voice, generator, err := buildVoiceServices(db, llm.Config{APIKey: "offline-test-key", Model: "offline"}, logrus.New())
+	voice, generator, err := buildVoiceServices(db, llm.Config{APIKey: "offline-test-key", Model: "offline"}, logging.NewLogrus(logrus.New()))
 
 	require.NoError(t, err)
 	assert.Nil(t, voice, "voice service must be nil when VOICE_ENABLED is off")
@@ -205,7 +211,7 @@ func TestBuildVoiceServicesEnabled(t *testing.T) {
 	t.Setenv("VOICE_CACHE_DIR", t.TempDir())
 	db := openServerTestDB(t)
 
-	voice, generator, err := buildVoiceServices(db, llm.Config{APIKey: "offline-test-key", Model: "offline"}, logrus.New())
+	voice, generator, err := buildVoiceServices(db, llm.Config{APIKey: "offline-test-key", Model: "offline"}, logging.NewLogrus(logrus.New()))
 
 	require.NoError(t, err)
 	require.NotNil(t, voice)

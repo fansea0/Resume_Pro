@@ -50,6 +50,10 @@ var avatarFilenamePattern = regexp.MustCompile(`^[a-f0-9]{64}-[a-f0-9]{64}\.avat
 // NewRouter creates the Gin HTTP API router.
 func NewRouter(authRepository *auth.Repository, resumeRepository *resume.Repository, templateRepository *templates.Repository, config RouterConfig) *gin.Engine {
 	router := gin.New()
+	// 请求 ID + 5xx 统一日志：必须挂在所有路由注册之前。
+	// 放在中间件而不是各 handler 自己记，是为了不漏 —— 漏一处就又变成
+	// 「前端只看到一句泛化文案，线上查不到」。
+	router.Use(requestLogger())
 	// multipart 解析的内存阈值压到音频上限：超过上限的部分本来就会被拒绝，
 	// 不该先落成磁盘临时文件（用户录音不落盘是硬约束）。
 	router.MaxMultipartMemory = speech.MaxAudioBytes

@@ -7,9 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
-
 	"resumepro/backend/internal/interview"
+	"resumepro/backend/internal/logging"
 )
 
 const (
@@ -214,7 +213,7 @@ func (g *Generator) Close() {
 	select {
 	case <-g.done:
 	case <-time.After(generatorWorkerExitTimeout):
-		logrus.Warn("voice: audio generator worker did not exit in time")
+		logging.Warn("voice: audio generator worker did not exit in time")
 	}
 }
 
@@ -255,7 +254,7 @@ func (g *Generator) Enqueue(ctx context.Context, tenantID, interviewID, question
 	claimed, err := g.repo.ClaimAudioState(bgCtx, questionID)
 	if err != nil {
 		g.enqueue.Delete(questionID)
-		logrus.WithError(err).WithField("question_id", questionID).Warn("voice: claim audio state failed")
+		logging.WithError(err).WithFields(logging.Fields{"question_id": questionID}).Warn("voice: claim audio state failed")
 		return
 	}
 	if !claimed {
@@ -271,7 +270,7 @@ func (g *Generator) Enqueue(ctx context.Context, tenantID, interviewID, question
 	case <-g.closed:
 		g.enqueue.Delete(questionID)
 		if err := g.repo.ReleaseAudioState(bgCtx, questionID); err != nil {
-			logrus.WithError(err).WithField("question_id", questionID).Warn("voice: release audio state failed")
+			logging.WithError(err).WithFields(logging.Fields{"question_id": questionID}).Warn("voice: release audio state failed")
 		}
 		return
 	default:
@@ -289,9 +288,9 @@ func (g *Generator) Enqueue(ctx context.Context, tenantID, interviewID, question
 		// backlog 也满了：真正放弃，归还生成权，让下次 Reload 能补上。
 		g.enqueue.Delete(questionID)
 		if err := g.repo.ReleaseAudioState(bgCtx, questionID); err != nil {
-			logrus.WithError(err).WithField("question_id", questionID).Warn("voice: release audio state failed")
+			logging.WithError(err).WithFields(logging.Fields{"question_id": questionID}).Warn("voice: release audio state failed")
 		}
-		logrus.WithField("question_id", questionID).Warn("voice: generation queue and backlog full, skip")
+		logging.WithFields(logging.Fields{"question_id": questionID}).Warn("voice: generation queue and backlog full, skip")
 	}
 }
 
@@ -309,7 +308,7 @@ func (g *Generator) Reload(ctx context.Context) error {
 	started := g.started
 	g.lifeMu.Unlock()
 	if started {
-		logrus.Warn("voice: reload called after start, skipped (pending reset would break in-flight generation)")
+		logging.Warn("voice: reload called after start, skipped (pending reset would break in-flight generation)")
 		return ErrReloadAfterStart
 	}
 
@@ -336,7 +335,7 @@ func (g *Generator) CleanupInterview(ctx context.Context, tenantID, interviewID 
 	defer func() {
 		if r := recover(); r != nil {
 			// 清理路径的 panic 不能把整个后端带崩（面试主流程优先）。
-			logrus.WithFields(logrus.Fields{
+			logging.WithFields(logging.Fields{
 				"interview_id": interviewID,
 				"panic":        fmt.Sprintf("%v", r),
 			}).Error("voice: panic while cleaning up interview audio, recovered")
@@ -351,13 +350,13 @@ func (g *Generator) CleanupInterview(ctx context.Context, tenantID, interviewID 
 	if err := g.markInterviewClosed(dbCtx, interviewID); err != nil {
 		// 状态没归零就不能删目录：否则 DB 里仍是 ready、文件却没了，
 		// 前端按 ready 请求音频只会拿到 404。宁可留下孤儿文件。
-		logrus.WithError(err).WithField("interview_id", interviewID).
+		logging.WithError(err).WithFields(logging.Fields{"interview_id": interviewID}).
 			Error("voice: reset interview audio state failed, skip directory cleanup to keep state and files consistent")
 		return
 	}
 
 	if err := g.store.CleanupInterview(tenantID, interviewID); err != nil {
-		logrus.WithError(err).WithField("interview_id", interviewID).Warn("voice: cleanup interview audio failed")
+		logging.WithError(err).WithFields(logging.Fields{"interview_id": interviewID}).Warn("voice: cleanup interview audio failed")
 	}
 }
 
@@ -402,7 +401,7 @@ func (g *Generator) run(ctx context.Context) {
 	//（panic 逃出 goroutine 会让 Go 直接终止整个后端）。
 	defer func() {
 		if r := recover(); r != nil {
-			logrus.WithField("panic", fmt.Sprintf("%v", r)).
+			logging.WithFields(logging.Fields{"panic": fmt.Sprintf("%v", r)}).
 				Error("voice: panic in audio generator worker loop, recovered")
 		}
 	}()
@@ -458,7 +457,7 @@ func (g *Generator) run(ctx context.Context) {
 func (g *Generator) safeProcess(ctx context.Context, job Job) {
 	defer func() {
 		if r := recover(); r != nil {
-			logrus.WithFields(logrus.Fields{
+			logging.WithFields(logging.Fields{
 				"interview_id": job.InterviewID,
 				"question_id":  job.QuestionID,
 				"panic":        fmt.Sprintf("%v", r),
@@ -558,7 +557,7 @@ func (g *Generator) recoverJobPanic(ctx context.Context, job Job) {
 	if r == nil {
 		return
 	}
-	logrus.WithFields(logrus.Fields{
+	logging.WithFields(logging.Fields{
 		"interview_id": job.InterviewID,
 		"question_id":  job.QuestionID,
 		"panic":        fmt.Sprintf("%v", r),
@@ -618,19 +617,19 @@ func (g *Generator) markFailed(ctx context.Context, job Job, cause error) {
 	defer g.mu.RUnlock()
 	if _, closed := g.closedInterviews[job.InterviewID]; closed {
 		// 面试已终止：状态已被清理归零，不再写回，避免留下孤儿 failed。
-		logrus.WithFields(logrus.Fields{
+		logging.WithFields(logging.Fields{
 			"interview_id": job.InterviewID,
 			"question_id":  job.QuestionID,
 		}).Warn("voice: interview closed before marking audio failed, skipped")
 		return
 	}
 	if err := g.repo.UpdateAudioState(ctx, job.QuestionID, "failed"); err != nil {
-		logrus.WithError(err).WithFields(logrus.Fields{
+		logging.WithError(err).WithFields(logging.Fields{
 			"interview_id": job.InterviewID,
 			"question_id":  job.QuestionID,
 		}).Warn("voice: mark question audio failed failed")
 	}
-	logrus.WithError(cause).WithFields(logrus.Fields{
+	logging.WithError(cause).WithFields(logging.Fields{
 		"interview_id": job.InterviewID,
 		"question_id":  job.QuestionID,
 	}).Warn("voice: question audio generation failed")

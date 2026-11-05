@@ -16,6 +16,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/jmoiron/sqlx"
 	"github.com/sirupsen/logrus"
+
 	"resumepro/backend/internal/ai"
 	"resumepro/backend/internal/auth"
 	"resumepro/backend/internal/envfile"
@@ -23,6 +24,7 @@ import (
 	"resumepro/backend/internal/httpapi"
 	"resumepro/backend/internal/interview"
 	"resumepro/backend/internal/llm"
+	"resumepro/backend/internal/logging"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/resumesvc"
 	"resumepro/backend/internal/speech"
@@ -52,7 +54,7 @@ var productionAIBootstrap = aiBootstrap{
 }
 
 func main() {
-	logger := logrus.New()
+	logger := logging.NewLogrus(logrus.New())
 	loadLocalEnvFile(logger)
 	jwtSecret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
 	if len(jwtSecret) < minimumJWTSecretLength {
@@ -84,7 +86,7 @@ func main() {
 	if uploadDirectory == "" {
 		uploadDirectory = "./uploads"
 	}
-	logger.WithFields(logrus.Fields{
+	logger.WithFields(logging.Fields{
 		"address":       ":8080",
 		"cookie_secure": cookieSecure,
 		"database_path": databasePath,
@@ -129,14 +131,14 @@ func main() {
 // loadLocalEnvFile loads a local .env file so that secrets and AI settings do
 // not have to be exported in every shell. Variables already present in the
 // environment always win, so `export OPENAI_API_KEY=...` still overrides it.
-func loadLocalEnvFile(logger *logrus.Logger) {
+func loadLocalEnvFile(logger logging.Logger) {
 	paths, err := envfile.LoadFromPaths([]string{".", ".."})
 	if err != nil {
 		logger.WithError(err).Warn("load local .env file")
 		return
 	}
 	if paths != "" {
-		logger.WithField("path", paths).Info("loaded local .env file")
+		logger.WithFields(logging.Fields{"path": paths}).Info("loaded local .env file")
 	}
 }
 
@@ -144,7 +146,7 @@ func loadLocalEnvFile(logger *logrus.Logger) {
 //
 // 第二个返回值是语音生成器（非 nil 表示语音已启用）：由 main 在进程退出时关闭，
 // 避免在途 TTS 任务被硬杀。
-func buildRouterConfig(db *sqlx.DB, resumeRepository *resume.Repository, logger *logrus.Logger, options serverOptions, bootstrap aiBootstrap) (httpapi.RouterConfig, *speech.Generator, error) {
+func buildRouterConfig(db *sqlx.DB, resumeRepository *resume.Repository, logger logging.Logger, options serverOptions, bootstrap aiBootstrap) (httpapi.RouterConfig, *speech.Generator, error) {
 	avatarDirectory := filepath.Join(options.UploadDirectory, "avatars")
 	fileStorage := files.NewLocalFileStorage(avatarDirectory)
 	targetJobService := targetjob.NewService(targetjob.NewRepository(db))
@@ -172,10 +174,10 @@ func buildRouterConfig(db *sqlx.DB, resumeRepository *resume.Repository, logger 
 	}
 	config.AIService = ai.NewService(
 		chatModel,
-		ai.NewLogrusHooks(logger),
+		ai.NewHooks(logger),
 		ai.WithMaxRetries(llmConfig.MaxRetries),
 	)
-	logger.WithField("model", llmConfig.Model).Info("AI features enabled")
+	logger.WithFields(logging.Fields{"model": llmConfig.Model}).Info("AI features enabled")
 
 	// 先建语音：生成器要注入面试服务，否则题目永远不会被入队。
 	voiceService, voiceGenerator, err := buildVoiceServices(db, llmConfig, logger)
@@ -196,7 +198,7 @@ func buildRouterConfig(db *sqlx.DB, resumeRepository *resume.Repository, logger 
 		}
 		// 后台生成 worker：串行消费，不阻塞任何请求。
 		voiceGenerator.Start(context.Background())
-		logger.WithField("cache_dir", voiceService.Store.Root()).Info("voice features enabled")
+		logger.WithFields(logging.Fields{"cache_dir": voiceService.Store.Root()}).Info("voice features enabled")
 	}
 
 	interviewService, err := buildInterviewService(db, llmConfig, logger, options.AppEnv, audioHooks)
@@ -213,7 +215,7 @@ func buildRouterConfig(db *sqlx.DB, resumeRepository *resume.Repository, logger 
 // Redis 或 Responses 模型不可用时：生产环境直接返回错误（面试是必开功能）；
 // 非生产环境打印告警并返回 nil（路由仍注册，接口统一返回 503，与 AI 功能降级一致）。
 // audioHooks 为 nil 时语音链路整体缺席，面试照常工作。
-func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Logger, appEnv string, audioHooks interview.AudioHooks) (*interview.Service, error) {
+func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger logging.Logger, appEnv string, audioHooks interview.AudioHooks) (*interview.Service, error) {
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
 		redisAddr = "127.0.0.1:6379"
@@ -261,7 +263,7 @@ func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Log
 	if err != nil {
 		return nil, fmt.Errorf("build interview graph: %w", err)
 	}
-	logger.WithField("redis", redisAddr).Info("AI interview enabled")
+	logger.WithFields(logging.Fields{"redis": redisAddr}).Info("AI interview enabled")
 	return interview.NewService(repo, redisStore, gen, graph, interview.WithAudioHooks(audioHooks)), nil
 }
 
@@ -269,7 +271,7 @@ func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Log
 //
 // VOICE_ENABLED 未开时返回 (nil, nil, nil)：语音链路整体缺席，
 // 路由仍然注册，接口返回 503，面试照常工作。
-func buildVoiceServices(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Logger) (*speech.VoiceService, *speech.Generator, error) {
+func buildVoiceServices(db *sqlx.DB, llmConfig llm.Config, logger logging.Logger) (*speech.VoiceService, *speech.Generator, error) {
 	cfg := speech.LoadConfigFromEnv()
 	if !cfg.Enabled {
 		logger.Warn("voice features disabled (set VOICE_ENABLED=true to enable)")
