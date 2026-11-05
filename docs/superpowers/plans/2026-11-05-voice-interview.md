@@ -43,6 +43,10 @@
   - `func (r *Repository) UpdateAudioState(ctx context.Context, questionID int64, state string) error`
   - `func (r *Repository) QuestionByID(ctx context.Context, id int64) (Question, error)`
   - `func (r *Repository) ActiveQuestionsNeedingAudio(ctx context.Context) ([]PendingAudio, error)`
+  - `func (r *Repository) ClaimAudioState(ctx context.Context, questionID int64) (bool, error)` —— **原子抢占**生成权（条件 UPDATE，只有 NULL/failed 能抢到）
+  - `func (r *Repository) ReleaseAudioState(ctx context.Context, questionID int64) error` —— 归还生成权（pending → NULL）
+  - `func (r *Repository) ResetStalePendingAudio(ctx context.Context) (int64, error)` —— 启动时把崩溃残留的 pending 归零
+  - `func (r *Repository) ResetAudioStateByInterview(ctx context.Context, interviewID int64) error` —— 面试终态时清空该场全部语音状态
 
 - [ ] **Step 1: 写迁移测试**
 
@@ -128,6 +132,81 @@ func TestRepositoryActiveQuestionsNeedingAudio(t *testing.T) {
 		t.Fatalf("item payload = %+v", items[0])
 	}
 }
+
+// 抢占是原子的：第一个调用者拿到 true，第二个拿到 false。
+func TestRepositoryClaimAudioStateIsExclusive(t *testing.T) {
+	repo, ctx, interviewID := newRepositoryFixture(t)
+	questionID := insertMainQuestion(t, repo, interviewID, "题面")
+
+	claimed, err := repo.ClaimAudioState(ctx, questionID)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if !claimed {
+		t.Fatal("first claim should succeed")
+	}
+	claimed, err = repo.ClaimAudioState(ctx, questionID)
+	if err != nil {
+		t.Fatalf("second claim: %v", err)
+	}
+	if claimed {
+		t.Fatal("second claim should fail")
+	}
+
+	// ready 之后不能再抢。
+	if err := repo.UpdateAudioState(ctx, questionID, "ready"); err != nil {
+		t.Fatalf("mark ready: %v", err)
+	}
+	claimed, err = repo.ClaimAudioState(ctx, questionID)
+	if err != nil {
+		t.Fatalf("claim after ready: %v", err)
+	}
+	if claimed {
+		t.Fatal("ready question must not be claimable")
+	}
+}
+
+func TestRepositoryResetStalePendingAudioOnlyTouchesActiveInterviews(t *testing.T) {
+	repo, ctx, activeID := newRepositoryFixture(t)
+	stale := insertMainQuestion(t, repo, activeID, "崩溃残留")
+	if _, err := repo.ClaimAudioState(ctx, stale); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	if _, err := repo.ResetStalePendingAudio(ctx); err != nil {
+		t.Fatalf("reset stale: %v", err)
+	}
+	row, err := repo.QuestionByID(ctx, stale)
+	if err != nil {
+		t.Fatalf("question by id: %v", err)
+	}
+	if row.AudioState != nil {
+		t.Fatalf("audio state = %q, want NULL after reset", *row.AudioState)
+	}
+}
+
+func TestRepositoryResetAudioStateByInterview(t *testing.T) {
+	repo, ctx, interviewID := newRepositoryFixture(t)
+	first := insertMainQuestion(t, repo, interviewID, "第一题")
+	second := insertMainQuestion(t, repo, interviewID, "第二题")
+	for _, id := range []int64{first, second} {
+		if _, err := repo.ClaimAudioState(ctx, id); err != nil {
+			t.Fatalf("claim %d: %v", id, err)
+		}
+	}
+	if err := repo.ResetAudioStateByInterview(ctx, interviewID); err != nil {
+		t.Fatalf("reset by interview: %v", err)
+	}
+	for _, id := range []int64{first, second} {
+		row, err := repo.QuestionByID(ctx, id)
+		if err != nil {
+			t.Fatalf("question by id: %v", err)
+		}
+		if row.AudioState != nil {
+			t.Fatalf("question %d audio state = %q, want NULL", id, *row.AudioState)
+		}
+	}
+}
 ```
 
 > 若既有测试文件没有 `newRepositoryFixture` / `insertMainQuestion`，就在本文件内按 `repository_test.go` 现有写法补这两个辅助函数（用 sqlx 直接插库，不要 mock）。
@@ -169,20 +248,81 @@ func (r *Repository) QuestionByID(ctx context.Context, id int64) (Question, erro
 	return row, nil
 }
 
-// ActiveQuestionsNeedingAudio 返回「进行中面试里语音未就绪」的题目：
-// audio_state 为 NULL、pending 或 failed 的都要重新生成（重启重载与失败补齐共用）。
+// ActiveQuestionsNeedingAudio 返回「进行中面试里语音未就绪」的题目。
+// pending 不在这里：它表示「已抢占生成权」，由数据库的抢占语义保证不会被重复领取；
+// 崩溃残留的 pending 在启动时由 ResetStalePendingAudio 归零。
 func (r *Repository) ActiveQuestionsNeedingAudio(ctx context.Context) ([]PendingAudio, error) {
 	var items []PendingAudio
 	err := r.db.SelectContext(ctx, &items, `
 		SELECT i.tenant_id AS tenant_id, q.interview_id AS interview_id, q.id AS question_id, q.question AS text
 		FROM interview_questions q
 		JOIN interviews i ON i.id = q.interview_id
-		WHERE i.status = 'active' AND (q.audio_state IS NULL OR q.audio_state IN ('pending', 'failed'))
+		WHERE i.status = 'active' AND (q.audio_state IS NULL OR q.audio_state = 'failed')
 		ORDER BY i.id ASC, q.id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("interview: load questions needing audio: %w", err)
 	}
 	return items, nil
+}
+
+// ClaimAudioState 原子抢占题目的语音生成权。
+//
+// 只有「从未生成(NULL)」或「已失败(failed)」的题目能被抢到；抢到即置为 pending。
+// 返回 true 表示本次调用获得了生成权。
+//
+// 数据库是唯一真源：重启重载与创建面试可能同时给同一题入队，
+// 条件 UPDATE 保证只有一方拿到生成权，不会重复合成。
+func (r *Repository) ClaimAudioState(ctx context.Context, questionID int64) (bool, error) {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE interview_questions SET audio_state = 'pending' WHERE id = ? AND (audio_state IS NULL OR audio_state = 'failed')`,
+		questionID)
+	if err != nil {
+		return false, fmt.Errorf("interview: claim audio state %d: %w", questionID, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("interview: claim audio state %d rows: %w", questionID, err)
+	}
+	return affected == 1, nil
+}
+
+// ReleaseAudioState 归还生成权：把 pending 放回未生成(NULL)。
+// 入队后没能真正处理（队列满、进程退出）时调用。
+func (r *Repository) ReleaseAudioState(ctx context.Context, questionID int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE interview_questions SET audio_state = NULL WHERE id = ? AND audio_state = 'pending'`,
+		questionID)
+	if err != nil {
+		return fmt.Errorf("interview: release audio state %d: %w", questionID, err)
+	}
+	return nil
+}
+
+// ResetStalePendingAudio 把「进行中面试」里卡在 pending 的题目重置为未生成(NULL)。
+// 只在服务启动时调用：此时还没有 worker 在跑，pending 一定是上次崩溃留下的残留。
+func (r *Repository) ResetStalePendingAudio(ctx context.Context) (int64, error) {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE interview_questions SET audio_state = NULL
+		 WHERE audio_state = 'pending'
+		   AND interview_id IN (SELECT id FROM interviews WHERE status = 'active')`)
+	if err != nil {
+		return 0, fmt.Errorf("interview: reset stale pending audio: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("interview: reset stale pending audio rows: %w", err)
+	}
+	return affected, nil
+}
+
+// ResetAudioStateByInterview 清空一场面试全部题目的语音状态（面试终态清理时调用）。
+func (r *Repository) ResetAudioStateByInterview(ctx context.Context, interviewID int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE interview_questions SET audio_state = NULL WHERE interview_id = ?`, interviewID)
+	if err != nil {
+		return fmt.Errorf("interview: reset audio state of interview %d: %w", interviewID, err)
+	}
+	return nil
 }
 ```
 
@@ -1002,14 +1142,14 @@ git commit -m "feat(speech): 新增题目音频落盘与按面试清理"
 
 ---
 
-### Task 4: 后台串行生成器（worker + 重试 + 重启重载）
+### Task 4: 后台串行生成器（worker + 抢占式去重 + 重试 + 重启重载）
 
 **Files:**
 - Create: `backend/internal/speech/generator.go`
 - Test: `backend/internal/speech/generator_test.go`
 
 **Interfaces:**
-- Consumes: `speech.Synthesizer`、`speech.AudioStore`、Task 1 的 `interview.PendingAudio`
+- Consumes: `speech.Synthesizer`、`speech.AudioStore`、Task 1 的 `interview.PendingAudio` 与 4 个音频状态仓储方法
 - Produces:
   - `speech.AudioStateStore` 接口（由 `interview.Repository` 实现）
   - `speech.NewGenerator(synth Synthesizer, store *AudioStore, repo AudioStateStore, cfg Config) *Generator`
@@ -1018,6 +1158,16 @@ git commit -m "feat(speech): 新增题目音频落盘与按面试清理"
   - `(*Generator).Reload(ctx context.Context) error`
   - `(*Generator).CleanupInterview(ctx, tenantID, interviewID int64)`
   - `speech.Generator` 满足 `interview.AudioHooks`
+
+**竞争态处理（本任务的核心，见设计文档「并发与竞争态」）**
+
+生成器有三个必须处理竞争的地方：
+
+| 竞争 | 处理 |
+| --- | --- |
+| 重启重载 与 创建面试 同时入队同一题 | **数据库抢占**：`ClaimAudioState` 用条件 UPDATE（`NULL`/`failed` → `pending`），只有影响行数为 1 的那一方获得生成权 |
+| 面试结束清理 与 正在进行的合成 | **读写锁 + 已终止标记**：`CleanupInterview` 先在写锁内置位「已终止」，再删目录；`saveAudio` 在读锁内检查该标记，被终止的面试一律不落盘 |
+| 进程崩溃留下 `pending` 残留 | **启动时归零**：`Reload` 先 `ResetStalePendingAudio` 把进行中面试的 `pending` 归零，再重新扫描入队 |
 
 - [ ] **Step 1: 写生成器测试**
 
@@ -1036,11 +1186,30 @@ import (
 	"resumepro/backend/internal/interview"
 )
 
-// fakeStateStore 记录 audio_state 流转。
+// fakeStateStore 模拟 interview_questions.audio_state 的状态机，
+// 包括 ClaimAudioState 的原子抢占语义。
 type fakeStateStore struct {
-	mu      sync.Mutex
-	states  map[int64]string
+	mu     sync.Mutex
+	states map[int64]string
+	owners map[int64]int64 // questionID -> interviewID
 	pending []interview.PendingAudio
+}
+
+func (f *fakeStateStore) seed(questionID, interviewID int64, state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.states == nil {
+		f.states = map[int64]string{}
+		f.owners = map[int64]int64{}
+	}
+	f.states[questionID] = state
+	f.owners[questionID] = interviewID
+}
+
+func (f *fakeStateStore) state(questionID int64) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.states[questionID]
 }
 
 func (f *fakeStateStore) UpdateAudioState(_ context.Context, questionID int64, state string) error {
@@ -1050,6 +1219,54 @@ func (f *fakeStateStore) UpdateAudioState(_ context.Context, questionID int64, s
 		f.states = map[int64]string{}
 	}
 	f.states[questionID] = state
+	return nil
+}
+
+// ClaimAudioState 模拟条件 UPDATE：只有 NULL / failed 能被抢到。
+func (f *fakeStateStore) ClaimAudioState(_ context.Context, questionID int64) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.states == nil {
+		f.states = map[int64]string{}
+	}
+	current := f.states[questionID]
+	if current == "pending" || current == "ready" {
+		return false, nil
+	}
+	f.states[questionID] = "pending"
+	return true, nil
+}
+
+func (f *fakeStateStore) ReleaseAudioState(_ context.Context, questionID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.states[questionID] == "pending" {
+		f.states[questionID] = ""
+	}
+	return nil
+}
+
+func (f *fakeStateStore) ResetStalePendingAudio(_ context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var n int64
+	for id, s := range f.states {
+		if s == "pending" {
+			f.states[id] = ""
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *fakeStateStore) ResetAudioStateByInterview(_ context.Context, interviewID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, owner := range f.owners {
+		if owner == interviewID {
+			f.states[id] = ""
+		}
+	}
 	return nil
 }
 
@@ -1074,24 +1291,61 @@ func (f *flakySynth) Synthesize(_ context.Context, _ SynthesisRequest) (Synthesi
 	return SynthesisResult{Audio: []byte("RIFFok"), ContentType: "audio/wav"}, nil
 }
 
+// blockingSynth 阻塞到 release 被关闭，用于制造「合成中面试结束」窗口。
+type blockingSynth struct {
+	release chan struct{}
+	mu      sync.Mutex
+	calls   int
+}
+
+func (b *blockingSynth) Synthesize(_ context.Context, _ SynthesisRequest) (SynthesisResult, error) {
+	b.mu.Lock()
+	b.calls++
+	b.mu.Unlock()
+	<-b.release
+	return SynthesisResult{Audio: []byte("RIFFok"), ContentType: "audio/wav"}, nil
+}
+
+func (f *flakySynth) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (b *blockingSynth) callCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.calls
+}
+
 func waitForState(t *testing.T, store *fakeStateStore, questionID int64, want string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		store.mu.Lock()
-		got := store.states[questionID]
-		store.mu.Unlock()
-		if got == want {
+		if store.state(questionID) == want {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("question %d state never became %q", questionID, want)
+	t.Fatalf("question %d state = %q, never became %q", questionID, store.state(questionID), want)
+}
+
+func waitForCalls(t *testing.T, count func() int, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if count() >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("call count = %d, never reached %d", count(), want)
 }
 
 func TestGeneratorRetriesThenMarksReady(t *testing.T) {
 	synth := &flakySynth{failures: 1}
 	states := &fakeStateStore{}
+	states.seed(100, 10, "")
 	cfg := Config{MaxAttempts: 3, Backoff: []time.Duration{time.Millisecond}}
 	generator := NewGenerator(synth, NewAudioStore(t.TempDir()), states, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1111,6 +1365,7 @@ func TestGeneratorRetriesThenMarksReady(t *testing.T) {
 func TestGeneratorMarksFailedAfterMaxAttempts(t *testing.T) {
 	synth := &flakySynth{failures: 99}
 	states := &fakeStateStore{}
+	states.seed(100, 10, "")
 	cfg := Config{MaxAttempts: 2, Backoff: []time.Duration{time.Millisecond}}
 	generator := NewGenerator(synth, NewAudioStore(t.TempDir()), states, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1122,9 +1377,58 @@ func TestGeneratorMarksFailedAfterMaxAttempts(t *testing.T) {
 	waitForState(t, states, 100, "failed")
 }
 
+// 竞争 1：同一题被并发入队（重启重载 + 创建面试）时只合成一次。
+func TestGeneratorEnqueueSkipsWhenAlreadyClaimed(t *testing.T) {
+	synth := &flakySynth{}
+	states := &fakeStateStore{}
+	states.seed(100, 10, "pending") // 已被别的路径抢占
+	cfg := Config{MaxAttempts: 1, Backoff: []time.Duration{time.Millisecond}}
+	generator := NewGenerator(synth, NewAudioStore(t.TempDir()), states, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	generator.Start(ctx)
+	defer generator.Close()
+
+	generator.Enqueue(ctx, 1, 10, 100, "题面")
+	time.Sleep(100 * time.Millisecond)
+	if synth.callCount() != 0 {
+		t.Fatalf("synthesized %d times, want 0 (already claimed)", synth.callCount())
+	}
+}
+
+// 竞争 2：合成进行中面试结束 —— 不得落盘、不得把状态写成 ready。
+func TestGeneratorDoesNotStoreAfterInterviewClosed(t *testing.T) {
+	synth := &blockingSynth{release: make(chan struct{})}
+	states := &fakeStateStore{}
+	states.seed(100, 10, "")
+	cfg := Config{MaxAttempts: 1, Backoff: []time.Duration{time.Millisecond}}
+	generator := NewGenerator(synth, NewAudioStore(t.TempDir()), states, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	generator.Start(ctx)
+	defer generator.Close()
+
+	generator.Enqueue(ctx, 1, 10, 100, "题面")
+	waitForCalls(t, synth.callCount, 1)
+
+	// 面试在此刻结束：清理目录并标记已终止。
+	generator.CleanupInterview(ctx, 1, 10)
+	close(synth.release)
+	time.Sleep(150 * time.Millisecond)
+
+	if state := states.state(100); state == "ready" {
+		t.Fatalf("state = %q, must not become ready after the interview closed", state)
+	}
+	if _, err := generator.store.ReadQuestionAudio(1, 10, 100); err == nil {
+		t.Error("audio file must not exist after the interview closed")
+	}
+}
+
+// 竞争 3：同一题重复入队只合成一次。
 func TestGeneratorEnqueueDeduplicatesSameQuestion(t *testing.T) {
 	synth := &flakySynth{}
 	states := &fakeStateStore{}
+	states.seed(100, 10, "")
 	cfg := Config{MaxAttempts: 1, Backoff: []time.Duration{time.Millisecond}}
 	generator := NewGenerator(synth, NewAudioStore(t.TempDir()), states, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1135,23 +1439,19 @@ func TestGeneratorEnqueueDeduplicatesSameQuestion(t *testing.T) {
 	generator.Enqueue(ctx, 1, 10, 100, "题面")
 	generator.Enqueue(ctx, 1, 10, 100, "题面")
 	waitForState(t, states, 100, "ready")
-	deadline := time.Now().Add(200 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		synth.mu.Lock()
-		calls := synth.calls
-		synth.mu.Unlock()
-		if calls > 1 {
-			t.Fatalf("synthesized %d times, want 1", calls)
-		}
-		time.Sleep(10 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	if synth.callCount() != 1 {
+		t.Fatalf("synthesized %d times, want 1", synth.callCount())
 	}
 }
 
+// 重启重载：先把上次崩溃残留的 pending 归零，再重新入队补齐。
 func TestGeneratorReloadEnqueuesPendingAudio(t *testing.T) {
 	synth := &flakySynth{}
 	states := &fakeStateStore{pending: []interview.PendingAudio{
 		{TenantID: 1, InterviewID: 10, QuestionID: 100, Text: "补齐"},
 	}}
+	states.seed(100, 10, "pending") // 崩溃残留
 	cfg := Config{MaxAttempts: 1, Backoff: []time.Duration{time.Millisecond}}
 	generator := NewGenerator(synth, NewAudioStore(t.TempDir()), states, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1178,6 +1478,7 @@ package speech
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -1189,9 +1490,20 @@ import (
 
 // AudioStateStore 是生成器需要的最小持久化接口，由 interview.Repository 实现。
 type AudioStateStore interface {
-	UpdateAudioState(ctx context.Context, questionID int64, state string) error
+	// ClaimAudioState 原子抢占生成权：抢到返回 true。
+	ClaimAudioState(ctx context.Context, questionID int64) (bool, error)
+	// ReleaseAudioState 归还生成权（pending → 未生成）。
+	ReleaseAudioState(ctx context.Context, questionID int64) error
+	// ResetStalePendingAudio 把进行中面试里卡在 pending 的题目归零（启动时调用）。
+	ResetStalePendingAudio(ctx context.Context) (int64, error)
+	// ResetAudioStateByInterview 清空一场面试全部题目的语音状态。
+	ResetAudioStateByInterview(ctx context.Context, interviewID int64) error
+	// ActiveQuestionsNeedingAudio 返回进行中面试里语音未就绪的题目。
 	ActiveQuestionsNeedingAudio(ctx context.Context) ([]interview.PendingAudio, error)
 }
+
+// errInterviewClosed 表示目标面试已终止，任务应直接丢弃。
+var errInterviewClosed = errors.New("speech: interview closed")
 
 // Job 是一条待生成的题目语音。
 type Job struct {
@@ -1214,9 +1526,14 @@ type Generator struct {
 	backoff     []time.Duration
 
 	jobs    chan Job
-	enqueue sync.Map // questionID -> struct{}，防止同一题重复入队
+	enqueue sync.Map // questionID -> struct{}，同一进程内的快速去重
 	closed  chan struct{}
 	once    sync.Once
+
+	// mu 保护 closedInterviews。写锁用于「面试终止」，读锁用于「落盘」，
+	// 二者互斥，保证清理后不会再产生孤儿音频文件。
+	mu               sync.RWMutex
+	closedInterviews map[int64]struct{}
 }
 
 // NewGenerator 创建生成器（不自动启动，需显式 Start）。
@@ -1230,13 +1547,14 @@ func NewGenerator(synth Synthesizer, store *AudioStore, repo AudioStateStore, cf
 		maxAttempts = 1
 	}
 	return &Generator{
-		synth:       synth,
-		store:       store,
-		repo:        repo,
-		maxAttempts: maxAttempts,
-		backoff:     backoff,
-		jobs:        make(chan Job, 256),
-		closed:      make(chan struct{}),
+		synth:            synth,
+		store:            store,
+		repo:             repo,
+		maxAttempts:      maxAttempts,
+		backoff:          backoff,
+		jobs:             make(chan Job, 256),
+		closed:           make(chan struct{}),
+		closedInterviews: map[int64]struct{}{},
 	}
 }
 
@@ -1252,27 +1570,53 @@ func (g *Generator) Close() {
 
 // Enqueue 把题目加入生成队列。
 //
+// 去重靠数据库抢占（ClaimAudioState）而不是内存标记：
+// 「重启重载」与「创建面试」可能同时给同一题入队，
+// 只有抢到生成权（audio_state 从 NULL/failed 变成 pending）的一方才会真正合成。
+//
 // 绝不阻塞调用方：创建面试与答题链路不能被语音拖住。
-// 队列满时丢弃该题 —— 下次 Reload 会补齐。
 func (g *Generator) Enqueue(ctx context.Context, tenantID, interviewID, questionID int64, text string) {
 	if text == "" {
 		return
 	}
+	if g.isClosed(interviewID) {
+		return
+	}
 	if _, loaded := g.enqueue.LoadOrStore(questionID, struct{}{}); loaded {
+		return
+	}
+	claimed, err := g.repo.ClaimAudioState(ctx, questionID)
+	if err != nil {
+		g.enqueue.Delete(questionID)
+		logrus.WithError(err).WithField("question_id", questionID).Warn("voice: claim audio state failed")
+		return
+	}
+	if !claimed {
+		// 别的路径已经抢到（或已就绪）：不重复合成。
+		g.enqueue.Delete(questionID)
 		return
 	}
 	job := Job{TenantID: tenantID, InterviewID: interviewID, QuestionID: questionID, Text: text}
 	select {
 	case g.jobs <- job:
 	default:
+		// 队列满：归还生成权，让下次 Reload 能补上。
 		g.enqueue.Delete(questionID)
+		if err := g.repo.ReleaseAudioState(ctx, questionID); err != nil {
+			logrus.WithError(err).WithField("question_id", questionID).Warn("voice: release audio state failed")
+		}
 		logrus.WithField("question_id", questionID).Warn("voice: generation queue full, skip")
 	}
 }
 
-// Reload 在服务重启后扫描「进行中且未就绪」的题目并重新入队。
-// 只读数据库，不依赖内存队列，因此重启后能完整补齐。
+// Reload 在服务重启后补齐「进行中且未就绪」的题目。
+//
+// 先把上次崩溃残留的 pending 归零（启动时还没有 worker 在跑，pending 一定是残留），
+// 再重新扫描入队。
 func (g *Generator) Reload(ctx context.Context) error {
+	if _, err := g.repo.ResetStalePendingAudio(ctx); err != nil {
+		return fmt.Errorf("speech: reset stale pending audio: %w", err)
+	}
 	items, err := g.repo.ActiveQuestionsNeedingAudio(ctx)
 	if err != nil {
 		return fmt.Errorf("speech: reload pending audio: %w", err)
@@ -1283,11 +1627,28 @@ func (g *Generator) Reload(ctx context.Context) error {
 	return nil
 }
 
-// CleanupInterview 清理一场面试的音频目录（面试终态时由 interview 层调用）。
+// CleanupInterview 清理一场面试的音频目录与语音状态（面试终态时由 interview 层调用）。
+//
+// 先在写锁内置「已终止」标记，再删目录：这样正在合成中的任务看到标记后不会落盘，
+// 不会出现「清理完之后又冒出音频文件」的孤儿。
 func (g *Generator) CleanupInterview(ctx context.Context, tenantID, interviewID int64) {
+	g.mu.Lock()
+	g.closedInterviews[interviewID] = struct{}{}
+	g.mu.Unlock()
+
 	if err := g.store.CleanupInterview(tenantID, interviewID); err != nil {
 		logrus.WithError(err).WithField("interview_id", interviewID).Warn("voice: cleanup interview audio failed")
 	}
+	if err := g.repo.ResetAudioStateByInterview(ctx, interviewID); err != nil {
+		logrus.WithError(err).WithField("interview_id", interviewID).Warn("voice: reset interview audio state failed")
+	}
+}
+
+func (g *Generator) isClosed(interviewID int64) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	_, closed := g.closedInterviews[interviewID]
+	return closed
 }
 
 func (g *Generator) run(ctx context.Context) {
@@ -1306,17 +1667,18 @@ func (g *Generator) run(ctx context.Context) {
 // process 合成一题：失败按退避重试，耗尽后标记 failed。
 func (g *Generator) process(ctx context.Context, job Job) {
 	defer g.enqueue.Delete(job.QuestionID)
-	_ = g.repo.UpdateAudioState(ctx, job.QuestionID, "pending")
 
 	var lastErr error
 	for attempt := 0; attempt < g.maxAttempts; attempt++ {
 		res, err := g.synth.Synthesize(ctx, SynthesisRequest{Text: job.Text})
 		if err == nil {
-			if saveErr := g.store.SaveQuestionAudio(ctx, job.TenantID, job.InterviewID, job.QuestionID, res.Audio); saveErr == nil {
-				_ = g.repo.UpdateAudioState(ctx, job.QuestionID, "ready")
+			err = g.saveAudio(ctx, job, res.Audio)
+			if err == nil {
 				return
-			} else {
-				err = saveErr
+			}
+			if errors.Is(err, errInterviewClosed) {
+				// 面试已终止：丢弃结果，不落盘也不写状态。
+				return
 			}
 		}
 		lastErr = err
@@ -1333,11 +1695,29 @@ func (g *Generator) process(ctx context.Context, job Job) {
 		}
 	}
 
+	if g.isClosed(job.InterviewID) {
+		return
+	}
 	_ = g.repo.UpdateAudioState(ctx, job.QuestionID, "failed")
 	logrus.WithError(lastErr).WithFields(logrus.Fields{
 		"interview_id": job.InterviewID,
 		"question_id":  job.QuestionID,
 	}).Warn("voice: question audio generation failed")
+}
+
+// saveAudio 在读锁内落盘并回写 ready。
+// 面试已被终止时返回 errInterviewClosed，调用方直接丢弃结果。
+func (g *Generator) saveAudio(ctx context.Context, job Job, audio []byte) error {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	if _, closed := g.closedInterviews[job.InterviewID]; closed {
+		return errInterviewClosed
+	}
+	if err := g.store.SaveQuestionAudio(ctx, job.TenantID, job.InterviewID, job.QuestionID, audio); err != nil {
+		return err
+	}
+	_ = g.repo.UpdateAudioState(ctx, job.QuestionID, "ready")
+	return nil
 }
 
 // Generator 实现 interview.AudioHooks。
@@ -1347,7 +1727,7 @@ var _ interview.AudioHooks = (*Generator)(nil)
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `cd backend && go test ./internal/speech/ -v`
-Expected: PASS。
+Expected: PASS（含 3 个竞争态用例）。
 
 - [ ] **Step 5: Commit**
 
@@ -1357,6 +1737,7 @@ git commit -m "feat(speech): 新增后台串行生成器与重启重载"
 ```
 
 ---
+
 
 ### Task 5: 转写文本的错别字修复
 
@@ -1864,18 +2245,90 @@ func TestVoiceTranscribeReturnsText(t *testing.T) {
 
 ```go
 // setupVoiceAPI 复用既有面试路由测试的装配（内存 SQLite + miniredis + stub 模型），
-// 额外注入一个语音服务（内存 AudioStore + stub transcriber）。
-//
-// 实现建议：把 setupInterviewAPI 的装配逻辑抽成一个返回 RouterConfig 的公共函数，
-// 两个 setup 各自填不同的 VoiceService，避免复制整段装配代码。
+// 额外注入一个语音服务（临时目录 AudioStore + stub transcriber）。
 func setupVoiceAPI(t *testing.T) (http.Handler, *http.Cookie, *sqlx.DB) {
 	t.Helper()
-	// ... 参照 setupInterviewAPI 的装配代码，RouterConfig 额外设置：
-	// VoiceService: speech.NewVoiceService(speech.NewAudioStore(t.TempDir()), &stubTranscriber{text: "识别出来的文字"}, nil)
-	// ... 
+	db, err := sqlx.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := store.Migrate(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	authRepo := auth.NewRepository(db)
+	resumeRepo := resume.NewRepository(db)
+	tmplRepo := templates.NewRepository(db)
+	targetSvc := targetjob.NewService(targetjob.NewRepository(db))
+	interviewRepo := interview.NewRepository(db)
+
+	mr := miniredis.RunT(t)
+	redisStore, err := interview.NewRedisStore(mr.Addr(), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = redisStore.Close() })
+
+	gen := interview.NewQuestionGenerator(&stubInterviewModel{payload: stubQuestionPayload}, 1)
+	graph, err := interview.BuildGraph(interviewRepo, &stubInterviewModel{payload: stubGradePayload}, redisStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	interviewSvc := interview.NewService(interviewRepo, redisStore, gen, graph)
+
+	voiceSvc := speech.NewVoiceService(
+		speech.NewAudioStore(t.TempDir()),
+		&stubTranscriber{text: "识别出来的文字"},
+		nil,
+	)
+
+	router := NewRouter(authRepo, resumeRepo, tmplRepo, RouterConfig{
+		JWTSecret:        "voice-handler-test-secret",
+		TargetJobService: targetSvc,
+		ResumesvcService: resumesvc.NewService(resumeRepo, nil, targetSvc),
+		InterviewService: interviewSvc,
+		VoiceService:     voiceSvc,
+	})
 	return router, registerAuthUser(t, router, "voice@example.com"), db
 }
+
+// createVoiceInterview 走真实 HTTP 链路建一场面试，返回面试 id。
+func createVoiceInterview(t *testing.T, router http.Handler, cookie *http.Cookie) int64 {
+	t.Helper()
+	targetResponse := requestJSON(t, router, http.MethodPost, "/api/target-jobs",
+		`{"company":"字节","position":"后端工程师","requirements":"负责 ToB 营销中台后端架构设计，要求掌握 Go、Redis、MySQL，三年以上经验。"}`, cookie)
+	if targetResponse.Code != http.StatusCreated {
+		t.Fatalf("create target job: %d %s", targetResponse.Code, targetResponse.Body.String())
+	}
+	var target struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(targetResponse.Body.Bytes(), &target); err != nil {
+		t.Fatalf("decode target job: %v", err)
+	}
+	resumeResponse := requestJSON(t, router, http.MethodPost, "/api/resumes", validResumeRequest("Backend Engineer", "minimal"), cookie)
+	if resumeResponse.Code != http.StatusCreated {
+		t.Fatalf("create resume: %d", resumeResponse.Code)
+	}
+	resumeID := decodeResume(t, resumeResponse).ID
+	createResponse := requestJSON(t, router, http.MethodPost, "/api/interviews",
+		`{"targetJobId":`+jsonNumber(target.ID)+`,"resumeId":`+jsonNumber(resumeID)+`}`, cookie)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create interview: %d %s", createResponse.Code, createResponse.Body.String())
+	}
+	var created struct {
+		Interview struct {
+			ID int64 `json:"id"`
+		} `json:"interview"`
+	}
+	if err := json.Unmarshal(createResponse.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode interview: %v", err)
+	}
+	return created.Interview.ID
+}
 ```
+
+> 上面的辅助函数复用了 `interview_handler_test.go` 里已有的 `stubInterviewModel` / `stubQuestionPayload` / `stubGradePayload` / `requestJSON` / `registerAuthUser` / `validResumeRequest` / `decodeResume` / `jsonNumber`。如果 `stubQuestionPayload` 里的题目数与本测试预期不符，用 `GET /api/interviews/:id/questions` 返回的题目 id 替换硬编码的 `1`（`createVoiceInterview` 返回面试 id 后，取第一条题目的 id 传给转写接口）。
 
 - [ ] **Step 2: 运行测试确认失败**
 
@@ -2166,8 +2619,12 @@ git commit -m "feat(interview): 新增题目语音播放与录音转写接口"
 - Modify: `backend/cmd/server/main.go`
 
 **Interfaces:**
-- Consumes: Task 2/3/4/5 的 `speech` 构造器、Task 7 的 `speech.VoiceService`
+- Consumes: Task 2/3/4/5 的 `speech` 构造器、Task 7 的 `speech.VoiceService`、Task 6 的 `interview.WithAudioHooks`
 - Produces: 进程启动时后台 worker 运行 + `Reload` 补齐未生成的题目语音
+
+> **关键接线点**：生成器必须被注入到面试服务，否则没有任何题目会被入队。
+> `speech.Generator` 实现了 `interview.AudioHooks`，因此 `buildRouterConfig` 里要先建语音，
+> 再把生成器交给 `buildInterviewService`。
 
 - [ ] **Step 1: 在 `main.go` 装配语音能力**
 
@@ -2200,33 +2657,65 @@ func buildVoiceServices(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Logger
 }
 ```
 
-- [ ] **Step 2: 在 `buildRouterConfig` 里接线**
+- [ ] **Step 2: 把生成器注入面试服务**
 
-在 `buildRouterConfig` 中 `config.InterviewService = interviewService` 之后追加：
+改 `buildInterviewService` 的签名，多收一个 `audioHooks interview.AudioHooks` 参数；
+构造 `interview.NewService` 时用 `interview.WithAudioHooks(audioHooks` 注入：
 
 ```go
+// buildInterviewService 接线 AI 模拟面试：Redis checkpoint store + Responses 模型
+// + 生题器 + 面试图 + Service。
+//
+// audioHooks 为 nil 时语音链路整体缺席，面试照常工作。
+func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Logger, appEnv string, audioHooks interview.AudioHooks) (*interview.Service, error) {
+	// ... 既有逻辑不变 ...
+	return interview.NewService(repo, redisStore, gen, graph, interview.WithAudioHooks(audioHooks)), nil
+}
+```
+
+> `interview.WithAudioHooks(nil)` 是安全的：`Service.audio` 为 nil 时所有语音调用点都不执行。
+
+- [ ] **Step 3: 在 `buildRouterConfig` 里按顺序接线**
+
+`buildRouterConfig` 里 `buildInterviewService` 之前先建语音：
+
+```go
+	// 先建语音：生成器要注入面试服务，否则题目永远不会被入队。
 	voiceService, voiceGenerator, err := buildVoiceServices(db, llmConfig, logger)
 	if err != nil {
 		return config, err
 	}
-	if voiceService != nil {
+	var audioHooks interview.AudioHooks
+	if voiceGenerator != nil {
+		audioHooks = voiceGenerator
 		config.VoiceService = voiceService
 		// 后台生成 worker：串行消费，不阻塞任何请求。
 		voiceGenerator.Start(context.Background())
-		// 重启重载：扫描「进行中且未就绪」的题目并重新入队。
+		// 重启重载：先把上次崩溃残留的 pending 归零，再扫描未就绪的题重新入队。
 		if err := voiceGenerator.Reload(context.Background()); err != nil {
 			logger.WithError(err).Warn("voice: reload pending question audio failed")
 		}
 		logger.WithField("cache_dir", voiceService.Store.Root()).Info("voice features enabled")
 	}
+
+	interviewService, err := buildInterviewService(db, llmConfig, logger, options.AppEnv, audioHooks)
+	if err != nil {
+		return config, err
+	}
+	config.InterviewService = interviewService
+	return config, nil
 ```
 
-- [ ] **Step 3: 编译与全量测试**
+> 上面是 `buildRouterConfig` 尾部的**替换**版本：删掉原来单独的
+> `interviewService, err := buildInterviewService(db, llmConfig, logger, options.AppEnv)`
+> 与 `config.InterviewService = interviewService` 两行，换成上面这段。
+
+- [ ] **Step 4: 编译与全量测试**
 
 Run: `cd backend && go build ./... && go test ./...`
 Expected: 全部通过。
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add backend/cmd/server/main.go
@@ -3002,6 +3491,7 @@ git commit -m "docs(voice): 补充语音服务启动与端到端验证清单"
 | 识别文本插入光标位置 | Task 11 |
 | 不做录音回放 | 设计文档非目标；Task 7 无 recording 接口 |
 | 语音不可用不影响面试 | Task 6（answer 不同步等语音）+ Task 7（503 降级） |
+| **重启补齐的竞争态** | Task 1（Claim/Release/Reset 四个仓储方法）+ Task 4（抢占去重 + 读写锁终止标记 + 启动归零），含 3 个竞争态测试用例 |
 | 面试结束清理音频 | Task 6（Finished / Abort） |
 | `audio_state` 四态 | Task 1 + Task 4 |
 | 接口文档 | 设计文档「接口文档」章 |

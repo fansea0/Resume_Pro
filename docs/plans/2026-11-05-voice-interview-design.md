@@ -144,7 +144,7 @@ type AudioHooks interface {
 | --- | --- | --- |
 | 创建面试成功 | `Service.CreateInterview`（`StartInterview` 之后） | 全部主问题，按题号顺序 |
 | 追问落库 | `Service.Answer`（`NextQuestion != nil` 时） | 该追问题 |
-| 服务重启 | `main.go` 启动 goroutine | active 面试中 `audio_state ∈ {NULL, pending, failed}` 的题 |
+| 服务重启 | `main.go` 启动 goroutine | active 面试中 `audio_state ∈ {NULL, failed}` 的题（`pending` 先由启动归零处理） |
 
 ### worker 与状态机
 
@@ -153,10 +153,9 @@ type Job struct {
     InterviewID int64
     QuestionID  int64
     Text        string
-    Attempt     int
 }
 
-// 单 worker 串行消费；enqueued sync.Map 去重，避免同一题重复入队。
+// 单 worker 串行消费。
 func (g *Generator) Run(ctx context.Context) {
     for {
         select {
@@ -168,15 +167,23 @@ func (g *Generator) Run(ctx context.Context) {
     }
 }
 
+// 入队即抢占生成权（数据库原子操作，见「并发与竞争态」）。
+func (g *Generator) Enqueue(ctx context.Context, job Job) {
+    claimed, err := g.repo.ClaimAudioState(ctx, job.QuestionID)
+    if err != nil || !claimed {
+        return // 已被别的路径抢到，或已就绪
+    }
+    g.jobs <- job
+}
+
 func (g *Generator) process(ctx context.Context, job Job) {
-    defer g.enqueued.Delete(job.QuestionID)
-    _ = g.repo.UpdateAudioState(ctx, job.QuestionID, "pending")
     for attempt := 0; attempt <= maxAttempts; attempt++ {
         res, err := g.synth.Synthesize(ctx, SynthesisRequest{Text: job.Text})
         if err == nil {
-            if err := g.store.SaveQuestionAudio(ctx, job.InterviewID, job.QuestionID, res.Audio); err == nil {
-                _ = g.repo.UpdateAudioState(ctx, job.QuestionID, "ready")
+            if err := g.saveAudio(ctx, job, res.Audio); err == nil {
                 return
+            } else if errors.Is(err, errInterviewClosed) {
+                return // 面试已终止：丢弃结果
             }
         }
         if attempt < maxAttempts {
@@ -196,8 +203,8 @@ func (g *Generator) process(ctx context.Context, job Job) {
 
 | 值 | 含义 | 前端表现 |
 | --- | --- | --- |
-| `NULL` | 未入队（只应出现在创建前的短暂窗口） | 不显示喇叭 |
-| `pending` | 已入队 / 生成中 | 显示“生成中” |
+| `NULL` | 未生成、未抢占（待生成） | 不显示喇叭 |
+| `pending` | **已抢占生成权**（在队列中或正在合成） | 显示“生成中” |
 | `ready` | 已就绪 | 显示喇叭，可播放 / 自动播放 |
 | `failed` | 重试耗尽 | 不显示喇叭 |
 
@@ -205,18 +212,60 @@ func (g *Generator) process(ctx context.Context, job Job) {
 
 ```go
 func (g *Generator) Reload(ctx context.Context) error {
+    // 启动时没有 worker 在跑，pending 一定是上次崩溃的残留：先归零。
+    if _, err := g.repo.ResetStalePendingAudio(ctx); err != nil {
+        return err
+    }
     questions, err := g.repo.ActiveQuestionsNeedingAudio(ctx) // JOIN interviews 过滤 status=active
     if err != nil {
         return err
     }
     for _, q := range questions {
-        g.Enqueue(ctx, q.InterviewID, q.ID, q.Question)
+        g.Enqueue(ctx, q)
     }
     return nil
 }
 ```
 
 `main.go` 启动时执行 `go func() { _ = gen.Reload(ctx) }()`。`Reload` 只读数据库，不依赖内存队列，因此重启后能完整补齐。
+
+### 并发与竞争态
+
+生成环节有三条并发路径：**重启重载**（服务启动时扫库补齐）、**创建面试**（入队全部主问题）、**答题推进**（入队下一题）。它们可能同时命中同一道题，也可能与“面试结束清理”撞上。必须处理三类竞争：
+
+**1. 同一题被并发入队 → 数据库抢占**
+
+内存里的 `sync.Map` 去重只在单进程内有效，且存在“已出队但状态未更新”的窗口。更可靠的做法是让**数据库成为生成权的唯一真源**：
+
+```sql
+UPDATE interview_questions SET audio_state = 'pending'
+WHERE id = ? AND (audio_state IS NULL OR audio_state = 'failed')
+```
+
+条件 UPDATE 是原子的：只有影响行数为 1 的那一方拿到生成权，另一方直接跳过，不会重复合成。`pending` 语义因此从“已入队”收紧为“**已抢占生成权**”，既表示排队中，也表示正在合成。
+
+**2. 面试结束清理 vs 正在进行的合成 → 读写锁 + 终止标记**
+
+清理先删目录，但合成可能刚好在写文件，清完又冒出一个孤儿文件；同时 `audio_state` 被写回 `ready`，与磁盘状态不一致。
+
+处理：生成器持一把 `sync.RWMutex` 与一个“已终止面试”集合。
+
+- `CleanupInterview`：取**写锁** → 标记该面试已终止 → 释放 → 删目录 → 清 `audio_state`。
+- `saveAudio`：取**读锁** → 检查终止标记 → 未终止才落盘并写 `ready`。
+
+写锁与读锁互斥，于是只有两种可能：**先落盘后清理**（文件被删掉，状态被清空，一致）或**先清理后落盘**（看到终止标记，直接丢弃结果）。不会出现孤儿文件，也不会出现“状态 ready 但文件不存在”。
+
+**3. 进程崩溃留下 `pending` 残留 → 启动时归零**
+
+抢占后进程崩溃，`pending` 会永久卡住，而 `pending` 又不会被自动扫描重领（避免抢正在进行的任务）。解法是启动时归零：服务刚起来时还没有 worker 在跑，此时所有 `pending` 必然是上次崩溃的残留。`Reload` 先 `ResetStalePendingAudio`（把进行中面试的 `pending` 置回 `NULL`），再扫描重新入队。
+
+**兜底：入队失败要归还生成权**
+
+队列满时任务不会真正被处理，`pending` 会卡住。因此入队失败必须调用 `ReleaseAudioState` 把 `pending` 放回 `NULL`，让下次 `Reload` 能补上。
+
+**跨进程兜底**
+
+生成器是进程内的，重启会丢队列，但**不会丢数据**：文件在磁盘、状态在数据库。重启后 `Reload` 从数据库重建队列，已经 `ready` 的题不会被重新合成（抢占条件里 `ready` 不满足）。
 
 ### 为什么不在播放接口里同步生成
 
@@ -321,8 +370,10 @@ uploads/voice/{tenantID}/{interviewID}/q{questionID}.wav
 
 | 触发点 | 位置 | 动作 |
 | --- | --- | --- |
-| 正常答完 | `Service.Answer`（`Finished=true`） | 删除目录 + 重置 `audio_state` |
+| 正常答完 | `Service.Answer`（`Finished=true`） | 标记该面试已终止 → 删除目录 → 清空该场全部 `audio_state` |
 | 用户放弃 | `Service.Abort` | 同上 |
+
+「标记已终止」与「落盘」由生成器的读写锁互斥，保证清理之后不会再冒出孤儿音频文件（见「并发与竞争态」）。
 
 两者都在状态落库之后执行，清理失败只记 warn，不影响面试终态。
 
