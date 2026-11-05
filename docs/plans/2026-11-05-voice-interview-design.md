@@ -661,6 +661,7 @@ tools/voice-server/stub_server.py            零依赖 OpenAI 兼容桩服务（
 6. **落盘前校验**：存储层不校验音频格式（那是它的契约），由生成器在落盘前 `ValidateWAV` 兜一次。
 7. **上传体积在解析前限制**：multipart 解析会把整个 body 读进内存/临时文件，必须先 `Content-Length` 判断 + `MaxBytesReader` 兜底，否则用户录音会短暂落盘。
 8. **前端只产出 PCM16 WAV**：`MediaRecorder` 默认 webm/opus，必须自己重采样到 16kHz 单声道并封装 RIFF/WAVE，否则后端 `ValidateWAV` 直接拒。
+9. **校对结果剥掉包裹标记**：prompt 要求模型「只输出纯文本」，但模型经常回 Markdown 围栏、加粗或引号；这些标记进了输入框就是脏数据。只剥「成对且包裹整个文本」的标记，文本内部的引号属于正常内容不能动。
 
 ### 已知限制（实现后确认）
 
