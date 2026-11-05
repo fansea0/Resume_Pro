@@ -2,95 +2,83 @@
 
 > 日期：2026-11-05
 > 状态：设计待审
-> 影响范围：新增 `backend/internal/speech/` 包、`backend/internal/httpapi/voice_handler.go`、`frontend/src/api/voice.ts`、`frontend/src/hooks/useVoiceRecorder.ts`、`frontend/src/utils/wav.ts`，改动 `backend/cmd/server/main.go`、`backend/internal/httpapi/router.go`、`backend/internal/store/migrate.go`、`backend/internal/interview/`、`frontend/src/components/InterviewChat.tsx`。
+> 影响范围：新增 `backend/internal/speech/` 包、`backend/internal/httpapi/voice_handler.go`、`frontend/src/api/voice.ts`、`frontend/src/hooks/useVoiceRecorder.ts`、`frontend/src/utils/wav.ts`；改动 `backend/cmd/server/main.go`、`backend/internal/httpapi/router.go`、`backend/internal/httpapi/interview_handler.go`、`backend/internal/store/migrate.go`、`backend/internal/interview/`、`frontend/src/components/InterviewChat.tsx`。
 > **数据库改动仅一列**：`interview_questions.audio_state`（幂等迁移，新增列可空）。转写文本不入库，走现有答题接口提交。
 
 ## 目标
 
 AI 模拟面试目前是纯文字流程：面试官出题、用户打字回答。本功能给它加上声音：
 
-- **题目朗读**：面试官提问后可以听语音，也可随时重播。
-- **录音转写**：用户可以口述回答，识别成文字填入输入框，确认后提交。
+- **题目朗读**：进入页面自动播放当前题语音，也可随时重播。
+- **录音转写**：口述回答自动识别成文字，经 AI 修复错别字后填入输入框光标处，确认后提交。
 
 **核心设计原则**：
 
-- **抽象在协议层，不在厂商层**。语音能力对外只暴露两个 Go 接口，实现层统一走 OpenAI 音频协议（`/v1/audio/speech`、`/v1/audio/transcriptions`）。本地 MLX 推理服务和云端 API 因此是同一份代码，切换只改环境变量。若将来某家 API 不兼容 OpenAI 协议，新增一个 provider 实现即可，上层（interview / httpapi）零改动。
-- **文字为主，语音是增强**。不改变现有打字答题流程，不做全语音模式。识别结果一定回填到输入框让用户过目，绝不自动提交。
+- **抽象在协议层，不在厂商层**。语音能力对外只暴露 Go 接口，实现层统一走 OpenAI 音频协议（`/v1/audio/speech`、`/v1/audio/transcriptions`）。本地 MLX 推理服务与云端 API 是同一份代码，切换只改环境变量。
+- **文字为主，语音是增强**。不改变现有打字答题流程，识别结果回填到输入框让用户过目，绝不自动提交。
+- **音频只在后台生成**。播放接口只读已生成的文件，绝不在请求里同步合成。
 - **后端零音频编解码依赖**。本机没有 ffmpeg，转码全部在浏览器完成（Web Audio API），Go 侧只搬运字节。
-- **语音服务不可用时优雅降级**。语音是可选增强，任何失败都不能阻断面试主流程。
+- **语音服务不可用时优雅降级**。任何失败都不能阻断面试主流程。
 
 ## 非目标
 
-- 不做流式 TTS（边生成边播），不做播放打断。
-- 不做语音克隆、不做音色设计、不做情感指令。
+- 不做流式 TTS、不做播放打断。
+- 不做语音克隆、音色设计、情感指令。
 - 不做实时语音对话（Realtime API）。
-- 不把转写结果落库、不做转写文本的后处理（去口语词、纠错）。
-- 不做录音的长期归档 —— 面试结束即清理，报告页只保留文字。
+- **不做录音回放与录音归档** —— 录音仅在转写时透传，不落盘、不回放。
+- **不做转写文本的润色/改写**，只做错别字修复（最低思考强度）。
 - 不引入麦克风权限的额外管理界面。
 - 不改动现有 LLM 评分与追问逻辑。
 
 ## 现有约束
 
-调查现有代码后确认的、决定实现方式的事实：
-
-- **后端**：Go 1.26 + Gin，路由统一在 `backend/internal/httpapi/router.go` 的 `NewRouter` 构造，`RouterConfig` 携带依赖，缺依赖时路由仍注册并返回 503（AI 功能的既有降级约定）。日志用 logrus 结构化字段。
-- **面试状态**：面试进行态存在 Redis（`internal/interview/redis_store.go`），题面与答案存 SQLite。创建面试时**一次性生成全部主问题并落库**，追问在评分时才动态产生。
-- **现有 REST 面**：`/api/interviews` 组下有 create / list / get / answer / questions / abort，全部走 `requireAuthentication` 中间件，租户隔离靠 service 层校验。
-- **前端**：React 18 + Vite，`InterviewChat.tsx` 是进行中页面（逐题对话流 + 贴底输入坞），`api/interviews.ts` 是接口层，`api/client.ts` 的 `apiFetch` 固定 `Content-Type: application/json`（multipart 需另走 fetch）。
-- **测试**：后端用 httptest + 内存 SQLite 做路由级黑盒测试；前端用 vitest + jsdom。
-- **本机**：Apple M5 / 32GB RAM / macOS 26.4.1，**无 CUDA**（官方 vLLM 路线不可用），无 ffmpeg，已有 ollama（仅 embedding 模型）与 uv。
+- **后端**：Go + Gin，路由统一在 `backend/internal/httpapi/router.go` 的 `NewRouter` 构造，`RouterConfig` 携带依赖，缺依赖时路由仍注册并返回 503。日志用 logrus。
+- **面试状态**：进行态在 Redis（checkpoint），题面与答案在 SQLite。创建时一次性生成全部主问题并落库，追问在评分时动态产生。
+- **现有 REST 面**：`/api/interviews` 组下有 create / list / get / answer / questions / abort，全部走 `requireAuthentication`，租户隔离在 service 层。
+- **前端**：React 18 + Vite，`InterviewChat.tsx` 是进行中页面（逐题对话流 + 贴底输入坞），`api/interviews.ts` 是接口层，`api/client.ts` 的 `apiFetch` 固定 JSON Content-Type（multipart 需另走 fetch）。
+- **测试**：后端 httptest + 内存 SQLite；前端 vitest + jsdom。
+- **本机**：Apple M5 / 32GB RAM / macOS，**无 CUDA**，无 ffmpeg，已有 ollama（仅 embedding）与 uv。
 
 ## 技术选型
 
-### 模型与运行时
-
 | 用途 | 模型 | 体积 | 说明 |
 | --- | --- | --- | --- |
-| ASR | `mlx-community/Qwen3-ASR-1.7B-8bit` | ~1.5 GB | 官方 mlx-audio 0.3.1 转换版 |
+| ASR | `mlx-community/Qwen3-ASR-1.7B-8bit` | ~1.5 GB | 官方 mlx-audio 转换版 |
 | TTS | `mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit` | ~1.9 GB | 带 9 个预置音色 |
+| 错别字修复 | 复用现有 `OPENAI_MODEL`（`llm.NewResponsesModel`） | — | 独立实例，`ReasoningEffort=low` |
 
-两模型同时常驻约 3.5 GB，32GB 内存无压力。
+两模型同时常驻约 3.5 GB，32GB 内存无压力。选 MLX 而非 GGUF：M5 的 Metal 融合路径成熟，Go 侧只需对接现成的 OpenAI 兼容 server。选 8bit 而非 4bit：mlx-audio PR #398 记录 CustomVoice 8bit 效果良好，4bit 音调异常；ASR 侧 4bit 在部分语种有幻觉。
 
-**选 MLX 而非 GGUF**：M5 的 MLX Metal 融合路径成熟，量化转换与推理代码都在 mlx-audio 内，Go 侧只需对接一个现成的 OpenAI 兼容 server，不必自建 llama.cpp 代理层。
-
-**选 8bit 而非 4bit**：有实测依据 —— mlx-audio PR #398 记录 CustomVoice 8bit 效果良好，4bit "still okay, but kind of slow; a little weird intonation"。ASR 侧 4bit 量化 `embed_tokens` 在日语等语种会出现幻觉（实测 CER 劣化 172%）。省下的 1GB 不值得。
-
-### 推理服务
-
-`mlx-audio` 自带 OpenAI 兼容 API server（FastAPI + uvicorn），无需自写代理：
+推理服务用 `mlx-audio` 自带 server：
 
 ```bash
 mlx_audio.server --host 127.0.0.1 --port 21100
 ```
 
-端口 21100 避开常用段（本机已跑多个项目）。
+端口 21100 避开常用段。
 
 ## 架构
 
 ```
-frontend/src/components/InterviewChat.tsx
-  ├─ api/voice.ts            GET questions/:qid/audio / POST voice/transcribe
-  ├─ hooks/useVoiceRecorder  MediaRecorder → WAV(16k mono) → 上传
+InterviewChat.tsx
+  ├─ api/voice.ts            GET questions/:qid/audio / POST questions/:qid/transcribe
+  ├─ hooks/useVoiceRecorder  MediaRecorder → WAV(16k mono)
   └─ utils/wav.ts            浏览器端重采样 + WAV 封装
-        │ HTTP (JSON / multipart)
+        │ HTTP
         ▼
-backend/internal/httpapi/voice_handler.go
-        │
+httpapi/voice_handler.go
         ▼
-backend/internal/speech/          ← 抽象层
-  ├─ speech.go    Synthesizer / Transcriber 接口 + 请求响应类型
-  ├─ openai.go    OpenAICompatibleProvider（唯一实现）
-  ├─ config.go    从 env 读配置（TTS / ASR 各自独立）
-  ├─ store.go     音频落盘 + 目录清理
-  └─ cache.go     合成去重 + singleflight
-        │ HTTP (OpenAI 音频协议，两个 base URL 独立)
-        ├──────────────────────────┐
-        ▼                          ▼
-TTS 服务 (VOICE_TTS_BASE_URL)   ASR 服务 (VOICE_ASR_BASE_URL)
-  POST /v1/audio/speech          POST /v1/audio/transcriptions
+speech/                     ← 抽象层
+  ├─ speech.go   Synthesizer / Transcriber / TextModel 接口
+  ├─ openai.go   OpenAICompatibleProvider（TTS + ASR 共用协议）
+  ├─ config.go   env 配置（TTS / ASR 各自独立）
+  ├─ store.go    题目音频落盘 + 目录清理
+  ├─ generator.go 串行生成 worker + 重试 + 重启 reload
+  ├─ correct.go  AI 错别字修复
+  └─ hooks.go    实现 interview.AudioHooks
         │
-        └─ 本地默认：两者都指向 mlx_audio.server :21100
-           可各自独立切到云端，无需改 Go 代码
+        ├─ TTS 服务 (VOICE_TTS_BASE_URL)   POST /v1/audio/speech
+        └─ ASR 服务 (VOICE_ASR_BASE_URL)   POST /v1/audio/transcriptions
 ```
 
 ### 抽象层接口
@@ -99,9 +87,8 @@ TTS 服务 (VOICE_TTS_BASE_URL)   ASR 服务 (VOICE_ASR_BASE_URL)
 package speech
 
 type SynthesisRequest struct {
-    Text     string
-    Voice    string
-    Language string
+    Text  string
+    Voice string
 }
 type SynthesisResult struct {
     Audio       []byte
@@ -111,7 +98,6 @@ type SynthesisResult struct {
 type TranscriptionRequest struct {
     Audio       []byte
     ContentType string
-    Language    string
 }
 type TranscriptionResult struct {
     Text string
@@ -123,258 +109,328 @@ type Synthesizer interface {
 type Transcriber interface {
     Transcribe(ctx context.Context, req TranscriptionRequest) (TranscriptionResult, error)
 }
+
+// TextModel 是错别字修复所需的最小模型接口（与 interview.ResponsesModel 同形）。
+type TextModel interface {
+    Generate(ctx context.Context, in []*schema.AgenticMessage, opts ...model.Option) (*schema.AgenticMessage, error)
+}
 ```
 
-接口与传输实现分离，收益具体体现在：
+### interview 层依赖的窄接口
 
-- `VOICE_TTS_BASE_URL=http://127.0.0.1:21100/v1` → 本地 MLX 出题
-- `VOICE_ASR_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1` + `VOICE_ASR_MODEL=qwen3-asr-flash` → 阿里云百炼转写
-
-两者协议同源，是同一份 `OpenAICompatibleProvider` 代码，不存在"本地版/云端版"两套实现。且 TTS 与 ASR 的配置完全独立（各自的 base URL / api key / model / http.Client），可任意组合。
-
-## 三个必须处理的实现坑
-
-以下三点是从 `mlx_audio/server.py` 源码核实出来的真实行为，不是假设。若不显式处理，功能会以难以定位的方式失败。
-
-### 坑 1：`response_format` 决定 MIME，但后端只产 WAV
-
-`/v1/audio/speech` 用 `media_type=f"audio/{payload.response_format}"` 拼 Content-Type，而 TTS 内部固定产出 24kHz PCM。传 `response_format=mp3` 会得到一个**标着 audio/mp3、实则 WAV 字节**的响应，浏览器 `<audio>` 按 MIME 猜格式会拒绝播放。
-
-**处理**：Go 侧请求固定用 `response_format=wav`，且**不信任**上游返回的 Content-Type —— `Synthesize` 直接把 Content-Type 定为 `audio/wav`，与实际字节一致。前端不依赖 MIME 猜测，直接按 `audio/wav` 播放。
-
-### 坑 2：`/v1/audio/transcriptions` 默认返回 ndjson
-
-OpenAI 协议要求 JSON，但 mlx-audio 的 `response_format` **默认值是 `ndjson`**（返回 `application/x-ndjson` 流）。不显式指定就拿到 ndjson，按 JSON 解析会失败。
-
-**处理**：Go 侧请求**必须显式传** `response_format=json`，此时服务端返回 `{"text": "..."}`。同时 `Transcribe` 对响应做容错：若 Content-Type 是 ndjson，取第一行 JSON 的 `text` 字段作为兜底，防止服务端默认值变化导致整体失效。
-
-### 坑 3：预合成与前台请求在服务端抢同一个 GPU worker
-
-mlx-audio 的 `InferenceBroker` 是**单 worker 线程**（源码注释：`Keep all GPU work serialized`），所有 TTS/STT 请求在服务端串行执行。预合成 worker 若正在合成一批题，用户此时点喇叭，请求会在服务端队列里排队等前面的批次跑完。
-
-关键细节：broker 支持 **batch 合并** —— 同 `endpoint_kind` + 同 `model_name` + 同 `batch_key` 的待处理请求会被凑成一批一次执行（TTS 默认 `max_batch_size=8`）。这既是机会也是风险：
-
-- **机会**：预合成并发提交多题，服务端会自动合批，吞吐显著高于逐题串行。
-- **风险**：一批 8 题合成期间，用户点喇叭的请求排在队尾，要等整批跑完。
-
-**处理**：Go 侧不试图绕过服务端的串行化（那需要改 mlx-audio，不在我们的改动范围），而是在**请求排序与合批粒度**上做控制：
-
-1. **前台优先**：预合成 worker 用**独立的 HTTP 客户端与独立的 semaphore（并发 1）**，与前台请求分属不同连接池。前台请求发出后立即到达服务端队列；预合成批次虽大，但用户请求排在队尾的等待时间 = 当前正在执行的那一批剩余时间。
-2. **缩小预合成批次**：预合成**逐题串行提交**（不靠并发凑批），每题单独一个请求。这样服务端每次只跑 1 题，用户点喇叭最多等 1 题的时间，而不是一整批 8 题。代价是预合成总时长变长 —— 但预合成在后台进行，总时长不敏感，用户等待时间才是敏感指标。
-3. **同一题不重复计算**：`speech.Cache` 用 `sync.Map` 记录每题状态（pending / ready / failed）+ singleflight。前台请求命中 pending 时**不重复发起**，等待该任务完成或超时；预合成失败标记 failed，前台请求改为自行发起一次同步合成（singleflight 保证不并发重复）。
-
-这样三个目标同时成立：预合成在后台跑、不重复算、用户点喇叭最多等一题。
-
-## 语音文件生命周期
-
-题目语音（TTS 产物）与用户录音（上传的原始音频）统一存放在一个面试专属目录下，面试结束时整体删除。
-
-### 目录布局
-
-```
-uploads/voice/{tenantID}/{interviewID}/
-  q{questionID}.wav      题目语音（TTS 产物）
-  r{questionID}.wav      用户录音（原始上传音频）
+```go
+// AudioHooks 是面试层对语音能力的窄依赖；实现由 speech 包提供，main.go 接线。
+// 所有方法必须安全失败（只记日志，不把错误抛回答题链路）。
+type AudioHooks interface {
+    // Enqueue 把题目加入后台串行生成队列（创建面试 / 追问落库时调用）。
+    Enqueue(ctx context.Context, interviewID, questionID int64, text string)
+    // CleanupInterview 面试终态后删除音频目录并重置 audio_state。
+    CleanupInterview(ctx context.Context, interviewID int64)
+}
 ```
 
-以 **interviewID 为清理单元**，而不是以内容 hash 为单元。这带来两个直接好处：
+## 音频生成与重载
 
-1. 面试结束 = 删除一个目录，逻辑简单，不需要跨目录反查引用。
-2. 天然满足租户隔离 —— 路径第一层就是 tenantID，且只经鉴权接口读取，不通过静态目录裸暴露。
+### 原则
 
-代价是同一段题目文本在不同面试间不再复用音频。但面试题目是一次性生成、几乎不重复的内容，而跨面试复用会带来"清理时无法判断是否仍被其他面试引用"的难题 —— 用 interviewID 作单元更简单也更安全。
+- **生成只在后台发生**：播放接口只读已生成的文件，绝不在请求里同步合成。
+- **串行 + 有序**：全局单 worker，按 `(interviewID, questionID)` 顺序处理，避免与评分/生题抢 GPU。
+- **可重试**：单题失败按退避重试，耗尽后标记 `failed`。
+- **可重载**：服务重启后从数据库重建队列，补齐未完成的部分。
 
-### 存在性需要落库
+### 触发点
 
-后端重启后，内存态全部丢失，但磁盘文件还在。为了让前端知道"这题有没有音频"，以及让后端在重启后仍能正确回答，需要把存在性写入数据库。
-
-`interview_questions` 表新增一列：
-
-```sql
-ALTER TABLE interview_questions ADD COLUMN audio_state TEXT;
-```
-
-取值：
-
-| 值 | 含义 |
-| --- | --- |
-| `NULL` | 尚无音频（未合成 / 未录音 / 已清理） |
-| `ready` | 题目语音已就绪，可播放 |
-| `recorded` | 用户录音已保存，可回放 |
-
-迁移沿用 `backend/internal/store/migrate.go` 的幂等 SQL 风格（`CREATE TABLE IF NOT EXISTS` 同款写法，重复执行安全）。
-
-**为什么不靠目录扫描**：目录扫描需要遍历 `{tenantID}/{interviewID}/` 下所有文件再与题目 id 求交集，每次播放前都要做一次 IO；且无法区分"文件存在但内容损坏"与"文件不存在"。落库是 O(1) 查询，且状态语义明确。
-
-### 三种音频状态与来源
-
-| 文件 | 何时写入 | `audio_state` |
+| 触发 | 位置 | 入队内容 |
 | --- | --- | --- |
-| `q{questionID}.wav` | 预合成或前台合成题目语音成功后 | `ready` |
-| `r{questionID}.wav` | 用户录音上传并转写成功后 | `recorded` |
-| 两者 | 面试结束（completed / aborted）后整体删除 | 回到 `NULL` |
+| 创建面试成功 | `Service.CreateInterview`（`StartInterview` 之后） | 全部主问题，按题号顺序 |
+| 追问落库 | `Service.Answer`（`NextQuestion != nil` 时） | 该追问题 |
+| 服务重启 | `main.go` 启动 goroutine | active 面试中 `audio_state ∈ {NULL, pending, failed}` 的题 |
 
-用户录音与题目语音是**两个独立文件**，可以共存（用户录了音，题目语音也合成了）。但 `audio_state` 只有一列 —— 因此该列表达的是"**该题是否有可播放内容**"，具体是题目语音还是用户录音，由前端按需请求对应文件并由 404 判定。
+### worker 与状态机
 
-更精确的做法是拆两列（`tts_state` / `recording_state`），但当前需求下两列的组合只有 4 种、实际只会用到 2 种，一列足够且更省事。若后续需要"题目语音与用户录音同时可播且要分别标识"，再拆列。
+```go
+type Job struct {
+    InterviewID int64
+    QuestionID  int64
+    Text        string
+    Attempt     int
+}
 
-### 清理时机
+// 单 worker 串行消费；enqueued sync.Map 去重，避免同一题重复入队。
+func (g *Generator) Run(ctx context.Context) {
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case job := <-g.jobs:
+            g.process(ctx, job)
+        }
+    }
+}
 
-面试结束有两个触发点，**都要清理**：
+func (g *Generator) process(ctx context.Context, job Job) {
+    defer g.enqueued.Delete(job.QuestionID)
+    _ = g.repo.UpdateAudioState(ctx, job.QuestionID, "pending")
+    for attempt := 0; attempt <= maxAttempts; attempt++ {
+        res, err := g.synth.Synthesize(ctx, SynthesisRequest{Text: job.Text})
+        if err == nil {
+            if err := g.store.SaveQuestionAudio(ctx, job.InterviewID, job.QuestionID, res.Audio); err == nil {
+                _ = g.repo.UpdateAudioState(ctx, job.QuestionID, "ready")
+                return
+            }
+        }
+        if attempt < maxAttempts {
+            select {
+            case <-time.After(backoff(attempt)): // 1s / 3s / 10s
+            case <-ctx.Done():
+                return
+            }
+        }
+    }
+    _ = g.repo.UpdateAudioState(ctx, job.QuestionID, "failed")
+    logrus.WithFields(logrus.Fields{"interview_id": job.InterviewID, "question_id": job.QuestionID}).Warn("question audio generation failed")
+}
+```
 
-| 触发点 | 代码位置 | 动作 |
+`audio_state` 状态机：
+
+| 值 | 含义 | 前端表现 |
 | --- | --- | --- |
-| 正常答完（生成总评） | `graph.go` finishNode（status=completed 落库后） | 删除目录 + 清 `audio_state` |
-| 用户放弃 | `interview.Service.Abort`（status=aborted 落库后） | 同上 |
+| `NULL` | 未入队（只应出现在创建前的短暂窗口） | 不显示喇叭 |
+| `pending` | 已入队 / 生成中 | 显示“生成中” |
+| `ready` | 已就绪 | 显示喇叭，可播放 / 自动播放 |
+| `failed` | 重试耗尽 | 不显示喇叭 |
 
-两者都在**状态落库之后**执行清理。清理失败**只记 logrus warn，不影响面试结果** —— 状态已经是终态，不能因为删文件失败而让答题接口报错。
+### 重启重载
 
-清理实现在 `speech` 包内（`speech.AudioStore.CleanupInterview`），由 interview 层在上述两个时机调用。interview 包不直接碰文件系统，保持它现有的分层（service 不 import resume / targetjob 包，同理不 import speech 的存储实现，只依赖一个窄接口）。
-
-### 重启后仍能播放
-
-面试进行中重启后端：
-
-- **文件还在磁盘** —— `uploads/voice/{tenantID}/{interviewID}/` 是持久目录，不随进程消失。
-- **状态还在数据库** —— `audio_state` 列落库，重启后仍能查到哪题有音频。
-- **面试进度还在 Redis** —— 面试图 checkpoint 由 Redis 持久化（既有机制），后端重启后 `interview.Service.Questions` 仍能读回题目与已答内容。
-
-因此前端重新进入面试页时，`GET /api/interviews/:id/questions` 的每题 DTO 带上 `audioState` 字段，前端据此决定是否显示"播放题目语音"与"回放我的录音"按钮。**这就是"面试未结束重启还需要支持播放"的完整链路。**
-
-需要注意的是：若 Redis 本身也重启导致 checkpoint 丢失，现有机制会返回 `ErrSessionExpired`（会话过期，需重新开始面试）—— 这是既有行为，语音功能不改变它。
-
-## 数据流
-
-### 题目朗读
-
-```
-创建面试成功
-  → 后台 worker 按题号顺序取主问题，逐题串行提交（并发 1，见坑 3）
-  → 对每题：Synthesize(text) → 落盘 uploads/voice/{tenantID}/{interviewID}/q{questionID}.wav
-  → 更新 audio_state = 'ready'
-  → 失败：记 logrus warn，标记 failed，不阻断创建流程
-
-用户点某题喇叭
-  → GET /api/interviews/:id/questions/:qid/audio
-  → 校验租户归属
-  → 命中缓存：直接返回文件字节
-  → 未命中：发起同步合成（singleflight）→ 写缓存 → 更新 audio_state='ready' → 返回
+```go
+func (g *Generator) Reload(ctx context.Context) error {
+    questions, err := g.repo.ActiveQuestionsNeedingAudio(ctx) // JOIN interviews 过滤 status=active
+    if err != nil {
+        return err
+    }
+    for _, q := range questions {
+        g.Enqueue(ctx, q.InterviewID, q.ID, q.Question)
+    }
+    return nil
+}
 ```
 
-缓存单元是 `{tenantID}/{interviewID}/q{questionID}.wav`，面试结束即随目录整体删除（见"语音文件生命周期"）。
+`main.go` 启动时执行 `go func() { _ = gen.Reload(ctx) }()`。`Reload` 只读数据库，不依赖内存队列，因此重启后能完整补齐。
+
+### 为什么不在播放接口里同步生成
+
+TTS 单题数秒到数十秒，本地 GPU worker 又是串行的；在播放请求里同步合成会让用户点击后干等，还会与后台队列抢资源。改为“后台提前生成 + 播放只读”后，播放是 O(1) 文件读取，用户体验与系统吞吐都更好。
+
+## 调用链路图
+
+> 只画新增/变化的逻辑；既有评分、生题、Redis 锁、checkpoint 等不展开。
+
+### 创建面试 + 生成触发
+
+```
+POST /api/interviews
+  → interviewHandler.create
+      1) HasActiveInterview(tenant) 预检        ← 新增：最前面，避免白跑
+         已有 active → 409，不加载简历/JD
+      2) 加载 resume / targetJob（既有）
+      3) Service.CreateInterview（既有：生题 + 落库 + StartInterview）
+      4) audio.Enqueue(全部主问题)               ← 新增
+  → 201 { interview, firstQuestion }
+  → 后台 generator 串行生成 → 落盘 → audio_state=ready
+```
+
+### 答题 + 追问触发
+
+```
+POST /api/interviews/:id/answer（既有图执行）
+  → Service.Answer 拿到 graphResult
+  → NextQuestion != nil → audio.Enqueue(nextQuestion)   ← 新增
+  → Finished         → audio.CleanupInterview(id)      ← 新增
+  → 200
+```
+
+### 播放题目语音
+
+```
+GET /api/interviews/:id/questions/:qid/audio
+  → 校验面试/题目归属
+  → 读 audio_state
+      ready   → 200 audio/wav
+      pending → 409 {"state":"pending"}
+      failed  → 503 {"state":"failed"}
+      NULL    → 409 {"state":"pending"}
+```
 
 ### 录音转写
 
 ```
-用户点麦克风 → MediaRecorder 录制（webm/opus 或 mp4/aac）
-  → 停止后 decodeAudioData 解码
-  → OfflineAudioContext 重采样到 16kHz 单声道
-  → 手工写 16bit PCM WAV 头
-  → POST /api/interviews/:id/voice/transcribe（multipart）
-  → Go 侧落盘 uploads/voice/{tenantID}/{interviewID}/r{questionID}.wav
-  → Go 侧转发给 provider（multipart，response_format=json）
-  → 返回 {"text": "..."}
-  → 更新 audio_state = 'recorded'
-  → 前端追加进输入框（输入框为空则直接填），用户可编辑
-  → 用户确认后走现有 POST /:id/answer 提交
+MediaRecorder → 停止 → decodeAudioData → 重采样 16k/mono → WAV 头
+  → POST /api/interviews/:id/questions/:qid/transcribe (multipart)
+  → 校验归属 + WAV 格式
+  → ASR 转写
+  → AI 错别字修复（最低思考强度；失败则用原文）
+  → 200 {"text":"..."}
+  → 前端插入到光标位置
 ```
 
-**转写文本不入库**。它只是帮用户打字，提交路径与纯键盘完全一致。**但录音音频落盘**（`r{questionID}.wav`），用于回放与重启后恢复，面试结束时随目录清理。
-
-### 回放我的录音
+### 前端（简）
 
 ```
-用户点"回放录音"
-  → GET /api/interviews/:id/questions/:qid/recording
-  → 校验租户归属 + audio_state
-  → 命中：返回 r{questionID}.wav 字节
-  → 未命中：404（前端隐藏按钮，不会触发）
+InterviewChat.tsx
+ ├─ load() → GET /questions（含 audioState）
+ ├─ 当前题 audioState=ready → 自动播放（浏览器拦截时提示点击）
+ ├─ [🔊] 播放 / 重播
+ ├─ [🎤] 录音 → 转写 → 插入光标处
+ └─ voice.enabled=false → 隐藏语音按钮
 ```
 
-## 后端接口
+## 三个必须处理的实现坑
 
-挂在现有 `/api/interviews` 组下，走 `requireAuthentication`，租户隔离在 service 层校验（与既有接口一致）。
+以下是从 `mlx_audio/server.py` 源码核实出来的真实行为，不显式处理会以难以定位的方式失败。
+
+### 坑 1：`response_format` 决定 MIME，但后端只产 WAV
+
+`/v1/audio/speech` 用 `response_format` 拼 Content-Type，而 TTS 内部固定产出 24kHz PCM。传 `mp3` 会得到标着 `audio/mp3`、实则 WAV 字节的响应，浏览器按 MIME 猜格式会拒绝播放。
+
+**处理**：Go 侧固定用 `response_format=wav`，且**不信任**上游返回的 Content-Type —— `Synthesize` 直接定为 `audio/wav`。
+
+### 坑 2：`/v1/audio/transcriptions` 默认返回 ndjson
+
+mlx-audio 的 `response_format` 默认值是 `ndjson`（返回 `application/x-ndjson` 流），按 JSON 解析会失败。
+
+**处理**：Go 侧**必须显式传** `response_format=json`；同时 `Transcribe` 做容错：若 Content-Type 是 ndjson，取第一行 JSON 的 `text` 字段兜底。
+
+### 坑 3：生成队列与 GPU 串行
+
+mlx-audio 的 `InferenceBroker` 是**单 worker 线程**（源码注释：`Keep all GPU work serialized`），所有 TTS/STT 请求在服务端串行执行。
+
+**处理**：Go 侧的生成 worker 也固定并发 1、逐题串行，不与评分/生题抢 GPU；播放接口不生成，天然不抢。追问落库后入队，排在主问题之后。
+
+## 语音文件生命周期
+
+```
+uploads/voice/{tenantID}/{interviewID}/q{questionID}.wav
+```
+
+以 **interviewID 为清理单元**：面试结束 = 删除一个目录，逻辑简单，且天然满足租户隔离。`audio_state` 状态机见「音频生成与重载」。
+
+**不存录音**：转写音频只在请求内透传给 ASR，不落盘、不回放。
+
+### 清理时机
+
+| 触发点 | 位置 | 动作 |
+| --- | --- | --- |
+| 正常答完 | `Service.Answer`（`Finished=true`） | 删除目录 + 重置 `audio_state` |
+| 用户放弃 | `Service.Abort` | 同上 |
+
+两者都在状态落库之后执行，清理失败只记 warn，不影响面试终态。
+
+### 重启后仍能播放
+
+- 文件在磁盘，`audio_state` 在数据库，重启后仍可读。
+- 未生成完的题由 `Reload` 重新入队补齐。
+- 面试进度在 Redis checkpoint，重启后仍可恢复（既有机制）。
+
+## 接口文档
+
+全部挂在 `/api/interviews` 组下，走 `requireAuthentication`，租户隔离在 service 层。
 
 ### `GET /api/interviews/:id/questions/:qid/audio`
 
-返回该题的**题目语音**（TTS 产物）。
+返回该题的题目语音（TTS 产物）。
 
-- 200：`audio/wav` 二进制
-- 404：面试或题目不存在、不属于当前租户，或该题无音频（与其他接口一致的 404 语义，不泄露存在性）
-- 503：语音服务未启用或不可用
+| 状态码 | 含义 | 响应体 |
+| --- | --- | --- |
+| 200 | 已就绪 | `audio/wav` 二进制 |
+| 401 | 未认证 | `{"error":"authentication required"}` |
+| 404 | 面试/题目不存在或不属于当前租户 | `{"error":"interview not found"}` |
+| 409 | 未就绪（`pending` / `NULL`） | `{"state":"pending"}` |
+| 503 | 生成失败 | `{"state":"failed"}` |
 
-### `GET /api/interviews/:id/questions/:qid/recording`
+前端：`ready` → 播放；`pending` → 显示“生成中”；`failed` → 不显示喇叭。
 
-返回该题的**用户录音**（原始上传音频）。
+### `POST /api/interviews/:id/questions/:qid/transcribe`
 
-- 200：`audio/wav` 二进制
-- 404：面试或题目不存在、不属于当前租户，或该题无录音
-- 503：语音服务未启用
+multipart 上传录音，返回经 AI 修复错别字后的文本。
 
-### `POST /api/interviews/:id/voice/transcribe`
+**请求**
 
-multipart 上传录音。**落盘后再转写**，两者都在本接口内完成。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `file` | file | WAV 音频（16kHz 单声道最优，后端校验 RIFF/采样率/声道/时长/体积） |
 
-- 请求：`file` 字段，WAV 音频
-- 200：`{"text": "识别文本"}`
-- 400：音频格式非法或超限
-- 404 / 503：同上
+`qid` 由路径携带。后端不做转码，只校验后透传给 ASR。
 
-**后端校验**：RIFF magic、采样率、声道数、时长上限（10 分钟）、体积上限（20MB）。后端**不做任何转码**，只做校验与字节透传。
+**响应**
 
-### 题目 DTO 新增 `audioState`
+| 状态码 | 含义 | 响应体 |
+| --- | --- | --- |
+| 200 | 成功 | `{"text":"修复后的文本"}` |
+| 400 | 音频格式非法或超限 | `{"error":"invalid audio"}` |
+| 401 | 未认证 | `{"error":"authentication required"}` |
+| 404 | 面试/题目不存在或不属于当前租户 | `{"error":"interview not found"}` |
+| 503 | ASR 不可用 | `{"error":"transcription unavailable"}` |
 
-`GET /api/interviews/:id/questions` 的每题返回体增加：
+**处理链**：ASR 转写 → AI 错别字修复（`ReasoningEffort=low`，只改错别字/同音字/标点，不改语义、不润色）→ 返回。AI 修复失败时返回 ASR 原文，不阻断转写。
+
+**后端校验**：RIFF magic、采样率、声道数、时长上限 10 分钟、体积上限 20MB。
+
+### `GET /api/interviews/:id/questions`
+
+每题 DTO 增加 `audioState` 字段：
 
 ```json
-{ "id": 12, "question": "...", "audioState": "ready" }
+[
+  { "id": 12, "question": "...", "audioState": "ready" },
+  { "id": 13, "question": "...", "audioState": "pending" }
+]
 ```
 
-取值 `ready` / `recorded` / `null`。前端据此显示"播放题目语音"与"回放我的录音"按钮。面试结束后清理会把该列置回 `null`，与文件删除保持一致。
+取值 `ready` / `pending` / `failed` / `null`。面试结束后清理会置回 `null`。
 
-**这是本设计唯一的 schema 改动**（`interview_questions.audio_state` 新增一列，幂等迁移）。转写文本仍不入库。
+### `GET /api/interviews/:id`
+
+响应增加语音开关：
+
+```json
+{ "id": 1, "status": "active", "voice": { "enabled": true } }
+```
+
+`enabled` 只反映 `VOICE_ENABLED` 配置，不反映运行时可达性。
+
+### 错误码汇总
+
+| 码 | 场景 |
+| --- | --- |
+| 400 | 音频格式非法/超限、请求体缺失 |
+| 401 | 未认证 |
+| 404 | 面试/题目不存在或不属于当前租户 |
+| 409 | 已有 active 面试（创建时）、音频未就绪 |
+| 503 | 语音服务未启用或不可用、生成失败 |
 
 ## 前端交互
 
-### 题目朗读
+### 自动播放
 
-每道面试官题目右侧加喇叭图标按钮，点击播放该题语音。可重播已答过的题。
+- 进入面试页、每次答题后，若当前题 `audioState === "ready"`，自动播放。
+- 若 `pending`，显示“生成中”，并用短轮询（1.5s × 最多 40 次）等待就绪后自动播放。
+- **浏览器自动播放限制**：无用户手势时 `audio.play()` 会被拒绝。捕获 `NotAllowedError` 后显示“点击播放”提示，用户首次交互后恢复自动播放。
 
-- 图标按钮遵循仓库既有约定：有足够点击面积、键盘焦点样式、无障碍名称（`aria-label`）、`title` 悬浮提示。
-- 播放中该按钮显示加载态（合成中）。
-- 播放失败给出行内提示，不弹窗打断。
+### 录音转写
 
-### 录音转写与回放
+输入坞麦克风按钮三态：空闲 / 录音中（红色停止 + 计时）/ 转写中（“识别中…”）。
 
-输入坞加麦克风按钮，三态：
-
-| 状态 | 表现 |
-| --- | --- |
-| 空闲 | 麦克风图标，可点 |
-| 录音中 | 红色停止图标 + 计时 |
-| 转写中 | 转写动画 + "识别中…"，输入框禁用 |
-
-- 停止录音后自动上传转写，识别文本**追加**进输入框（输入框为空则直接填）。
-- 转写失败：保留输入框已有内容，给出行内提示"识别失败，可继续打字"。
-- 麦克风权限被拒：提示用户可继续打字，不反复弹权限请求。
-- 录音期间输入框仍可编辑（不影响现有打字路径）。
-
-**回放**：题目已录音后，该题的"我的回答"气泡旁出现回放按钮，点击播放 `GET .../recording` 返回的音频。用户可借此核对识别是否准确，必要时重新录音。
-
-回放按钮按题目 DTO 的 `audioState` 决定显隐：
-- `ready` → 显示"播放题目语音"
-- `recorded` → 显示"回放我的录音"
-- `null` → 都不显示
-
-**面试进行中重启前端或后端**：重新进入面试页时 `GET .../questions` 返回的 `audioState` 仍然有效，按钮照常显示并可播放（文件与状态都在磁盘 / 数据库里）。
+- 停止录音后自动上传转写，结果**插入到当前光标位置**（不是追加到末尾）。
+- 转写失败：保留输入框已有内容，行内提示“识别失败，可继续打字”。
+- 麦克风权限被拒：提示可继续打字，不反复弹权限请求。
+- 录音期间输入框仍可编辑。
 
 ### 降级
 
-`GET /api/interviews/:id` 响应增加 `voice: { enabled: bool }`。`VOICE_ENABLED=false` 或语音服务不可达时前端隐藏喇叭与麦克风按钮，退回纯文字面试；后端路由仍注册并返回 503（与既有 AI 降级约定一致）。
+`voice.enabled=false` 时隐藏全部语音按钮，退回纯文字面试。运行时服务不可达由语音接口返回 503/409 + 行内提示处理。
 
 ## 配置
-
-新增环境变量（`backend/internal/speech/config.go` 读取，`cmd/server/main.go` 接线）：
 
 ```
 VOICE_ENABLED=true
@@ -389,77 +445,101 @@ VOICE_ASR_BASE_URL=http://127.0.0.1:21100/v1
 VOICE_ASR_API_KEY=
 VOICE_ASR_MODEL=mlx-community/Qwen3-ASR-1.7B-8bit
 
-VOICE_TIMEOUT=120s
+# 生成队列
+VOICE_GENERATOR_MAX_ATTEMPTS=3
+VOICE_GENERATOR_BACKOFF=1s,3s,10s
+VOICE_TTS_TIMEOUT=120s
+VOICE_ASR_TIMEOUT=60s
+VOICE_CORRECT_TIMEOUT=30s
 VOICE_CACHE_DIR=./uploads/voice
 ```
 
 - `VOICE_ENABLED` 未开 → 不创建 provider，`voice.enabled=false`，路由返回 503。
-- `VOICE_TTS_API_KEY` / `VOICE_ASR_API_KEY` 本地服务留空，云端填 key。
-- **TTS 与 ASR 的 base URL、API key、模型各自独立**，因此可以自由组合：本地 MLX 出题 + 云端 ASR 转写，或反之。两者互不影响，不需要同时指向同一个服务。
-- `VOICE_TTS_BASE_URL` 与 `VOICE_ASR_BASE_URL` 默认值相同（都指向本地 mlx-audio），但**不共用一个变量** —— 需求明确要求分开配置，后续任一侧切换到云端不会牵动另一侧。
+- TTS / ASR 的 base URL、API key、模型各自独立，可自由组合。
+- 错别字修复复用 `OPENAI_MODEL`，独立实例固定 `ReasoningEffort=low`、超时 30s。
 
-对应到抽象层：`Synthesizer` 只依赖 TTS 配置，`Transcriber` 只依赖 ASR 配置。实现仍是同一个 `OpenAICompatibleProvider` 代码路径，但两者各自持独立的 base URL / api key / model / http.Client，因此可以指向不同的服务实例。
+## 降级设计
 
-## 错误处理
+**核心原则**：语音是附加层。**`answer` 主链路在任何语音故障下都必须成功返回**。
 
-| 场景 | 行为 |
-| --- | --- |
-| 语音服务未启动 | 创建面试时预合成静默失败（logrus warn）；前台请求返回 503；前端隐藏语音按钮 |
-| 单题合成失败 | 标记 failed，该题下次点喇叭重试一次；不影响其他题 |
-| 预合成任务失败 | 不阻断创建面试，不影响文字答题 |
-| 转写超时 | 返回 503，前端提示"识别超时，可继续打字" |
-| 转写返回空文本 | 返回 200 + 空串，前端提示"没听清，可重新录音或打字" |
-| 录音格式非法 | 后端 400，前端提示录音格式问题 |
-| 面试结束清理失败 | 只记 logrus warn，不影响面试终态；残留文件由下次启动的清理扫描兜底 |
-| 重启后某题无音频 | `audioState` 为 `null`，前端不显示播放按钮 |
+| 层级 | 故障 | 兜底行为 | 用户感知 |
+| --- | --- | --- | --- |
+| 配置层 | `VOICE_ENABLED=false` | 不创建 provider；`voice.enabled=false`；路由仍注册 | 隐藏语音按钮，纯文字面试 |
+| 创建面试 | 生成失败 | 后台重试 → 标记 `failed`，不阻断创建 | 无（创建照常 201） |
+| **答题主链路** | 任何语音故障 | **answer 不调用 TTS/ASR**（生成在后台队列） | 评分/下一题延迟与语音无关 |
+| 播放题目语音 | 未就绪 | 409 + 前端显示“生成中”，就绪后自动播放 | 可继续打字 |
+| 录音转写 | ASR 不可达 / 超时 | 503 + 行内提示，输入框内容保留 | 可继续打字 |
+| 错别字修复 | LLM 不可用 | 返回 ASR 原文，不阻断转写 | 无感知 |
+| 面试结束清理 | 删文件失败 | 只 warn，不影响终态 | 无 |
+| 后端重启 | 内存队列丢失 | 文件 + `audio_state` 持久；`Reload` 补齐未生成 | 重新进入仍可播放 |
+
+### 实现约束（硬性）
+
+1. **answer 主链路不得同步等待语音**。生成只发生在后台 worker。
+2. **语音失败不污染答题状态**。`audio_state` 只表达音频存在性，与 `status` / `grade` 无关。
+3. **前端语音按钮全部 local error 处理**，只设置行内提示，绝不阻断提交。
+4. **`voice.enabled` 只反映配置**，不反映运行时可达性。
 
 ## 测试
 
 ### 后端
 
-- `speech/openai.go`：httptest 假服务验证 speech / transcriptions 请求的 method、path、query、multipart 字段、`response_format=json` 是否显式携带；验证 wav 场景下 Content-Type 被强制为 `audio/wav`；验证 ndjson 兜底解析。
-- `speech/openai.go`：**TTS 与 ASR 分别指向不同 base URL** 时各自命中正确的服务（配置拆分的回归测试）。
-- `speech/store.go`：落盘路径按 `{tenantID}/{interviewID}/q{questionID}.wav` 与 `r{questionID}.wav` 拼装；跨租户不串目录；`CleanupInterview` 删除整个面试目录且不影响其他面试。
-- `speech/cache.go`：命中/未命中、singleflight 不重复发起、失败标记。
-- `interview` 层清理钩子：面试 completed / aborted 后目录被删且 `audio_state` 置回 NULL；**清理失败不影响答题接口返回值**。
-- `store/migrate.go`：`audio_state` 列迁移幂等 —— 迁移重复执行不报错（既有迁移测试风格）。
-- `httpapi/voice_handler.go`：路由级黑盒测试 —— 成功路径、未认证 401、跨租户 404、非法音频 400、服务不可用 503；`GET .../recording` 无录音时 404。
-- **重启恢复**：新建 service 实例（模拟重启）后仍能从磁盘读到音频、从数据库读到 `audio_state`。
-- 遵守 `AGSIN.md` 门禁：改 `backend/**` 后 `cd backend && go test ./...` 必须通过。
+- `speech/openai.go`：假服务验证 speech / transcriptions 请求的 method、path、query、multipart 字段、`response_format=json`；验证 wav 场景 Content-Type 强制为 `audio/wav`；验证 ndjson 兜底解析。
+- `speech/openai.go`：TTS 与 ASR 分别指向不同 base URL 时各自命中正确服务。
+- `speech/generator.go`：串行顺序、`pending → ready` 状态流转、失败重试后 `failed`、`Reload` 只补齐未完成项、`Enqueue` 去重。
+- `speech/store.go`：落盘路径按 `{tenantID}/{interviewID}/q{questionID}.wav`；`CleanupInterview` 删除整场目录且不影响其他面试。
+- `speech/correct.go`：只改错别字、不改语义；LLM 失败时返回原文。
+- `interview/repository.go`：`ActiveQuestionsNeedingAudio` 只返回 active 面试中未就绪的题。
+- `interview` 层：创建面试后入队全部主问题；`Answer` 后入队 `NextQuestion`；`Finished` / `Abort` 后清理；**清理失败不影响答题返回值**。
+- `store/migrate.go`：`audio_state` 列迁移幂等。
+- `httpapi/voice_handler.go`：成功、401、跨租户 404、非法音频 400、未就绪 409、服务不可用 503。
+- **降级（关键）**：provider 不可达时，`answer` 仍返回 200 且结果与无语音时逐字段一致；`CreateInterview` 仍返回 201。
+- **重启恢复**：新建 service 实例后 `Reload` 能从 DB 重建队列并补齐音频。
+- 遵守 `AGENTS.md` 门禁：改 `backend/**` 后 `cd backend && go test ./...` 必须通过。
 
 ### 前端
 
-- `utils/wav.ts`：采样率转换与 WAV 头字节布局（单测，不依赖浏览器 API）。
-- `hooks/useVoiceRecorder.ts`：vitest + jsdom，mock MediaRecorder / AudioContext，覆盖三态转换、权限拒绝、上传失败。
-- `components/InterviewChat.tsx`：喇叭按钮渲染与点击、语音按钮在 `voice.enabled=false` 时隐藏；按 `audioState` 显示"播放题目语音"/"回放我的录音"。
-- `api/voice.ts`：multipart 上传不走 `apiFetch`（后者固定 JSON Content-Type），单独覆盖。
+- `utils/wav.ts`：采样率转换与 WAV 头字节布局。
+- `hooks/useVoiceRecorder.ts`：三态转换、权限拒绝、上传失败。
+- `components/InterviewChat.tsx`：自动播放（含浏览器拦截兜底）、光标插入、`voice.enabled=false` 时隐藏按钮、`pending` 显示“生成中”。
+- `api/voice.ts`：multipart 上传不走 `apiFetch`。
 
 ## 落地文件
 
 ```
-tools/voice-server/README.md          启动方式、模型下载、端口、env 说明
-backend/internal/speech/speech.go     接口与类型
-backend/internal/speech/openai.go     OpenAICompatibleProvider
-backend/internal/speech/config.go     配置（TTS / ASR 各自的 base URL 等）
-backend/internal/speech/store.go      音频落盘 + 目录清理
-backend/internal/speech/cache.go      合成去重 + singleflight
-backend/internal/httpapi/voice_handler.go
-backend/internal/store/migrate.go     audio_state 列迁移
-backend/internal/interview/           清理钩子（completed / aborted 时触发）
-backend/cmd/server/main.go            接线
-frontend/src/api/voice.ts
-frontend/src/hooks/useVoiceRecorder.ts
-frontend/src/utils/wav.ts
-frontend/src/components/InterviewChat.tsx  集成
+backend/internal/speech/
+  speech.go       Synthesizer / Transcriber / TextModel 接口与请求响应类型
+  config.go       从 env 读配置（TTS / ASR 独立）
+  openai.go       OpenAICompatibleProvider：TTS + ASR 共用协议
+  store.go        题目音频落盘 + 目录清理（以 interviewID 为单元）
+  generator.go    串行生成 worker + 退避重试 + 重启 Reload
+  correct.go      AI 错别字修复（最低思考强度）
+  hooks.go        实现 interview.AudioHooks（Enqueue / CleanupInterview）
+backend/internal/httpapi/voice_handler.go   语音接口（播放 / 转写）
+backend/internal/httpapi/interview_handler.go  创建面试入口预检
+backend/internal/interview/repository.go     Question.AudioState + 3 个方法
+backend/internal/interview/service.go        AudioHooks 注入 + 触发 Enqueue/Cleanup
+backend/internal/store/migrate.go            audio_state 列迁移
+backend/cmd/server/main.go                   接线 generator + 启动 Reload
+frontend/src/api/voice.ts                    语音接口层
+frontend/src/hooks/useVoiceRecorder.ts       录音 → WAV → 上传
+frontend/src/utils/wav.ts                    浏览器端重采样 + WAV 封装
+frontend/src/components/InterviewChat.tsx    自动播放 / 光标插入 / 按钮集成
 ```
+
+`interview/repository.go` 新增方法：
+
+- `QuestionByID(ctx, id)`：播放接口校验题目归属。
+- `UpdateAudioState(ctx, questionID, state)`：生成 worker 回写状态。
+- `ActiveQuestionsNeedingAudio(ctx)`：`Reload` 扫描 active 面试中 `audio_state ∈ {NULL, pending, failed}` 的题。
 
 ## 已知限制
 
 - 本地推理服务需手动启动（`mlx_audio.server`），后端不代管其生命周期。
-- 预合成速度受 Mac 实际推理速度限制；创建面试到全部题目就绪之间存在延迟期，此期间点喇叭会走前台同步合成路径。
-- 预合成刻意采用逐题串行而非并发合批（见坑 3），因此预合成总时长长于合批，但用户点喇叭的等待上限更低。
-- TTS 输出 24kHz WAV，体积约为 24KB/秒，单题数秒到数十秒，缓存占用可接受。
-- 追问题目在评分时动态产生，无法预合成，改为评分返回时立即异步合成。
-- **面试结束即清理音频**，因此报告页只能看文字与评分，不能回放题目语音或用户录音。
-- 音频目录以 interviewID 为清理单元，不跨面试复用同一段题目文本的音频。
-- 清理只覆盖"面试状态变终态"这一路径；若进程在清理前崩溃，残留文件由下次启动时的清理扫描兜底（按 `interview_questions.audio_state` 与文件存在性对账）。
+- 生成是串行队列，创建面试到全部题目就绪之间有延迟；前端用“生成中”状态与自动播放轮询覆盖。
+- 追问题音在追问落库后入队，排在主问题之后；若主问题较多，追问音频可能延迟就绪。
+- TTS 输出 24kHz WAV，约 24KB/秒，缓存占用可接受。
+- 错别字修复复用 `OPENAI_MODEL`；该模型不可用时退化为 ASR 原文。
+- **面试结束即清理音频**，报告页只能看文字与评分。
+- 音频目录以 interviewID 为清理单元，不跨面试复用。
+- 清理只覆盖“面试状态变终态”这一路径；进程崩溃残留由下次启动的 `Reload` + 清理对账兜底。
