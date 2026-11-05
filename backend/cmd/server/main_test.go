@@ -34,7 +34,7 @@ const testJWTSecret = "test-secret-32-chars-minimum-len-padding"
 func TestBuildRouterConfigDevelopmentWithoutAPIKeyKeepsAuthenticatedAIRoutesAvailable(t *testing.T) {
 	db := openServerTestDB(t)
 	resumeRepository := resume.NewRepository(db)
-	config, err := buildRouterConfig(db, resumeRepository, logrus.New(), serverOptions{
+	config, _, err := buildRouterConfig(db, resumeRepository, logrus.New(), serverOptions{
 		JWTSecret:       testJWTSecret,
 		AppEnv:          "development",
 		UploadDirectory: t.TempDir(),
@@ -66,7 +66,7 @@ func TestBuildRouterConfigProductionWithoutAPIKeyReturnsStartupError(t *testing.
 	db := openServerTestDB(t)
 	resumeRepository := resume.NewRepository(db)
 
-	_, err := buildRouterConfig(db, resumeRepository, logrus.New(), serverOptions{
+	_, _, err := buildRouterConfig(db, resumeRepository, logrus.New(), serverOptions{
 		JWTSecret:       testJWTSecret,
 		AppEnv:          "production",
 		UploadDirectory: t.TempDir(),
@@ -88,7 +88,7 @@ func TestBuildRouterConfigUsesSingleCallOptimizationProtocol(t *testing.T) {
 			`{"edits":[{"target":{"itemId":null,"field":"markdown"},"newText":"valid single-call optimization","issues":[]}],"analysis":{"jdAlignment":{"status":"skipped","matchedKeywords":[],"excludedKeywords":[],"missingKeywords":[]},"evidenceRequests":[],"warnings":[]}}`,
 		},
 	}
-	config, err := buildRouterConfig(db, resumeRepository, logrus.New(), serverOptions{
+	config, _, err := buildRouterConfig(db, resumeRepository, logrus.New(), serverOptions{
 		JWTSecret:       testJWTSecret,
 		AppEnv:          "development",
 		UploadDirectory: t.TempDir(),
@@ -185,4 +185,32 @@ func (m *sequenceChatModel) Stream(ctx context.Context, input []*schema.Message,
 	m.next++
 	m.FinalJSON = m.responses[index]
 	return m.FakeChatModel.Stream(ctx, input, options...)
+}
+
+// TestBuildVoiceServicesDisabledByDefault VOICE_ENABLED 默认关闭：语音链路整体缺席。
+func TestBuildVoiceServicesDisabledByDefault(t *testing.T) {
+	t.Setenv("VOICE_ENABLED", "")
+	db := openServerTestDB(t)
+
+	voice, generator, err := buildVoiceServices(db, llm.Config{APIKey: "offline-test-key", Model: "offline"}, logrus.New())
+
+	require.NoError(t, err)
+	assert.Nil(t, voice, "voice service must be nil when VOICE_ENABLED is off")
+	assert.Nil(t, generator, "voice generator must be nil when VOICE_ENABLED is off")
+}
+
+// TestBuildVoiceServicesEnabled VOICE_ENABLED 打开：装配出 provider、存储、生成器与校对器。
+func TestBuildVoiceServicesEnabled(t *testing.T) {
+	t.Setenv("VOICE_ENABLED", "true")
+	t.Setenv("VOICE_CACHE_DIR", t.TempDir())
+	db := openServerTestDB(t)
+
+	voice, generator, err := buildVoiceServices(db, llm.Config{APIKey: "offline-test-key", Model: "offline"}, logrus.New())
+
+	require.NoError(t, err)
+	require.NotNil(t, voice)
+	require.NotNil(t, generator)
+	assert.NotNil(t, voice.Store)
+	assert.NotNil(t, voice.Transcriber)
+	assert.NotNil(t, voice.Corrector)
 }

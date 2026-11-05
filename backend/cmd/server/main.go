@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cloudwego/eino/components/model"
@@ -21,6 +25,7 @@ import (
 	"resumepro/backend/internal/llm"
 	"resumepro/backend/internal/resume"
 	"resumepro/backend/internal/resumesvc"
+	"resumepro/backend/internal/speech"
 	"resumepro/backend/internal/store"
 	"resumepro/backend/internal/targetjob"
 	"resumepro/backend/internal/templates"
@@ -85,7 +90,7 @@ func main() {
 		"database_path": databasePath,
 	}).Info("starting resume API server")
 
-	routerConfig, err := buildRouterConfig(db, resumeRepository, logger, serverOptions{
+	routerConfig, voiceGenerator, err := buildRouterConfig(db, resumeRepository, logger, serverOptions{
 		JWTSecret:       jwtSecret,
 		CookieSecure:    cookieSecure,
 		AppEnv:          os.Getenv("APP_ENV"),
@@ -95,8 +100,29 @@ func main() {
 		logger.WithError(err).Fatal("configure resume API server")
 	}
 
-	if err := httpapi.NewRouter(authRepository, resumeRepository, templates.NewRepository(db), routerConfig).Run(":8080"); err != nil {
-		logger.WithError(err).Fatal("resume API server stopped")
+	server := &http.Server{
+		Addr:              ":8080",
+		Handler:           httpapi.NewRouter(authRepository, resumeRepository, templates.NewRepository(db), routerConfig),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	// 优雅退出：收到 SIGINT/SIGTERM 时先关 HTTP，再停语音 worker。
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-shutdownCtx.Done()
+		graceful, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(graceful); err != nil {
+			logger.WithError(err).Warn("http server shutdown failed")
+		}
+	}()
+
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.WithError(err).Error("resume API server stopped")
+	}
+	// 语音 worker 收尾：取消在途 TTS 并限时等待 worker 退出。
+	if voiceGenerator != nil {
+		voiceGenerator.Close()
 	}
 }
 
@@ -114,7 +140,11 @@ func loadLocalEnvFile(logger *logrus.Logger) {
 	}
 }
 
-func buildRouterConfig(db *sqlx.DB, resumeRepository *resume.Repository, logger *logrus.Logger, options serverOptions, bootstrap aiBootstrap) (httpapi.RouterConfig, error) {
+// buildRouterConfig 装配 HTTP 路由配置。
+//
+// 第二个返回值是语音生成器（非 nil 表示语音已启用）：由 main 在进程退出时关闭，
+// 避免在途 TTS 任务被硬杀。
+func buildRouterConfig(db *sqlx.DB, resumeRepository *resume.Repository, logger *logrus.Logger, options serverOptions, bootstrap aiBootstrap) (httpapi.RouterConfig, *speech.Generator, error) {
 	avatarDirectory := filepath.Join(options.UploadDirectory, "avatars")
 	fileStorage := files.NewLocalFileStorage(avatarDirectory)
 	targetJobService := targetjob.NewService(targetjob.NewRepository(db))
@@ -131,14 +161,14 @@ func buildRouterConfig(db *sqlx.DB, resumeRepository *resume.Repository, logger 
 	llmConfig, err := bootstrap.LoadConfig()
 	if err != nil {
 		if options.AppEnv == "production" {
-			return config, fmt.Errorf("AI features required in production (set OPENAI_API_KEY): %w", err)
+			return config, nil, fmt.Errorf("AI features required in production (set OPENAI_API_KEY): %w", err)
 		}
 		logger.WithError(err).Warn("AI features disabled (set OPENAI_API_KEY to enable)")
-		return config, nil
+		return config, nil, nil
 	}
 	chatModel, err := bootstrap.NewChatModel(llmConfig)
 	if err != nil {
-		return config, fmt.Errorf("create LLM client: %w", err)
+		return config, nil, fmt.Errorf("create LLM client: %w", err)
 	}
 	config.AIService = ai.NewService(
 		chatModel,
@@ -147,12 +177,34 @@ func buildRouterConfig(db *sqlx.DB, resumeRepository *resume.Repository, logger 
 	)
 	logger.WithField("model", llmConfig.Model).Info("AI features enabled")
 
-	interviewService, err := buildInterviewService(db, llmConfig, logger, options.AppEnv)
+	// 先建语音：生成器要注入面试服务，否则题目永远不会被入队。
+	voiceService, voiceGenerator, err := buildVoiceServices(db, llmConfig, logger)
 	if err != nil {
-		return config, err
+		// 语音装配失败不阻断面试主流程：按「语音未启用」继续（接口返回 503）。
+		logger.WithError(err).Error("voice features disabled (assembly failed)")
+		voiceService, voiceGenerator = nil, nil
+	}
+	var audioHooks interview.AudioHooks
+	if voiceGenerator != nil {
+		audioHooks = voiceGenerator
+		config.VoiceService = voiceService
+		// 重启重载：先把上次崩溃残留的 pending 归零，再扫描未就绪的题重新入队。
+		// 必须在 Start 之前：worker 一旦开始消费，pending 就可能属于在途任务，
+		// 此时归零会导致重复合成。Generator 用 ErrReloadAfterStart 挡住误用。
+		if err := voiceGenerator.Reload(context.Background()); err != nil {
+			logger.WithError(err).Warn("voice: reload pending question audio failed")
+		}
+		// 后台生成 worker：串行消费，不阻塞任何请求。
+		voiceGenerator.Start(context.Background())
+		logger.WithField("cache_dir", voiceService.Store.Root()).Info("voice features enabled")
+	}
+
+	interviewService, err := buildInterviewService(db, llmConfig, logger, options.AppEnv, audioHooks)
+	if err != nil {
+		return config, nil, err
 	}
 	config.InterviewService = interviewService
-	return config, nil
+	return config, voiceGenerator, nil
 }
 
 // buildInterviewService 接线 AI 模拟面试：Redis checkpoint store + Responses 模型
@@ -160,7 +212,8 @@ func buildRouterConfig(db *sqlx.DB, resumeRepository *resume.Repository, logger 
 //
 // Redis 或 Responses 模型不可用时：生产环境直接返回错误（面试是必开功能）；
 // 非生产环境打印告警并返回 nil（路由仍注册，接口统一返回 503，与 AI 功能降级一致）。
-func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Logger, appEnv string) (*interview.Service, error) {
+// audioHooks 为 nil 时语音链路整体缺席，面试照常工作。
+func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Logger, appEnv string, audioHooks interview.AudioHooks) (*interview.Service, error) {
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
 		redisAddr = "127.0.0.1:6379"
@@ -209,5 +262,32 @@ func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Log
 		return nil, fmt.Errorf("build interview graph: %w", err)
 	}
 	logger.WithField("redis", redisAddr).Info("AI interview enabled")
-	return interview.NewService(repo, redisStore, gen, graph), nil
+	return interview.NewService(repo, redisStore, gen, graph, interview.WithAudioHooks(audioHooks)), nil
+}
+
+// buildVoiceServices 装配语音能力：provider、存储、生成器、错别字修复。
+//
+// VOICE_ENABLED 未开时返回 (nil, nil, nil)：语音链路整体缺席，
+// 路由仍然注册，接口返回 503，面试照常工作。
+func buildVoiceServices(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Logger) (*speech.VoiceService, *speech.Generator, error) {
+	cfg := speech.LoadConfigFromEnv()
+	if !cfg.Enabled {
+		logger.Warn("voice features disabled (set VOICE_ENABLED=true to enable)")
+		return nil, nil, nil
+	}
+	provider := speech.NewOpenAICompatibleProvider(cfg)
+	store := speech.NewAudioStore(cfg.CacheDir)
+
+	// 错别字修复用独立模型实例：思考强度固定最低档（纯校对任务不需要长思考）。
+	correctConfig := llmConfig
+	correctConfig.ReasoningEffort = "low"
+	correctConfig.Timeout = cfg.CorrectTimeout
+	correctModel, err := llm.NewResponsesModel(correctConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create correction model: %w", err)
+	}
+
+	generator := speech.NewGenerator(provider, store, interview.NewRepository(db), cfg)
+	corrector := speech.NewCorrector(correctModel, cfg.CorrectTimeout)
+	return speech.NewVoiceService(store, provider, corrector), generator, nil
 }
