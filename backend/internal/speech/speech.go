@@ -20,6 +20,9 @@ const (
 	MaxAudioDuration = 10 * time.Minute
 )
 
+// wavAudioFormatPCM 是 WAV fmt 块里的 PCM 编码标识。
+const wavAudioFormatPCM = 1
+
 // SynthesisRequest 是一次题目语音合成请求。
 type SynthesisRequest struct {
 	Text  string
@@ -60,6 +63,9 @@ type TextModel interface {
 
 // ValidateWAV 校验上传音频是可解析的 WAV，并返回时长。
 // 只做校验，不转码：前端已保证 16kHz 单声道 PCM。
+//
+// 校验项：RIFF/WAVE magic、fmt 块的 PCM 编码与声道/采样率/位深、data 块实际长度是否完整。
+// 时长按 fmt 块声明的字节率（采样率 × 声道 × 位深/8）估算，因此 8bit/16bit/24bit 都能算对。
 func ValidateWAV(data []byte) (time.Duration, error) {
 	if len(data) > MaxAudioBytes {
 		return 0, fmt.Errorf("speech: audio exceeds %d bytes", MaxAudioBytes)
@@ -67,19 +73,30 @@ func ValidateWAV(data []byte) (time.Duration, error) {
 	if len(data) < 44 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
 		return 0, errors.New("speech: not a RIFF/WAVE payload")
 	}
-	var channels, sampleRate, dataSize int
-	for offset := 12; offset+8 <= len(data); {
+	var channels, sampleRate, bitsPerSample, dataSize int
+	// 用 int64 走 chunk 偏移：chunk 长度来自文件头（uint32），32 位平台下转 int 会溢出。
+	for offset := int64(12); offset+8 <= int64(len(data)); {
 		id := string(data[offset : offset+4])
-		size := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
+		size := int64(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
 		body := offset + 8
 		switch id {
 		case "fmt ":
-			if body+16 <= len(data) {
+			// fmt 块至少 16 字节（PCM）；长度不足时按「不完整」处理，留给后面的兜底判断报错。
+			if size >= 16 && body+16 <= int64(len(data)) {
+				audioFormat := int(binary.LittleEndian.Uint16(data[body : body+2]))
+				if audioFormat != wavAudioFormatPCM {
+					return 0, errors.New("speech: only pcm wav is supported")
+				}
 				channels = int(binary.LittleEndian.Uint16(data[body+2 : body+4]))
 				sampleRate = int(binary.LittleEndian.Uint32(data[body+4 : body+8]))
+				bitsPerSample = int(binary.LittleEndian.Uint16(data[body+14 : body+16]))
 			}
 		case "data":
-			dataSize = size
+			// data 块声明长度必须真的在文件里，否则是截断音频（时长也会是假的）。
+			if size > int64(len(data))-body {
+				return 0, errors.New("speech: truncated wav data chunk")
+			}
+			dataSize = int(size)
 		}
 		offset = body + size
 		if size%2 == 1 {
@@ -89,7 +106,10 @@ func ValidateWAV(data []byte) (time.Duration, error) {
 	if channels <= 0 || sampleRate <= 0 || dataSize <= 0 {
 		return 0, errors.New("speech: incomplete wav payload")
 	}
-	bytesPerSecond := sampleRate * channels * 2
+	if bitsPerSample <= 0 || bitsPerSample%8 != 0 {
+		return 0, errors.New("speech: invalid wav format")
+	}
+	bytesPerSecond := int64(sampleRate) * int64(channels) * int64(bitsPerSample/8)
 	if bytesPerSecond <= 0 {
 		return 0, errors.New("speech: invalid wav format")
 	}

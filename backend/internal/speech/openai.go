@@ -11,6 +11,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+)
+
+const (
+	// defaultTTSTimeout 是 TTS 请求的兜底超时：配置里没给时不能变成「永不超时」。
+	defaultTTSTimeout = 120 * time.Second
+	// defaultASRTimeout 是 ASR 请求的兜底超时。
+	defaultASRTimeout = 60 * time.Second
 )
 
 // OpenAICompatibleProvider 同时实现 Synthesizer 与 Transcriber。
@@ -31,16 +39,24 @@ type OpenAICompatibleProvider struct {
 
 // NewOpenAICompatibleProvider 按配置创建 provider。
 func NewOpenAICompatibleProvider(cfg Config) *OpenAICompatibleProvider {
+	ttsTimeout := cfg.TTSTimeout
+	if ttsTimeout <= 0 {
+		ttsTimeout = defaultTTSTimeout
+	}
+	asrTimeout := cfg.ASRTimeout
+	if asrTimeout <= 0 {
+		asrTimeout = defaultASRTimeout
+	}
 	return &OpenAICompatibleProvider{
 		ttsBaseURL: strings.TrimRight(cfg.TTSBaseURL, "/"),
 		ttsAPIKey:  cfg.TTSAPIKey,
 		ttsModel:   cfg.TTSModel,
 		ttsVoice:   cfg.TTSVoice,
-		ttsClient:  &http.Client{Timeout: cfg.TTSTimeout},
+		ttsClient:  &http.Client{Timeout: ttsTimeout},
 		asrBaseURL: strings.TrimRight(cfg.ASRBaseURL, "/"),
 		asrAPIKey:  cfg.ASRAPIKey,
 		asrModel:   cfg.ASRModel,
-		asrClient:  &http.Client{Timeout: cfg.ASRTimeout},
+		asrClient:  &http.Client{Timeout: asrTimeout},
 	}
 }
 
@@ -73,7 +89,7 @@ func (p *OpenAICompatibleProvider) Synthesize(ctx context.Context, req Synthesis
 
 	resp, err := p.ttsClient.Do(httpReq)
 	if err != nil {
-		return SynthesisResult{}, fmt.Errorf("speech: tts request: %w", err)
+		return SynthesisResult{}, fmt.Errorf("speech: tts request failed: %w", sanitizeRequestError(err, p.ttsBaseURL))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -95,7 +111,7 @@ func (p *OpenAICompatibleProvider) Synthesize(ctx context.Context, req Synthesis
 func (p *OpenAICompatibleProvider) Transcribe(ctx context.Context, req TranscriptionRequest) (TranscriptionResult, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "recording.wav")
+	part, err := writer.CreateFormFile("file", audioFileName(req.ContentType))
 	if err != nil {
 		return TranscriptionResult{}, fmt.Errorf("speech: build asr form: %w", err)
 	}
@@ -119,7 +135,7 @@ func (p *OpenAICompatibleProvider) Transcribe(ctx context.Context, req Transcrip
 
 	resp, err := p.asrClient.Do(httpReq)
 	if err != nil {
-		return TranscriptionResult{}, fmt.Errorf("speech: asr request: %w", err)
+		return TranscriptionResult{}, fmt.Errorf("speech: asr request failed: %w", sanitizeRequestError(err, p.asrBaseURL))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -137,31 +153,115 @@ func (p *OpenAICompatibleProvider) Transcribe(ctx context.Context, req Transcrip
 	return TranscriptionResult{Text: text}, nil
 }
 
-// parseTranscription 解析 ASR 响应：标准 JSON {"text":"..."}；
-// 若上游退回 ndjson（Content-Type 为 application/x-ndjson），取第一行 JSON 的 text 兜底。
+// parseTranscription 解析 ASR 响应：标准 JSON {"text":"..."}。
+//
+// 不完全依赖上游的 Content-Type：有些部署会忽略 response_format=json，却仍用
+// application/json 头返回 ndjson 体，因此这里先整体解析、失败再回退取首行 JSON。
+// text 字段缺失或为空一律报错，避免把空串当成「转写成功」。
 func parseTranscription(payload []byte, contentType string) (string, error) {
-	if strings.Contains(contentType, "ndjson") {
-		for _, line := range bytes.Split(payload, []byte("\n")) {
-			line = bytes.TrimSpace(line)
-			if len(line) == 0 {
-				continue
-			}
-			var wrapper struct {
-				Text string `json:"text"`
-			}
-			if err := json.Unmarshal(line, &wrapper); err == nil {
-				return wrapper.Text, nil
-			}
+	firstLine := firstNonEmptyLine(payload)
+	var candidates [][]byte
+	if strings.Contains(strings.ToLower(contentType), "ndjson") {
+		candidates = [][]byte{firstLine, payload}
+	} else {
+		candidates = [][]byte{payload, firstLine}
+	}
+
+	var parseErr error
+	for _, candidate := range candidates {
+		if len(candidate) == 0 {
+			continue
 		}
-		return "", errors.New("speech: ndjson transcription without text field")
+		text, ok, err := extractTranscriptionText(candidate)
+		if err != nil {
+			if parseErr == nil {
+				parseErr = err
+			}
+			continue
+		}
+		if ok {
+			return text, nil
+		}
 	}
-	var wrapper struct {
-		Text string `json:"text"`
+	if parseErr != nil {
+		return "", fmt.Errorf("speech: invalid transcription payload: %w", parseErr)
 	}
+	return "", errors.New("speech: transcription payload without text field")
+}
+
+// extractTranscriptionText 从一段 JSON 里取 text 字段。
+// 返回 ok=false 表示这是合法 JSON 但没有非空的 text 字段。
+func extractTranscriptionText(payload []byte) (string, bool, error) {
+	var wrapper map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &wrapper); err != nil {
-		return "", fmt.Errorf("speech: invalid transcription payload: %w", err)
+		return "", false, err
 	}
-	return wrapper.Text, nil
+	raw, ok := wrapper["text"]
+	if !ok {
+		return "", false, nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return "", false, nil
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", false, nil
+	}
+	return text, true, nil
+}
+
+// firstNonEmptyLine 取第一行非空内容（ndjson 兜底用）。
+func firstNonEmptyLine(payload []byte) []byte {
+	for _, line := range bytes.Split(payload, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) > 0 {
+			return line
+		}
+	}
+	return nil
+}
+
+// audioFileName 按音频 MIME 推导上传文件名；未知或空则按 wav 处理。
+// 上游靠扩展名判断编码格式，固定 .wav 会把 webm 字节错标成 wav。
+func audioFileName(contentType string) string {
+	mediaType := strings.TrimSpace(strings.ToLower(contentType))
+	if idx := strings.Index(mediaType, ";"); idx >= 0 {
+		mediaType = strings.TrimSpace(mediaType[:idx])
+	}
+	switch mediaType {
+	case "audio/webm":
+		return "recording.webm"
+	case "audio/ogg":
+		return "recording.ogg"
+	case "audio/mpeg", "audio/mp3":
+		return "recording.mp3"
+	case "audio/mp4", "audio/x-m4a":
+		return "recording.m4a"
+	default:
+		return "recording.wav"
+	}
+}
+
+// sanitizeRequestError 把 *url.Error 里的完整请求 URL 换成本服务的基础 URL（去掉 query）。
+// 上游地址上若带了 api key 之类的 query 参数，原样拼进错误信息会进日志。
+func sanitizeRequestError(err error, baseURL string) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		urlErr.URL = safeBaseURL(baseURL)
+	}
+	return err
+}
+
+// safeBaseURL 去掉 base URL 上的 query 与 fragment，只保留可用于定位服务的信息。
+func safeBaseURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 var (
