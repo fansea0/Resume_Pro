@@ -136,6 +136,10 @@ func Migrate(ctx context.Context, db *sqlx.DB) error {
 	if err := addColumnIfMissing(ctx, tx, "resumes", "tenant_id", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
+	// 题目语音状态：NULL=未入队，pending=生成中，ready=已就绪，failed=重试耗尽。
+	if err := addColumnIfMissing(ctx, tx, "interview_questions", "audio_state", "TEXT"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(ctx, tx, "resume_versions", "tenant_id", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}

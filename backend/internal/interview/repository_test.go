@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 
@@ -519,5 +520,240 @@ func TestInsertFollowUpUnknownParent(t *testing.T) {
 	}
 	if _, err := repo.InsertFollowUp(ctx, iv.ID, 999, 1, "追问", "", ""); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// --- 题目语音状态（任务 1 追加） ---
+
+// newRepositoryFixture 建库、迁移并创建一场空的 active 面试，返回仓储、上下文与面试 ID。
+//
+// 面试不带占位主问题（显式传空题目列表），题目一律由 insertMainQuestion 插入，
+// 避免占位行混进「哪些题目需要语音」这类按题目维度的查询。
+func newRepositoryFixture(t *testing.T) (*Repository, context.Context, int64) {
+	t.Helper()
+	repo, db := newTestRepo(t)
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	cfg := DefaultInterviewConfig.Resolved()
+	iv, err := repo.CreateInterviewWithQuestions(ctx, 1, cfg, 1, 1, []MainQuestionInput{})
+	if err != nil {
+		t.Fatalf("create interview: %v", err)
+	}
+	return repo, ctx, iv.ID
+}
+
+// insertMainQuestion 直接向 interview_questions 插入一道指定题面的主问题，返回题目 ID。
+func insertMainQuestion(t *testing.T, repo *Repository, interviewID int64, text string) int64 {
+	t.Helper()
+	result, err := repo.db.ExecContext(context.Background(), `
+		INSERT INTO interview_questions (interview_id, parent_id, follow_up_round, label, question, standard_answer, user_answer, extra, grade, created_at)
+		VALUES (?, NULL, 0, ?, ?, NULL, NULL, NULL, NULL, ?)`,
+		interviewID, int(LabelOctopus), text, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("insert question: %v", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+	return id
+}
+
+func TestRepositoryUpdateAudioState(t *testing.T) {
+	repo, ctx, interviewID := newRepositoryFixture(t)
+	questionID := insertMainQuestion(t, repo, interviewID, "Go 的 channel 是什么？")
+
+	if err := repo.UpdateAudioState(ctx, questionID, "pending"); err != nil {
+		t.Fatalf("update audio state: %v", err)
+	}
+	row, err := repo.QuestionByID(ctx, questionID)
+	if err != nil {
+		t.Fatalf("question by id: %v", err)
+	}
+	if row.AudioState == nil || *row.AudioState != "pending" {
+		t.Fatalf("audio state = %v, want pending", row.AudioState)
+	}
+}
+
+func TestRepositoryActiveQuestionsNeedingAudio(t *testing.T) {
+	repo, ctx, interviewID := newRepositoryFixture(t)
+	ready := insertMainQuestion(t, repo, interviewID, "已就绪")
+	missing := insertMainQuestion(t, repo, interviewID, "未生成")
+	if err := repo.UpdateAudioState(ctx, ready, "ready"); err != nil {
+		t.Fatalf("mark ready: %v", err)
+	}
+
+	items, err := repo.ActiveQuestionsNeedingAudio(ctx)
+	if err != nil {
+		t.Fatalf("active questions needing audio: %v", err)
+	}
+	if len(items) != 1 || items[0].QuestionID != missing {
+		t.Fatalf("items = %+v, want only question %d", items, missing)
+	}
+	if items[0].Text != "未生成" || items[0].InterviewID != interviewID {
+		t.Fatalf("item payload = %+v", items[0])
+	}
+}
+
+// TestRepositoryActiveQuestionsNeedingAudioSkipsFinishedInterview 验证已结束的面试不再补语音。
+func TestRepositoryActiveQuestionsNeedingAudioSkipsFinishedInterview(t *testing.T) {
+	repo, ctx, interviewID := newRepositoryFixture(t)
+	insertMainQuestion(t, repo, interviewID, "已结束面试的题")
+	if err := repo.UpdateInterviewStatus(ctx, interviewID, "completed", nil, nil); err != nil {
+		t.Fatalf("complete interview: %v", err)
+	}
+
+	items, err := repo.ActiveQuestionsNeedingAudio(ctx)
+	if err != nil {
+		t.Fatalf("active questions needing audio: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("items = %+v, want empty", items)
+	}
+}
+
+// TestRepositoryClaimAudioStateIsExclusive 抢占是原子的：第一个调用者拿到 true，第二个拿到 false。
+func TestRepositoryClaimAudioStateIsExclusive(t *testing.T) {
+	repo, ctx, interviewID := newRepositoryFixture(t)
+	questionID := insertMainQuestion(t, repo, interviewID, "题面")
+
+	claimed, err := repo.ClaimAudioState(ctx, questionID)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if !claimed {
+		t.Fatal("first claim should succeed")
+	}
+	claimed, err = repo.ClaimAudioState(ctx, questionID)
+	if err != nil {
+		t.Fatalf("second claim: %v", err)
+	}
+	if claimed {
+		t.Fatal("second claim should fail")
+	}
+
+	// ready 之后不能再抢。
+	if err := repo.UpdateAudioState(ctx, questionID, "ready"); err != nil {
+		t.Fatalf("mark ready: %v", err)
+	}
+	claimed, err = repo.ClaimAudioState(ctx, questionID)
+	if err != nil {
+		t.Fatalf("claim after ready: %v", err)
+	}
+	if claimed {
+		t.Fatal("ready question must not be claimable")
+	}
+}
+
+// TestRepositoryClaimAudioStateCanRetryFailed 验证 failed 的题目可以重新抢到生成权。
+func TestRepositoryClaimAudioStateCanRetryFailed(t *testing.T) {
+	repo, ctx, interviewID := newRepositoryFixture(t)
+	questionID := insertMainQuestion(t, repo, interviewID, "题面")
+	if err := repo.UpdateAudioState(ctx, questionID, "failed"); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+
+	claimed, err := repo.ClaimAudioState(ctx, questionID)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if !claimed {
+		t.Fatal("failed question should be claimable again")
+	}
+}
+
+// TestRepositoryReleaseAudioState 验证归还在生成权：pending 回到未生成，且不影响其他状态。
+func TestRepositoryReleaseAudioState(t *testing.T) {
+	repo, ctx, interviewID := newRepositoryFixture(t)
+	questionID := insertMainQuestion(t, repo, interviewID, "题面")
+	if _, err := repo.ClaimAudioState(ctx, questionID); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	if err := repo.ReleaseAudioState(ctx, questionID); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	row, err := repo.QuestionByID(ctx, questionID)
+	if err != nil {
+		t.Fatalf("question by id: %v", err)
+	}
+	if row.AudioState != nil {
+		t.Fatalf("audio state = %q, want NULL after release", *row.AudioState)
+	}
+
+	// 归还可再次抢占。
+	claimed, err := repo.ClaimAudioState(ctx, questionID)
+	if err != nil {
+		t.Fatalf("claim after release: %v", err)
+	}
+	if !claimed {
+		t.Fatal("released question should be claimable again")
+	}
+}
+
+func TestRepositoryResetStalePendingAudioOnlyTouchesActiveInterviews(t *testing.T) {
+	repo, ctx, activeID := newRepositoryFixture(t)
+	stale := insertMainQuestion(t, repo, activeID, "崩溃残留")
+	if _, err := repo.ClaimAudioState(ctx, stale); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	// 另一场已结束的面试：pending 不该被这次启动清理碰到。
+	cfg := DefaultInterviewConfig.Resolved()
+	finished, err := repo.CreateInterviewWithQuestions(ctx, 2, cfg, 1, 1, []MainQuestionInput{})
+	if err != nil {
+		t.Fatalf("create other interview: %v", err)
+	}
+	kept := insertMainQuestion(t, repo, finished.ID, "已结束面试的题")
+	if _, err := repo.ClaimAudioState(ctx, kept); err != nil {
+		t.Fatalf("claim other: %v", err)
+	}
+	if err := repo.UpdateInterviewStatus(ctx, finished.ID, "completed", nil, nil); err != nil {
+		t.Fatalf("complete other: %v", err)
+	}
+
+	affected, err := repo.ResetStalePendingAudio(ctx)
+	if err != nil {
+		t.Fatalf("reset stale: %v", err)
+	}
+	if affected != 1 {
+		t.Fatalf("affected = %d, want 1", affected)
+	}
+	row, err := repo.QuestionByID(ctx, stale)
+	if err != nil {
+		t.Fatalf("question by id: %v", err)
+	}
+	if row.AudioState != nil {
+		t.Fatalf("audio state = %q, want NULL after reset", *row.AudioState)
+	}
+	row, err = repo.QuestionByID(ctx, kept)
+	if err != nil {
+		t.Fatalf("question by id: %v", err)
+	}
+	if row.AudioState == nil || *row.AudioState != "pending" {
+		t.Fatalf("audio state = %v, want pending (finished interview untouched)", row.AudioState)
+	}
+}
+
+func TestRepositoryResetAudioStateByInterview(t *testing.T) {
+	repo, ctx, interviewID := newRepositoryFixture(t)
+	first := insertMainQuestion(t, repo, interviewID, "第一题")
+	second := insertMainQuestion(t, repo, interviewID, "第二题")
+	for _, id := range []int64{first, second} {
+		if _, err := repo.ClaimAudioState(ctx, id); err != nil {
+			t.Fatalf("claim %d: %v", id, err)
+		}
+	}
+	if err := repo.ResetAudioStateByInterview(ctx, interviewID); err != nil {
+		t.Fatalf("reset by interview: %v", err)
+	}
+	for _, id := range []int64{first, second} {
+		row, err := repo.QuestionByID(ctx, id)
+		if err != nil {
+			t.Fatalf("question by id: %v", err)
+		}
+		if row.AudioState != nil {
+			t.Fatalf("question %d audio state = %q, want NULL", id, *row.AudioState)
+		}
 	}
 }

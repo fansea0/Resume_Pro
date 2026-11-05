@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -37,6 +38,11 @@ const questionColumns = `id, interview_id, parent_id, follow_up_round, label, qu
 	`COALESCE(grade, '') AS grade, ` +
 	`created_at`
 
+// questionColumnsWithAudio 在 questionColumns 基础上追加 audio_state 列。
+//
+// audio_state 是可空列（未生成语音时为 NULL），Question 用 *string 承接，NULL 落成 nil。
+const questionColumnsWithAudio = questionColumns + `, audio_state`
+
 // Interview 是一次面试的落库视图。
 //
 // OverallGrade / OverallReview / CompletedAt 为 nil 表示该列尚未写入（数据库 NULL）。
@@ -67,6 +73,8 @@ type Question struct {
 	Extra          string        `db:"extra" json:"extra"`
 	Grade          string        `db:"grade" json:"grade"`
 	CreatedAt      time.Time     `db:"created_at" json:"createdAt"`
+	// AudioState 题目语音状态：NULL=未入队，pending=生成中，ready=已就绪，failed=重试耗尽。
+	AudioState *string `db:"audio_state" json:"audioState"`
 }
 
 // MainQuestionInput 是一道主问题的落库内容（与生题函数的一条输出对应）。
@@ -399,6 +407,105 @@ func (r *Repository) ExtraFields(extra string) (must, bonus []string) {
 		return nil, nil
 	}
 	return payload.MustPoints, payload.BonusPoints
+}
+
+// UpdateAudioState 回写题目的语音状态（生成 worker 使用）。
+func (r *Repository) UpdateAudioState(ctx context.Context, questionID int64, state string) error {
+	if _, err := r.db.ExecContext(ctx, `UPDATE interview_questions SET audio_state = ? WHERE id = ?`, state, questionID); err != nil {
+		return fmt.Errorf("interview: update audio state %d: %w", questionID, err)
+	}
+	return nil
+}
+
+// QuestionByID 按 id 读取题目行（含语音状态）；不存在返回 ErrNotFound。
+func (r *Repository) QuestionByID(ctx context.Context, id int64) (Question, error) {
+	var row Question
+	err := r.db.GetContext(ctx, &row, `
+		SELECT `+questionColumnsWithAudio+`
+		FROM interview_questions WHERE id = ?`, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Question{}, ErrNotFound
+	}
+	if err != nil {
+		return Question{}, fmt.Errorf("interview: load question %d: %w", id, err)
+	}
+	return row, nil
+}
+
+// ActiveQuestionsNeedingAudio 返回「进行中面试里语音未就绪」的题目。
+//
+// pending 不在这里：它表示「已抢占生成权」，由数据库的抢占语义保证不会被重复领取；
+// 崩溃残留的 pending 在启动时由 ResetStalePendingAudio 归零。
+func (r *Repository) ActiveQuestionsNeedingAudio(ctx context.Context) ([]PendingAudio, error) {
+	items := []PendingAudio{}
+	err := r.db.SelectContext(ctx, &items, `
+		SELECT i.tenant_id AS tenant_id, q.interview_id AS interview_id, q.id AS question_id, q.question AS text
+		FROM interview_questions q
+		JOIN interviews i ON i.id = q.interview_id
+		WHERE i.status = 'active' AND (q.audio_state IS NULL OR q.audio_state = 'failed')
+		ORDER BY i.id ASC, q.id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("interview: load questions needing audio: %w", err)
+	}
+	return items, nil
+}
+
+// ClaimAudioState 原子抢占题目的语音生成权。
+//
+// 只有「从未生成(NULL)」或「已失败(failed)」的题目能被抢到；抢到即置为 pending。
+// 返回 true 表示本次调用获得了生成权。
+//
+// 数据库是唯一真源：重启重载与创建面试可能同时给同一题入队，
+// 条件 UPDATE 保证只有一方拿到生成权，不会重复合成。
+func (r *Repository) ClaimAudioState(ctx context.Context, questionID int64) (bool, error) {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE interview_questions SET audio_state = 'pending' WHERE id = ? AND (audio_state IS NULL OR audio_state = 'failed')`,
+		questionID)
+	if err != nil {
+		return false, fmt.Errorf("interview: claim audio state %d: %w", questionID, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("interview: claim audio state %d rows: %w", questionID, err)
+	}
+	return affected == 1, nil
+}
+
+// ReleaseAudioState 归还生成权：把 pending 放回未生成(NULL)。
+// 入队后没能真正处理（队列满、进程退出）时调用。
+func (r *Repository) ReleaseAudioState(ctx context.Context, questionID int64) error {
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE interview_questions SET audio_state = NULL WHERE id = ? AND audio_state = 'pending'`,
+		questionID); err != nil {
+		return fmt.Errorf("interview: release audio state %d: %w", questionID, err)
+	}
+	return nil
+}
+
+// ResetStalePendingAudio 把「进行中面试」里卡在 pending 的题目重置为未生成(NULL)。
+// 只在服务启动时调用：此时还没有 worker 在跑，pending 一定是上次崩溃留下的残留。
+func (r *Repository) ResetStalePendingAudio(ctx context.Context) (int64, error) {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE interview_questions SET audio_state = NULL
+		 WHERE audio_state = 'pending'
+		   AND interview_id IN (SELECT id FROM interviews WHERE status = 'active')`)
+	if err != nil {
+		return 0, fmt.Errorf("interview: reset stale pending audio: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("interview: reset stale pending audio rows: %w", err)
+	}
+	return affected, nil
+}
+
+// ResetAudioStateByInterview 清空一场面试全部题目的语音状态（面试终态清理时调用）。
+func (r *Repository) ResetAudioStateByInterview(ctx context.Context, interviewID int64) error {
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE interview_questions SET audio_state = NULL WHERE interview_id = ?`, interviewID); err != nil {
+		return fmt.Errorf("interview: reset audio state of interview %d: %w", interviewID, err)
+	}
+	return nil
 }
 
 // placeholderQuestions 按 cfg.LabelCounts 生成占位主问题：标签顺序为八股→算法→项目，
