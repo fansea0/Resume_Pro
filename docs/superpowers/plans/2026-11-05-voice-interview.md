@@ -1463,12 +1463,13 @@ func TestGeneratorReloadEnqueuesPendingAudio(t *testing.T) {
 	generator := NewGenerator(synth, NewAudioStore(t.TempDir()), states, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	generator.Start(ctx)
-	defer generator.Close()
-
+	// Reload 必须在 Start 之前：启动时还没有 worker，pending 一定是崩溃残留。
 	if err := generator.Reload(ctx); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
+	generator.Start(ctx)
+	defer generator.Close()
+
 	waitForState(t, states, 100, "ready")
 }
 ```
@@ -1742,6 +1743,28 @@ Expected: PASS（含 3 个竞争态用例）。
 git add backend/internal/speech/generator.go backend/internal/speech/generator_test.go
 git commit -m "feat(speech): 新增后台串行生成器与重启重载"
 ```
+
+> **实现说明（落地时确认并加固过的 8 处）**：brief 里的示例代码是最小骨架，落地时按下面的结论实现，
+> 后续任务与接线（尤其 Task 8）必须遵守这些约定：
+> 1. `AudioStateStore` 必须补 `UpdateAudioState(ctx, questionID, state)`——示例接口漏了它，
+>    但实现里要写 `ready` / `failed`，不补编译不过。`*interview.Repository` 天然满足该接口。
+> 2. **`Reload` 必须在 `Start` 之前调用**：`ResetStalePendingAudio` 会把进行中面试的所有 `pending` 归零，
+>    worker 一旦开始消费，`pending` 可能属于在途任务，归零会导致重复合成。
+>    实现加了代码防线 `speech.ErrReloadAfterStart`：`Start` 之后再调 `Reload` 直接报错且不改任何状态
+>    （批量归零无法按题粒度纠正，只能拒绝）。Task 8 的启动顺序必须是 `Reload` → `Start`。
+> 3. 写 `failed` 也要在读锁内完成（与 `CleanupInterview` 的写锁互斥），
+>    否则「清理把状态归零」与「worker 写回 failed」之间有窗口，已结束的面试会留下 `failed`。
+> 4. 落盘前用 `ValidateWAV` 兜一次 TTS 产物：provider 恒返回 `audio/wav`，但字节未必是合法 WAV，
+>    脏音频一旦落盘，Task 7 会按 `audio/wav` 播给用户。存储层（Task 3）刻意不校验格式，所以这道校验在生成器侧。
+> 5. `closedInterviews` 只按 `interviewID` 索引 —— 前提是 interviewID 为数据库全局自增主键、跨租户唯一。
+> 6. `Enqueue` 的内存去重键用 `questionID`，同一前提。真正的去重真源仍是 DB 抢占。
+> 7. **落盘失败不重试合成**（字节已在手，重烧 GPU 无收益），直接标 `failed`；
+>    合成失败与 `ValidateWAV` 不通过才走退避重试。
+> 8. **`Close()` 会取消在途 TTS**（生成器自持内部 cancel，不依赖外部 ctx），并限时 5s 等 worker 退出。
+>    关停时在途题停在 `pending`，靠下次启动的 `Reload` 补齐。
+>
+> 另外：并发断言不要用固定 sleep 判定「某事没发生」，改用条件等待（轮询到期望状态，超时才失败）
+> 与屏障题（单 worker 串行下，屏障题 ready 即证明前面的任务已排空）。
 
 ---
 
@@ -2709,12 +2732,14 @@ func buildInterviewService(db *sqlx.DB, llmConfig llm.Config, logger *logrus.Log
 	if voiceGenerator != nil {
 		audioHooks = voiceGenerator
 		config.VoiceService = voiceService
-		// 后台生成 worker：串行消费，不阻塞任何请求。
-		voiceGenerator.Start(context.Background())
 		// 重启重载：先把上次崩溃残留的 pending 归零，再扫描未就绪的题重新入队。
+		// 必须在 Start 之前：worker 一旦开始消费，pending 就可能属于在途任务，
+		// 此时归零会导致重复合成。Generator 用 ErrReloadAfterStart 挡住误用。
 		if err := voiceGenerator.Reload(context.Background()); err != nil {
 			logger.WithError(err).Warn("voice: reload pending question audio failed")
 		}
+		// 后台生成 worker：串行消费，不阻塞任何请求。
+		voiceGenerator.Start(context.Background())
 		logger.WithField("cache_dir", voiceService.Store.Root()).Info("voice features enabled")
 	}
 
