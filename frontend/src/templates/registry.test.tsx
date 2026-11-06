@@ -18,7 +18,7 @@ import {
 const sampleResume: ResumeDocument = {
   schemaVersion: 2,
   title: '产品经理简历',
-  templateId: 'minimal',
+  templateId: 'redline',
   profile: {
     fullName: '林晓',
     headline: '高级产品经理',
@@ -68,15 +68,12 @@ const itemSections = sampleSections.filter(
 const locateEntryCount = itemSections.reduce((total, section) => total + section.content.items.length, 0);
 
 /**
- * 每个模板的条目标题取文档里的哪个字段。这是实现事实而非约定：12 个模板的 `EntryLocateButton`
- * 调用点已逐一核对，唯一分歧是 `business` 的经历类条目取岗位名（role），其余 11 个取公司名。
+ * 每个模板的条目标题取文档里的哪个字段。这是实现事实而非约定：7 个模板的 `EntryLocateButton`
+ * 调用点已逐一核对，经历类条目取公司名，项目取项目名，教育取学校名，校园经历取社团名。
  * 断言必须写死到这一层，否则「所有条目按钮都播报区块标题」这种回归仍能过——读屏用户靠的
  * 就是这个可访问名称来区分条目。
  */
-function entryLabel(templateId: TemplateId, section: ItemSection, item: unknown): string {
-  if (templateId === 'business' && (section.type === 'work' || section.type === 'internship')) {
-    return (item as ExperienceItem).role;
-  }
+function entryLabel(section: ItemSection, item: unknown): string {
   switch (section.type) {
     case 'work':
     case 'internship':
@@ -93,20 +90,14 @@ function entryLabel(templateId: TemplateId, section: ItemSection, item: unknown)
 }
 
 /**
- * 条目标题元素：多数模板用 `<h3>`，tech 的教育分支用 `<strong>`。
  * 条目标题不带 `data-resume-section-title`，因此不能按区块标题那样用全局选择器查找——
  * 必须从条目锚点元素内部向下定位。
  */
 const ENTRY_HEADING_SELECTOR = 'h1,h2,h3,h4,h5,h6,strong';
 
 describe('templateRegistry', () => {
-  it('registers the minimal, business, creative, tech, editorial, redline, violet, azure chronicle, mint canvas, scholarly serif, blue sidebar, and navy gutter templates', () => {
+  it('registers the redline, violet, azure chronicle, mint canvas, scholarly serif, blue sidebar, and navy gutter templates', () => {
     expect(templateRegistry.map((template) => template.id)).toEqual([
-      'minimal',
-      'business',
-      'creative',
-      'tech',
-      'editorial',
       'redline',
       'violet',
       'azure-chronicle',
@@ -199,8 +190,6 @@ describe('templateRegistry', () => {
   });
 
   it.each([
-    ['tech', 'CAREER SIGNAL'],
-    ['editorial', 'PROFILE'],
     ['redline', '个人总结'],
     ['violet', '个人总结'],
     ['azure-chronicle', '个人总结'],
@@ -230,38 +219,13 @@ describe('templateRegistry', () => {
     expect(document.querySelector('[data-template-honours]')).toBeInTheDocument();
   });
 
-  it('keeps the business intro, tech education grid, and redline entry heading contracts', () => {
-    const Business = templateRegistry.find(({ id }) => id === 'business')!.Renderer;
-    const { container: business } = render(<Business document={sampleResume} />);
-    expect(business.querySelector('.template-business__intro')).toBeInTheDocument();
-    const businessEntry = business.querySelector('.template-business__entry');
-    expect(businessEntry?.children).toHaveLength(2);
-    expect(businessEntry?.firstElementChild).toHaveClass('template-business__period');
-
-    const Tech = templateRegistry.find(({ id }) => id === 'tech')!.Renderer;
-    const { container: tech } = render(<Tech document={sampleResume} />);
-    expect(tech.querySelector('.template-tech__education')).toBeInTheDocument();
-    const techEducation = tech.querySelector('.template-tech__education');
-    expect(techEducation?.querySelector(':scope > strong')).toBeInTheDocument();
-    expect(techEducation?.querySelector(':scope > span')).toBeInTheDocument();
-    expect(techEducation?.querySelector(':scope > time')).toBeInTheDocument();
-
+  it('keeps the redline entry heading contract', () => {
     const Redline = templateRegistry.find(({ id }) => id === 'redline')!.Renderer;
     const { container: redline } = render(<Redline document={sampleResume} />);
     expect(redline.querySelector('.template-redline__entry-heading')).toBeInTheDocument();
   });
 
-  it('keeps visible section content in both creative and editorial columns', () => {
-    const Creative = templateRegistry.find(({ id }) => id === 'creative')!.Renderer;
-    const { container: creative } = render(<Creative document={sampleResume} />);
-    expect(creative.querySelector('.template-creative__sidebar [data-resume-section]')).toBeInTheDocument();
-
-    const Editorial = templateRegistry.find(({ id }) => id === 'editorial')!.Renderer;
-    const { container: editorial } = render(<Editorial document={sampleResume} />);
-    expect(editorial.querySelector('.template-editorial__sidebar [data-resume-section]')).toBeInTheDocument();
-  });
-
-  it.each(['business', 'tech'] as const)('renders optional item fields only while enabled in %s', (templateId) => {
+  it.each(['redline', 'violet'] as const)('renders optional item fields only while enabled in %s', (templateId) => {
     const Renderer = templateRegistry.find(({ id }) => id === templateId)!.Renderer;
     const { rerender } = render(<Renderer document={sampleResume} />);
     expect(screen.getAllByText('上海').length).toBeGreaterThan(0);
@@ -313,7 +277,7 @@ describe('全部模板的区块与标题定位不变量', () => {
     }
     // 无障碍兜底：必须是带可访问名称的真实 button。条目按钮与区块按钮共用同一命名模式，
     // 因此这里断言全等：区块标题数 + 经历类条目数，两者都从文档推导，不写死。
-    // 实测 12 个模板（含 creative / editorial 双栏拆分）均为 8 + 5 = 13 个按钮。
+    // 实测 7 个模板均为 8 + 5 = 13 个按钮。
     expect(screen.getAllByRole('button', { name: /^定位到编辑器的「.+」$/ })).toHaveLength(visibleSections.length + locateEntryCount);
   });
 });
@@ -335,7 +299,7 @@ describe('全部模板的条目定位不变量', () => {
     );
   }
 
-  // 全模板门禁，而不是只盯 business：槽位写成内联箭头是随时可能重犯的错误，
+  // 全模板门禁，而不是只盯单个模板：槽位写成内联箭头是随时可能重犯的错误，
   // 断言写在不变量这一层，新模板漏改会立刻在 CI 失败。
   it.each(templateRegistry.map((t) => t.id))('%s 的条目定位按钮在触发重渲染后仍保留键盘焦点', (id) => {
     render(<StatefulRenderer id={id} />);
@@ -370,10 +334,10 @@ describe('全部模板的条目定位不变量', () => {
         const itemId = (item as { id: string }).id;
         const entry = container.querySelector(`[${ITEM_ANCHOR_ATTR}="${itemId}"]`)!;
         const buttons = Array.from(entry.querySelectorAll('button'));
-        const expectedLabel = entryLabel(id, section, item);
+        const expectedLabel = entryLabel(section, item);
 
-        // 无标题的条目按设计降级为纯文本：`business` 对空标题走 `{label ? <Button/> : label}`，
-        // 此时 <h3> 里是空字符串，套按钮只会给读屏播报一个空名字。因此期望个数从文档推导：
+        // 无标题的条目按设计降级为纯文本：模板对空标题走 `{label ? <Button/> : label}`，
+        // 此时标题元素里是空字符串，套按钮只会给读屏播报一个空名字。因此期望个数从文档推导：
         // 有标题则恰一个（重复渲染会 >1、漏渲染会 =0），无标题则 0 个。
         expect(buttons).toHaveLength(expectedLabel ? 1 : 0);
         if (!expectedLabel) continue;
@@ -400,7 +364,7 @@ describe('全部模板的条目定位不变量', () => {
         expect(button.textContent).toBe(expectedLabel);
 
         // 载荷必须指向这个条目本身：sectionId / itemId 与文档中的条目对应。
-        // ResumeSections.test.tsx 只覆盖默认槽路径，6 个自带 item 槽的模板靠这里保证。
+        // ResumeSections.test.tsx 只覆盖默认槽路径，自带 item 槽的模板靠这里保证。
         onLocate.mockClear();
         fireEvent.click(button);
         expect(onLocate).toHaveBeenCalledTimes(1);

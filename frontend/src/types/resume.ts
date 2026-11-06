@@ -1,9 +1,4 @@
 export type TemplateId =
-  | 'minimal'
-  | 'business'
-  | 'creative'
-  | 'tech'
-  | 'editorial'
   | 'redline'
   | 'violet'
   | 'azure-chronicle'
@@ -189,7 +184,7 @@ export function createEmptyResumeDocument(): ResumeDocument {
   return {
     schemaVersion: 2,
     title: '我的简历',
-    templateId: 'minimal',
+    templateId: 'redline',
     profile: {
       fullName: '姓名',
       headline: '互联网从业者',

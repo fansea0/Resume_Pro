@@ -31,7 +31,7 @@ Extract supplied prose, notes, a previous resume, or job description into this m
 
 Ask only for the missing information that blocks a credible result. If the template is absent, do **not** block on the entire intake: recommend templates first. Use a compact prompt such as:
 
-> 我已收到你的经历。请选择模板：`极简专业`（产品/技术）、`现代商务`（管理/咨询）或 `赤线单栏`（中文互联网）。如需我推荐，请补充目标岗位和年限。
+> 我已收到你的经历。请选择模板：`赤线单栏`（互联网/产品/运营）、`书卷单栏`（工科/研发）或 `紫韵单栏`（校招/技术）。如需我推荐，请补充目标岗位和年限。
 
 If experience detail is sparse, ask for the role, dates, 2–3 responsibilities or outcomes, and education rather than inventing achievements. Clearly mark optional gaps as “待补充”.
 

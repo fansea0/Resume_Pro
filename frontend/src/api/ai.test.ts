@@ -216,7 +216,7 @@ describe('streamGenerate', () => {
     const generated = {
       schemaVersion: 2,
       title: '张三｜后端工程师',
-      templateId: 'minimal',
+      templateId: 'redline',
       profile: {
         fullName: '张三', headline: '后端工程师', email: '', phone: '', location: '', website: '',
         avatarUrl: '', avatarStorageKey: '', showAvatar: true,
@@ -237,7 +237,7 @@ describe('streamGenerate', () => {
     const request = {
       rawText: '我有五年 Go 后端经验，负责过支付平台与稳定性治理。',
       targetJobId: 7,
-      templateId: 'minimal' as const,
+      templateId: 'redline' as const,
     };
 
     await streamGenerate(request, onEvent);

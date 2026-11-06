@@ -11,6 +11,7 @@ const listResumes = vi.fn().mockResolvedValue([]);
 const updateResume = vi.fn();
 const deleteResume = vi.fn();
 const exportResumePng = vi.fn();
+const exportResumeMarkdown = vi.fn();
 
 vi.mock('../api/auth', () => ({
   getCurrentUser: vi.fn().mockResolvedValue({ id: 1, email: 'ada@example.com', tenantId: 1 }),
@@ -31,6 +32,10 @@ vi.mock('../api/resumes', () => ({
 
 vi.mock('../utils/exportResumePng', () => ({
   exportResumePng: (...args: unknown[]) => exportResumePng(...args),
+}));
+
+vi.mock('../utils/exportResumeMarkdown', () => ({
+  exportResumeMarkdown: (...args: unknown[]) => exportResumeMarkdown(...args),
 }));
 
 afterEach(() => {
@@ -75,11 +80,14 @@ describe('ResumeLibrary', () => {
 
     await waitFor(() => expect(createResume).toHaveBeenCalledWith(document));
     expect(await screen.findByText('已保存的前端工程师简历')).toBeInTheDocument();
-    expect(screen.getByText('极简专业')).toBeInTheDocument();
+    expect(screen.getByText('赤线单栏')).toBeInTheDocument();
   });
 
   it('updates and enables deletion for an initially selected saved resume', async () => {
     const document = { ...createEmptyResumeDocument(), title: '已保存简历' };
+    listResumes.mockResolvedValueOnce([
+      { id: 7, title: document.title, templateId: document.templateId, content: '{}', createdAt: '2026-08-13T00:00:00Z', updatedAt: '2026-08-13T00:00:00Z' },
+    ]);
     updateResume.mockResolvedValueOnce({
       id: 7,
       title: document.title,
@@ -91,13 +99,14 @@ describe('ResumeLibrary', () => {
 
     render(<ResumeLibrary document={document} selectedId={7} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
 
-    expect(screen.getByRole('button', { name: '删除' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: '删除草稿：已保存简历' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
     await waitFor(() => expect(updateResume).toHaveBeenCalledWith(7, document));
     expect(createResume).not.toHaveBeenCalled();
 
     deleteResume.mockResolvedValueOnce(undefined);
-    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    fireEvent.click(screen.getByRole('button', { name: '删除草稿：已保存简历' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
     await waitFor(() => expect(deleteResume).toHaveBeenCalledWith(7));
   });
 
@@ -143,13 +152,17 @@ describe('ResumeLibrary', () => {
   it('cancels an in-flight autosave before deleting the selected draft', async () => {
     vi.useFakeTimers();
     const document = createEmptyResumeDocument();
+    listResumes.mockResolvedValueOnce([
+      { id: 7, title: document.title, templateId: document.templateId, content: '{}', createdAt: '', updatedAt: '' },
+    ]);
     let resolveUpdate!: (value: { id: number; title: string; templateId: string; content: string; createdAt: string; updatedAt: string }) => void;
     updateResume.mockImplementationOnce(() => new Promise((resolve) => { resolveUpdate = resolve; }));
     deleteResume.mockResolvedValueOnce(undefined);
     const { rerender } = render(<ResumeLibrary document={document} selectedId={7} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
     rerender(<ResumeLibrary document={{ ...document, title: '已编辑' }} selectedId={7} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
-    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
-    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(801); });
+    fireEvent.click(screen.getByRole('button', { name: '删除草稿：我的简历' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
     await act(async () => { resolveUpdate({ id: 7, title: document.title, templateId: document.templateId, content: JSON.stringify(document), createdAt: '', updatedAt: '' }); await vi.advanceTimersByTimeAsync(800); });
 
     expect(deleteResume).toHaveBeenCalledWith(7);
@@ -164,16 +177,32 @@ describe('ResumeLibrary', () => {
     expect(print).toHaveBeenCalledOnce();
   });
 
-  it('exports the active preview as a PNG', async () => {
+  it('exports the active preview as a PNG from the export menu', async () => {
     const preview = document.createElement('article');
     const previewRef = createRef<HTMLElement>();
     Object.defineProperty(previewRef, 'current', { value: preview });
     exportResumePng.mockResolvedValueOnce(undefined);
 
     render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} previewRef={previewRef} />);
-    fireEvent.click(screen.getByRole('button', { name: '导出 PNG' }));
+    fireEvent.click(screen.getByRole('button', { name: '更多导出格式' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '导出 PNG' }));
 
     await waitFor(() => expect(exportResumePng).toHaveBeenCalledWith(preview, '我的简历'));
+  });
+
+  it('closes the export menu after picking a format and on Escape', () => {
+    render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+    const toggle = screen.getByRole('button', { name: '更多导出格式' });
+
+    fireEvent.click(toggle);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole('menuitem', { name: '导出 Markdown' }));
+    expect(exportResumeMarkdown).toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
   it('shows a recoverable error when PNG export fails', async () => {
@@ -183,9 +212,39 @@ describe('ResumeLibrary', () => {
     exportResumePng.mockRejectedValueOnce(new Error('render failed'));
 
     render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} previewRef={previewRef} />);
-    fireEvent.click(screen.getByRole('button', { name: '导出 PNG' }));
+    fireEvent.click(screen.getByRole('button', { name: '更多导出格式' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '导出 PNG' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('导出 PNG 失败，请稍后重试。');
+  });
+
+  it('exports the current document as markdown from the export menu', () => {
+    const document = createEmptyResumeDocument();
+    render(<ResumeLibrary document={document} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '更多导出格式' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '导出 Markdown' }));
+    expect(exportResumeMarkdown).toHaveBeenCalledWith(document);
+  });
+
+  it('shows a recoverable error when markdown export fails', () => {
+    exportResumeMarkdown.mockImplementationOnce(() => { throw new Error('blob failed'); });
+    render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '更多导出格式' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '导出 Markdown' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('导出 Markdown 失败，请稍后重试。');
+  });
+
+  it('shows draft updated time in the saved list', async () => {
+    listResumes.mockResolvedValueOnce([
+      { id: 3, title: '后端简历', templateId: 'redline', content: '{}', createdAt: '2026-11-01T10:00:00Z', updatedAt: '2026-11-02T08:30:00Z' },
+    ]);
+
+    render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+
+    const item = await screen.findByRole('button', { name: /^后端简历/ });
+    expect(item).toHaveTextContent('赤线单栏');
   });
 
   it('shows sample content by default and restores it without saving', async () => {
@@ -198,9 +257,43 @@ describe('ResumeLibrary', () => {
     expect(title).toHaveValue('我的自定义简历');
 
     fireEvent.click(screen.getByRole('button', { name: '恢复示例内容' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认恢复' }));
 
     expect(title).toHaveValue('林知夏｜产品经理简历');
     expect(createResume).not.toHaveBeenCalled();
     expect(updateResume).not.toHaveBeenCalled();
+  });
+
+  it('requires confirmation before restoring sample content over edits', () => {
+    const onRestoreSample = vi.fn();
+    render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={null} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={onRestoreSample} onSelect={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '恢复示例内容' }));
+    expect(screen.getByText('恢复示例会覆盖当前简历内容，确认继续？')).toBeInTheDocument();
+    expect(onRestoreSample).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(onRestoreSample).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '恢复示例内容' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认恢复' }));
+    expect(onRestoreSample).toHaveBeenCalledOnce();
+  });
+
+  it('deletes a draft only after inline confirmation', async () => {
+    const draft = { id: 3, title: '后端简历', templateId: 'redline', content: '{}', createdAt: '2026-11-01T10:00:00Z', updatedAt: '2026-11-02T08:30:00Z' };
+    listResumes.mockResolvedValueOnce([draft]);
+    deleteResume.mockResolvedValueOnce(undefined);
+
+    render(<ResumeLibrary document={createEmptyResumeDocument()} selectedId={3} onSelectedIdChange={vi.fn()} onChange={vi.fn()} onRestoreSample={vi.fn()} onSelect={vi.fn()} />);
+    const deleteIcon = await screen.findByRole('button', { name: '删除草稿：后端简历' });
+    expect(screen.queryByRole('button', { name: '确认删除' })).not.toBeInTheDocument();
+
+    fireEvent.click(deleteIcon);
+    expect(screen.getByText('删除「后端简历」？')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+    await waitFor(() => expect(deleteResume).toHaveBeenCalledWith(3));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '删除草稿：后端简历' })).toBeNull());
   });
 });

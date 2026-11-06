@@ -16,7 +16,7 @@ describe('createEmptyResumeDocument', () => {
 
     expect(document).toMatchObject({
       title: '我的简历',
-      templateId: 'minimal',
+      templateId: 'redline',
       profile: {
         fullName: '姓名',
         headline: '互联网从业者',

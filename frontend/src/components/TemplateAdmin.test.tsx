@@ -25,9 +25,9 @@ describe('TemplateAdmin', () => {
     render(<TemplateAdmin />);
 
     expect(await screen.findByRole('heading', { name: '模板管理' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '删除模板：极简专业' }));
+    fireEvent.click(screen.getByRole('button', { name: '删除模板：赤线单栏' }));
 
-    await waitFor(() => expect(disableTemplate).toHaveBeenCalledWith('minimal'));
+    await waitFor(() => expect(disableTemplate).toHaveBeenCalledWith('redline'));
     expect(screen.getByText('已禁用')).toBeInTheDocument();
   });
 

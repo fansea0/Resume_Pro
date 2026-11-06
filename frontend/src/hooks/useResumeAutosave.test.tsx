@@ -7,7 +7,7 @@ import { createEmptyResumeDocument } from '../types/resume';
 
 vi.mock('../api/resumes', () => ({ createResume: vi.fn(), updateResume: vi.fn() }));
 
-const stored = (id: number, title: string): StoredResume => ({ id, title, templateId: 'minimal', content: '{}', createdAt: '', updatedAt: '' });
+const stored = (id: number, title: string): StoredResume => ({ id, title, templateId: 'redline', content: '{}', createdAt: '', updatedAt: '' });
 
 describe('useResumeAutosave', () => {
   afterEach(() => { vi.useRealTimers(); vi.resetAllMocks(); });

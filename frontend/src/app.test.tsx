@@ -135,7 +135,7 @@ describe('application authentication gate', () => {
 
     await screen.findByRole('heading', { name: '选择简历模板' });
     expect(window.location.pathname).toBe('/');
-    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：赤线单栏' }));
     expect(screen.getByLabelText('姓名')).not.toHaveValue('用户 A');
     expect(screen.queryByText('A 的机密简历')).not.toBeInTheDocument();
   });
@@ -146,7 +146,7 @@ describe('application authentication gate', () => {
     render(<App />);
 
     await screen.findByRole('heading', { name: '选择简历模板' });
-    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：赤线单栏' }));
     fireEvent.change(screen.getByLabelText('姓名'), { target: { value: '过期的 A 用户' } });
     act(() => unauthorizedListener?.());
 
@@ -155,7 +155,7 @@ describe('application authentication gate', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password1234' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
     await screen.findByRole('heading', { name: '选择简历模板' });
-    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：赤线单栏' }));
 
     expect(screen.getByLabelText('姓名')).not.toHaveValue('过期的 A 用户');
   });
@@ -169,7 +169,7 @@ describe('application authentication gate', () => {
     render(<App />);
 
     await screen.findByRole('heading', { name: '选择简历模板' });
-    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：赤线单栏' }));
     fireEvent.change(screen.getByLabelText('姓名'), { target: { value: '正在上传的 A 用户' } });
     fireEvent.change(screen.getByLabelText('上传简历证件照'), {
       target: { files: [new File(['avatar'], 'a.png', { type: 'image/png' })] },
@@ -182,7 +182,7 @@ describe('application authentication gate', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password1234' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
     await screen.findByRole('heading', { name: '选择简历模板' });
-    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：赤线单栏' }));
 
     await act(async () => {
       finishUserAUpload({ url: '/uploads/avatars/user-a.webp' });
@@ -212,9 +212,9 @@ describe('application authentication gate', () => {
     await waitFor(() => expect(getTemplateStatus).toHaveBeenCalledOnce());
     expect(screen.queryByRole('heading', { name: '选择简历模板' })).not.toBeInTheDocument();
 
-    resolveStatus({ disabledTemplateIds: ['minimal'] });
+    resolveStatus({ disabledTemplateIds: ['redline'] });
     await screen.findByRole('heading', { name: '选择简历模板' });
-    expect(screen.queryByRole('img', { name: '极简专业 模板预览' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: '赤线单栏 模板预览' })).not.toBeInTheDocument();
   });
 
   it('does not show template administration to a regular user', async () => {
@@ -251,9 +251,9 @@ describe('application authentication gate', () => {
     await waitFor(() => expect(getTemplateStatus).toHaveBeenCalledOnce());
     expect(screen.queryByRole('heading', { name: '选择简历模板' })).not.toBeInTheDocument();
 
-    resolveStatus({ disabledTemplateIds: ['minimal'] });
+    resolveStatus({ disabledTemplateIds: ['redline'] });
     await screen.findByRole('heading', { name: '选择简历模板' });
-    await waitFor(() => expect(screen.queryByRole('img', { name: '极简专业 模板预览' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('img', { name: '赤线单栏 模板预览' })).not.toBeInTheDocument());
   });
 
   it('keeps every template usable when template status cannot be loaded', async () => {
@@ -262,7 +262,7 @@ describe('application authentication gate', () => {
     render(<App />);
 
     await screen.findByRole('heading', { name: '选择简历模板' });
-    expect(screen.getByRole('img', { name: '极简专业 模板预览' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '赤线单栏 模板预览' })).toBeInTheDocument();
   });
 
   it('navigates from personal drafts into the selected draft editor', async () => {
@@ -271,8 +271,8 @@ describe('application authentication gate', () => {
     listResumes.mockResolvedValueOnce([{
       id: 7,
       title: '产品经理简历',
-      templateId: 'business',
-      content: JSON.stringify({ ...sample, templateId: 'business', title: '产品经理简历' }),
+      templateId: 'redline',
+      content: JSON.stringify({ ...sample, templateId: 'redline', title: '产品经理简历' }),
       createdAt: '2026-08-14T01:00:00Z',
       updatedAt: '2026-08-14T02:00:00Z',
     }]);
@@ -286,13 +286,13 @@ describe('application authentication gate', () => {
     fireEvent.click(screen.getByRole('button', { name: '继续编辑：产品经理简历' }));
 
     expect(await screen.findByTestId('resume-preview')).toBeInTheDocument();
-    expect(screen.getByText('当前模板：现代商务')).toBeInTheDocument();
+    expect(screen.getByText('当前模板：赤线单栏')).toBeInTheDocument();
 
     updateResume.mockResolvedValueOnce({
       id: 7,
       title: '产品经理简历',
-      templateId: 'business',
-      content: JSON.stringify({ ...sample, templateId: 'business', title: '产品经理简历' }),
+      templateId: 'redline',
+      content: JSON.stringify({ ...sample, templateId: 'redline', title: '产品经理简历' }),
       createdAt: '2026-08-14T01:00:00Z',
       updatedAt: '2026-08-14T03:00:00Z',
     });
@@ -306,7 +306,7 @@ describe('application authentication gate', () => {
     listResumes.mockResolvedValueOnce([{
       id: 9,
       title: '损坏的简历',
-      templateId: 'business',
+      templateId: 'redline',
       content: '{bad json',
       createdAt: '2026-08-14T01:00:00Z',
       updatedAt: '2026-08-14T02:00:00Z',
@@ -441,7 +441,7 @@ describe('预览定位路由', () => {
     listTargetJobs.mockResolvedValue([]);
     render(<App />);
     await screen.findByRole('heading', { name: '选择简历模板' });
-    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：赤线单栏' }));
     await screen.findByTestId('resume-preview');
   }
 
@@ -493,7 +493,7 @@ describe('预览定位路由', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password1234' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
     await screen.findByRole('heading', { name: '选择简历模板' });
-    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：赤线单栏' }));
     await screen.findByTestId('resume-preview');
 
     // 编辑器带 key={renderedSessionEpoch} 重新挂载，useLocateTarget 的 effect 会在挂载时跑一次；
@@ -511,7 +511,7 @@ describe('预览定位路由', () => {
     // useLocateTarget 的 effect 会在新实例挂载时再跑一次。
     fireEvent.click(screen.getByRole('button', { name: '模板主页' }));
     await screen.findByRole('heading', { name: '选择简历模板' });
-    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：赤线单栏' }));
     await screen.findByTestId('resume-preview');
 
     // 目标 id 稳定（createSampleResumeDocument 用固定 id），残留请求一定能解析成功，

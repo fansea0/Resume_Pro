@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createResume, documentFromStored } from './resumes';
 import { createSampleResumeDocument } from '../types/resume';
 
-function stored(content: unknown, title = '数据库标题', templateId = 'business') {
+function stored(content: unknown, title = '数据库标题', templateId = 'redline') {
   return {
     id: 9,
     title,
-    templateId: templateId as 'business',
+    templateId: templateId as 'redline',
     content: JSON.stringify(content),
     createdAt: '2026-08-14T01:00:00Z',
     updatedAt: '2026-08-14T02:00:00Z',
@@ -41,7 +41,7 @@ describe('documentFromStored', () => {
     expect(documentFromStored(stored(document))).toEqual({
       ...document,
       title: '数据库标题',
-      templateId: 'business',
+      templateId: 'redline',
     });
   });
 
@@ -82,7 +82,7 @@ describe('documentFromStored', () => {
     expect(restored).toMatchObject({
       schemaVersion: 2,
       title: '数据库标题',
-      templateId: 'business',
+      templateId: 'redline',
       profile: {
         fullName: '达钦海', headline: 'Go 后端开发', email: 'a@example.com', phone: '13800000000',
         location: '武汉', website: 'https://example.com', avatarUrl: '', avatarStorageKey: '',
@@ -212,7 +212,7 @@ describe('documentFromStored', () => {
 
   it('rejects unknown outer template identifiers', () => {
     const document = createSampleResumeDocument();
-    expect(() => documentFromStored({ ...stored(document), templateId: 'unknown' as 'business' })).toThrow();
+    expect(() => documentFromStored({ ...stored(document), templateId: 'unknown' as 'redline' })).toThrow();
   });
 
   it.each(['mint-canvas', 'scholarly-serif', 'blue-sidebar'] as const)(

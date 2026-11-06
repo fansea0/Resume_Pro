@@ -34,13 +34,13 @@ describe('sanitizeGeneratedResumeDocument', () => {
         : section),
     };
 
-    const sanitized = sanitizeGeneratedResumeDocument(generated, 'business', 7);
+    const sanitized = sanitizeGeneratedResumeDocument(generated, 'redline', 7);
 
     expect(sanitized).toBeDefined();
     expect(sanitized).toMatchObject({
       schemaVersion: 2,
       title: sample.title,
-      templateId: 'business',
+      templateId: 'redline',
       targetJobId: 7,
       profile: { ...sample.profile, avatarUrl: '', avatarStorageKey: '', showAvatar: true },
     });
@@ -53,7 +53,7 @@ describe('sanitizeGeneratedResumeDocument', () => {
     ]);
     expect(sanitized?.sections[0]).toEqual(sample.sections[0]);
     expect(sanitized?.sections[1]).toEqual(sample.sections[1]);
-    expect(sanitizeGeneratedResumeDocument(generated, 'business')).not.toHaveProperty('targetJobId');
+    expect(sanitizeGeneratedResumeDocument(generated, 'redline')).not.toHaveProperty('targetJobId');
   });
 
   it('preserves an explicit boolean showAvatar and rejects a wrong type', () => {
@@ -61,12 +61,12 @@ describe('sanitizeGeneratedResumeDocument', () => {
     expect(sanitizeGeneratedResumeDocument({
       ...sample,
       profile: { ...sample.profile, showAvatar: false },
-    }, 'minimal')?.profile.showAvatar).toBe(false);
+    }, 'redline')?.profile.showAvatar).toBe(false);
 
     expect(sanitizeGeneratedResumeDocument({
       ...sample,
       profile: { ...sample.profile, showAvatar: 'yes' },
-    }, 'minimal')).toBeUndefined();
+    }, 'redline')).toBeUndefined();
   });
 
   it('rejects strings and collections outside the backend persistence limits', () => {
@@ -78,15 +78,15 @@ describe('sanitizeGeneratedResumeDocument', () => {
     expect(sanitizeGeneratedResumeDocument({
       ...sample,
       title: 'x'.repeat(20_001),
-    }, 'minimal')).toBeUndefined();
+    }, 'redline')).toBeUndefined();
     expect(sanitizeGeneratedResumeDocument({
       ...sample,
       title: '中'.repeat(6_667),
-    }, 'minimal')).toBeUndefined();
+    }, 'redline')).toBeUndefined();
     expect(sanitizeGeneratedResumeDocument({
       ...sample,
       sections: Array.from({ length: 51 }, (_, index) => ({ ...summary, id: `summary-${index}` })),
-    }, 'minimal')).toBeUndefined();
+    }, 'redline')).toBeUndefined();
     expect(sanitizeGeneratedResumeDocument({
       ...sample,
       sections: [{
@@ -95,7 +95,7 @@ describe('sanitizeGeneratedResumeDocument', () => {
           items: Array.from({ length: 101 }, (_, index) => ({ id: `skill-${index}`, name: 'Go', note: '' })),
         },
       }],
-    }, 'minimal')).toBeUndefined();
+    }, 'redline')).toBeUndefined();
   });
 
   it('rejects unsafe target ids and documents over the backend request limit', () => {
@@ -103,7 +103,7 @@ describe('sanitizeGeneratedResumeDocument', () => {
     const skills = sample.sections.find((section) => section.type === 'skills');
     if (!skills) throw new Error('sample skills section is required');
 
-    expect(sanitizeGeneratedResumeDocument(sample, 'minimal', 0)).toBeUndefined();
+    expect(sanitizeGeneratedResumeDocument(sample, 'redline', 0)).toBeUndefined();
     expect(sanitizeGeneratedResumeDocument({
       ...sample,
       sections: Array.from({ length: 50 }, (_, sectionIndex) => ({
@@ -117,6 +117,6 @@ describe('sanitizeGeneratedResumeDocument', () => {
           })),
         },
       })),
-    }, 'minimal')).toBeUndefined();
+    }, 'redline')).toBeUndefined();
   });
 });

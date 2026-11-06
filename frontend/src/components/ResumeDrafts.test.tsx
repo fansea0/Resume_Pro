@@ -18,7 +18,7 @@ describe('ResumeDrafts', () => {
     listResumes.mockResolvedValueOnce([{
       id: 7,
       title: '产品经理简历',
-      templateId: 'business',
+      templateId: 'redline',
       content: '{}',
       createdAt: '2026-08-14T00:00:00Z',
       updatedAt: '2026-08-14T01:00:00Z',
@@ -28,7 +28,7 @@ describe('ResumeDrafts', () => {
     render(<ResumeDrafts onCreate={() => undefined} onSelect={onSelect} />);
 
     expect(await screen.findByText('产品经理简历')).toBeInTheDocument();
-    expect(screen.getByText('现代商务')).toBeInTheDocument();
+    expect(screen.getByText('赤线单栏')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '继续编辑：产品经理简历' }));
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }));
   });
@@ -54,7 +54,7 @@ describe('ResumeDrafts', () => {
     listResumes.mockResolvedValueOnce([{
       id: 7,
       title: '产品经理简历',
-      templateId: 'business',
+      templateId: 'redline',
       content: '{}',
       createdAt: '2026-08-14T00:00:00Z',
       updatedAt: '2026-08-14T01:00:00Z',
@@ -66,7 +66,7 @@ describe('ResumeDrafts', () => {
     expect(draft).toHaveClass('resume-drafts__item');
     expect(draft.querySelector('.resume-drafts__index')).toHaveAttribute('aria-hidden', 'true');
     expect(draft.querySelector('.resume-drafts__metadata')).toHaveTextContent('模板');
-    expect(draft.querySelector('.resume-drafts__metadata')).toHaveTextContent('现代商务');
+    expect(draft.querySelector('.resume-drafts__metadata')).toHaveTextContent('赤线单栏');
     expect(draft.querySelector('.resume-drafts__metadata')).toHaveTextContent('最后更新');
     expect(draft.querySelector('time')).toHaveAttribute('dateTime', '2026-08-14T01:00:00Z');
   });
@@ -85,7 +85,7 @@ describe('ResumeDrafts', () => {
       .mockResolvedValueOnce([{
         id: 8,
         title: '重试后的简历',
-        templateId: 'minimal',
+        templateId: 'redline',
         content: '{}',
         createdAt: '2026-08-14T00:00:00Z',
         updatedAt: '2026-08-14T01:00:00Z',
@@ -103,7 +103,7 @@ describe('ResumeDrafts', () => {
     let resolveRetry: (value: Array<{
       id: number;
       title: string;
-      templateId: 'minimal';
+      templateId: 'redline';
       content: string;
       createdAt: string;
       updatedAt: string;
@@ -111,7 +111,7 @@ describe('ResumeDrafts', () => {
     const retryRequest = new Promise<Array<{
       id: number;
       title: string;
-      templateId: 'minimal';
+      templateId: 'redline';
       content: string;
       createdAt: string;
       updatedAt: string;

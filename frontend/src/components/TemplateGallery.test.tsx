@@ -28,13 +28,13 @@ describe('template gallery workflow', () => {
     const onSelect = vi.fn();
     render(<TemplateGallery onSelect={onSelect} />);
 
-    const card = screen.getByRole('button', { name: '选择模板：现代商务' });
+    const card = screen.getByRole('button', { name: '选择模板：赤线单栏' });
     expect(card.tagName).toBe('BUTTON');
-    expect(screen.queryByRole('button', { name: '使用此模板：现代商务' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '使用此模板：赤线单栏' })).not.toBeInTheDocument();
 
     fireEvent.click(card);
     expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect).toHaveBeenLastCalledWith('business');
+    expect(onSelect).toHaveBeenLastCalledWith('redline');
 
     fireEvent.keyDown(card, { key: 'Enter' });
     fireEvent.click(card);
@@ -43,19 +43,19 @@ describe('template gallery workflow', () => {
 
   it('does not show disabled templates', async () => {
     const { TemplateGallery } = await import('./TemplateGallery');
-    render(<TemplateGallery disabledTemplateIds={['minimal']} onSelect={vi.fn()} />);
+    render(<TemplateGallery disabledTemplateIds={['redline']} onSelect={vi.fn()} />);
 
-    expect(screen.queryByRole('img', { name: '极简专业 模板预览' })).not.toBeInTheDocument();
-    expect(screen.getByRole('img', { name: '现代商务 模板预览' })).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: '赤线单栏 模板预览' })).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '薄荷绿卡 模板预览' })).toBeInTheDocument();
   });
 
   it('marks the active template and supports canceling replacement mode', async () => {
     const { TemplateGallery } = await import('./TemplateGallery');
     const onCancel = vi.fn();
-    render(<TemplateGallery currentTemplateId="business" onCancelReplacement={onCancel} onSelect={vi.fn()} replacementMode />);
+    render(<TemplateGallery currentTemplateId="redline" onCancelReplacement={onCancel} onSelect={vi.fn()} replacementMode />);
 
     expect(screen.getByRole('heading', { name: '替换简历模板' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '当前模板：现代商务' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '当前模板：赤线单栏' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '取消替换' }));
     expect(onCancel).toHaveBeenCalledOnce();
   });
@@ -95,10 +95,10 @@ describe('template gallery workflow', () => {
       }
     }
 
-    fireEvent.click(screen.getByRole('button', { name: '选择模板：现代商务' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择模板：赤线单栏' }));
 
     expect(screen.getByTestId('resume-preview')).toHaveTextContent('林知夏');
-    expect(screen.getByText('当前模板：现代商务')).toBeInTheDocument();
+    expect(screen.getByText('当前模板：赤线单栏')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '返回模板主页' }));
 

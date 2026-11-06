@@ -16,7 +16,7 @@ const MAX_RESUME_ITEMS_PER_SECTION = 100;
 const MAX_RESUME_STRING_BYTES = 20_000;
 const encoder = new TextEncoder();
 const templateIds = new Set<TemplateId>([
-  'minimal', 'business', 'creative', 'tech', 'editorial', 'redline', 'violet', 'azure-chronicle',
+  'redline', 'violet', 'azure-chronicle',
   'mint-canvas', 'scholarly-serif', 'blue-sidebar', 'navy-gutter',
 ]);
 

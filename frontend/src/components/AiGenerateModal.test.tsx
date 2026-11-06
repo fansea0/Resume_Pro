@@ -35,14 +35,14 @@ const targetJob: TargetJob = {
   updatedAt: '2026-08-19T01:00:00Z',
 };
 
-function fillRequiredFields(template = 'business') {
+function fillRequiredFields(template = 'redline') {
   fireEvent.change(screen.getByLabelText('你的经历与优势'), { target: { value: `  ${rawText}  ` } });
   fireEvent.change(screen.getByLabelText('简历模板'), { target: { value: template } });
 }
 
 function generatedDocument() {
   const document = createSampleResumeDocument();
-  return { ...document, title: '张三｜高级后端工程师', templateId: 'minimal' as const };
+  return { ...document, title: '张三｜高级后端工程师', templateId: 'redline' as const };
 }
 
 beforeEach(() => {
@@ -82,7 +82,7 @@ describe('AiGenerateModal', () => {
     expect(within(dialog).queryByText('你的经历与优势至少 30 个字符。')).not.toBeInTheDocument();
     expect(within(dialog).getByText('请选择简历模板。')).toBeInTheDocument();
 
-    fireEvent.change(templateSelect, { target: { value: 'business' } });
+    fireEvent.change(templateSelect, { target: { value: 'redline' } });
     expect(within(dialog).queryByText('请选择简历模板。')).not.toBeInTheDocument();
     expect(streamGenerateMock).not.toHaveBeenCalled();
   });
@@ -101,7 +101,7 @@ describe('AiGenerateModal', () => {
     expect(streamGenerateMock).toHaveBeenCalledWith({
       rawText,
       targetJobId: 7,
-      templateId: 'business',
+      templateId: 'redline',
     }, expect.any(Function), expect.any(AbortSignal));
   });
 
@@ -139,7 +139,7 @@ describe('AiGenerateModal', () => {
     createResumeMock.mockResolvedValue({
       id: 42,
       title: generated.title,
-      templateId: 'business',
+      templateId: 'redline',
       content: JSON.stringify(generated),
       createdAt: '2026-08-19T01:00:00Z',
       updatedAt: '2026-08-19T01:00:00Z',
@@ -162,7 +162,7 @@ describe('AiGenerateModal', () => {
     await waitFor(() => expect(createResumeMock).toHaveBeenCalledOnce());
     expect(createResumeMock).toHaveBeenCalledWith({
       ...generated,
-      templateId: 'business',
+      templateId: 'redline',
       targetJobId: 7,
     }, expect.any(AbortSignal));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(42));
