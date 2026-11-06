@@ -25,6 +25,15 @@ import type { TargetJob } from './types/targetJob';
 
 type AppView = 'gallery' | 'drafts' | 'editor' | 'admin' | 'targetJobs' | 'interviews';
 
+function NavIcon({ name }: { name: 'back' | 'grid' | 'folder' }) {
+  const paths = {
+    back: <path d="M19 12H5m0 0 6-6m-6 6 6 6" />,
+    grid: <><rect height="7" rx="1.5" width="7" x="4" y="4" /><rect height="7" rx="1.5" width="7" x="13" y="4" /><rect height="7" rx="1.5" width="7" x="4" y="13" /><rect height="7" rx="1.5" width="7" x="13" y="13" /></>,
+    folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  } as const;
+  return <svg aria-hidden="true" viewBox="0 0 24 24">{paths[name]}</svg>;
+}
+
 function viewFromHistory(pathname: string, state: unknown): AppView {
   if (pathname === '/target-jobs') return 'targetJobs';
   if (pathname === '/interviews') return 'interviews';
@@ -334,9 +343,9 @@ export default function App() {
           <aside className="resume-workspace__editor">
             <div className="editor-navigation">
               <div>
-                <button onClick={() => { setDraftReadError(false); navigateToView('gallery'); }} type="button">返回模板主页</button>
-                <button className="editor-navigation__secondary" onClick={() => { setTemplateReplacementMode(true); navigateToView('gallery'); }} type="button">更换模板</button>
-                <button className="editor-navigation__secondary" onClick={() => { setDraftReadError(false); navigateToView('drafts'); }} type="button">我的草稿</button>
+                <button aria-label="返回模板主页" onClick={() => { setDraftReadError(false); navigateToView('gallery'); }} title="返回模板主页" type="button"><NavIcon name="back" /></button>
+                <button className="editor-navigation__secondary" onClick={() => { setTemplateReplacementMode(true); navigateToView('gallery'); }} type="button"><NavIcon name="grid" />更换模板</button>
+                <button className="editor-navigation__secondary" onClick={() => { setDraftReadError(false); navigateToView('drafts'); }} type="button"><NavIcon name="folder" />我的草稿</button>
               </div>
               <span>当前模板：{currentTemplate?.name ?? resume.templateId}</span>
             </div>

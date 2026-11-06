@@ -146,7 +146,7 @@ export interface LocateRequest {
 - 区块与条目定位使用原生 `<button>`，置于原 `<h2>` / `<h3>` 内部：既保留标题语义（读屏仍按标题朗读），又获得原生按钮语义与键盘可达性。
 - 按钮 `aria-label` 形如「定位到编辑器的『项目经历』」「定位到编辑器的『AI 创作副驾』」。
 - 按钮保持 `background: none; border: 0; padding: 0; font: inherit; color: inherit`，视觉与原标题完全一致。
-- `focus-visible` 提供与项目一致的 3px 焦点描边（对齐 `global.css` 现有 `.editor-navigation button:focus-visible` 规则），满足 `AGSIN.md` 对焦点样式与无障碍名称的要求。
+- `focus-visible` 提供与项目一致的 3px 焦点描边（对齐 `global.css` 现有 `.editor-navigation button:focus-visible` 规则），满足 `../../AGENTS.md` 对焦点样式与无障碍名称的要求。
 - 命中数量为 0 时静默无操作，不报错、不打断用户。
 
 ## 导出与打印
@@ -160,7 +160,7 @@ export interface LocateRequest {
 
 ## 已知限制（明确接受）
 
-- 「专业技能」的条目渲染为并排 chip、「荣誉奖项」的条目渲染为 `<li>`，均无独立标题层级。在 chip / `<li>` 上挂按钮会带来过小的点击区域，违反 `AGSIN.md` 对点击面积的要求，因此这两类**只提供区块级定位**，不提供条目级定位。
+- 「专业技能」的条目渲染为并排 chip、「荣誉奖项」的条目渲染为 `<li>`，均无独立标题层级。在 chip / `<li>` 上挂按钮会带来过小的点击区域，违反 `../../AGENTS.md` 对点击面积的要求，因此这两类**只提供区块级定位**，不提供条目级定位。
 - 「个人总结」为单一 textarea，无条目概念，同样只有区块级定位。
 - 条目级定位不跨区块：预览中某个条目点击后，只会定位到其所属区块内的该条目。
 

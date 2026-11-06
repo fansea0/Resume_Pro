@@ -74,7 +74,7 @@ describe('TargetJobCard', () => {
   it('shows the current binding and expands the full JD preview', () => {
     render(<TargetJobCard onChange={vi.fn()} targetJob={targetJob} />);
 
-    expect(screen.getByText('当前：字节跳动 · 高级后端工程师')).toBeInTheDocument();
+    expect(screen.getByText('字节跳动 · 高级后端工程师')).toBeInTheDocument();
     const toggle = screen.getByRole('button', { name: '展开岗位要求' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(toggle);

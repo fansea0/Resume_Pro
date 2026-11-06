@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useImperativeHandle, useState, type ButtonHTMLAttributes, type ReactNode, type Ref, type RefObject } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ButtonHTMLAttributes, type ReactNode, type Ref, type RefObject } from 'react';
 import { deleteResume, documentFromStored, listResumes, type StoredResume } from '../api/resumes';
 import { useResumeAutosave, type ResumeAutosaveHandle } from '../hooks/useResumeAutosave';
 import { templateRegistry } from '../templates/registry';
 import type { ResumeDocument } from '../types/resume';
+import { exportResumeMarkdown } from '../utils/exportResumeMarkdown';
 import { exportResumePng } from '../utils/exportResumePng';
 
 interface ResumeLibraryProps {
@@ -16,10 +17,12 @@ interface ResumeLibraryProps {
   previewRef?: RefObject<HTMLElement>;
 }
 
-type LibraryIconName = 'copy' | 'download' | 'image' | 'restore' | 'save' | 'trash';
+type LibraryIconName = 'chevronDown' | 'close' | 'copy' | 'download' | 'image' | 'restore' | 'save' | 'trash';
 
 function LibraryIcon({ name }: { name: LibraryIconName }) {
   const paths: Record<LibraryIconName, ReactNode> = {
+    chevronDown: <path d="m6 9 6 6 6-6" />,
+    close: <path d="M6 6l12 12M18 6 6 18" />,
     copy: <><rect height="12" rx="1.5" width="10" x="8" y="8" /><path d="M6 16H5.5A1.5 1.5 0 0 1 4 14.5v-9A1.5 1.5 0 0 1 5.5 4h9A1.5 1.5 0 0 1 16 5.5V6" /></>,
     download: <><path d="M12 3v11M8 10l4 4 4-4M5 19h14" /></>,
     image: <><rect height="15" rx="2" width="17" x="3.5" y="4.5" /><circle cx="8.5" cy="9" r="1.2" /><path d="m5.5 17 4.2-4 2.8 2.5 2.2-2 3.8 3.5" /></>,
@@ -30,19 +33,29 @@ function LibraryIcon({ name }: { name: LibraryIconName }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24">{paths[name]}</svg>;
 }
 
-function LibraryAction({ icon, children, className, ...props }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & { icon: LibraryIconName; children: ReactNode; className?: string }) {
-  return <button className={`resume-library__action-button${className ? ` ${className}` : ''}`} type="button" {...props}><LibraryIcon name={icon} /><span>{children}</span></button>;
+function LibraryAction({ icon, children, className, ...props }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & { icon: LibraryIconName; children?: ReactNode; className?: string }) {
+  return <button className={`resume-library__action-button${className ? ` ${className}` : ''}`} type="button" {...props}><LibraryIcon name={icon} />{children !== undefined && <span>{children}</span>}</button>;
 }
 
 function templateName(templateId: StoredResume['templateId']) {
   return templateRegistry.find((template) => template.id === templateId)?.name ?? '未知模板';
 }
 
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('zh-CN', { day: '2-digit', hour: '2-digit', hour12: false, minute: '2-digit', month: '2-digit' });
+}
+
 export function ResumeLibrary({ autosaveHandleRef, document, selectedId, onSelectedIdChange, onChange, onRestoreSample, onSelect, previewRef }: ResumeLibraryProps) {
   const [items, setItems] = useState<StoredResume[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  const [confirmRestore, setConfirmRestore] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportAreaRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,6 +66,22 @@ export function ResumeLibrary({ autosaveHandleRef, document, selectedId, onSelec
       .finally(() => active && setLoading(false));
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const closeOnOutside = (event: MouseEvent) => {
+      if (!exportAreaRef.current?.contains(event.target as Node)) setExportMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExportMenuOpen(false);
+    };
+    window.addEventListener('mousedown', closeOnOutside);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('mousedown', closeOnOutside);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [exportMenuOpen]);
 
   const handleSaved = useCallback((id: number, item: StoredResume) => {
     onSelectedIdChange(id);
@@ -73,14 +102,14 @@ export function ResumeLibrary({ autosaveHandleRef, document, selectedId, onSelec
     } catch { setError('无法读取该简历内容。'); }
   };
 
-  const remove = async () => {
-    if (selectedId === null) return;
-    autosave.cancel();
+  const remove = async (id: number) => {
+    if (selectedId === id) autosave.cancel();
     setDeleting(true); setError(null);
     try {
-      await deleteResume(selectedId);
-      setItems((current) => current.filter((item) => item.id !== selectedId));
-      onSelectedIdChange(null);
+      await deleteResume(id);
+      setItems((current) => current.filter((item) => item.id !== id));
+      setPendingDeleteId(null);
+      if (selectedId === id) onSelectedIdChange(null);
     } catch { setError('删除失败，请稍后重试。'); } finally { setDeleting(false); }
   };
 
@@ -97,20 +126,66 @@ export function ResumeLibrary({ autosaveHandleRef, document, selectedId, onSelec
     } finally { setExporting(false); }
   };
 
+  const exportMarkdown = () => {
+    try {
+      exportResumeMarkdown(document);
+    } catch {
+      setError('导出 Markdown 失败，请稍后重试。');
+    }
+  };
+
   return (
     <section className="resume-library" aria-label="简历管理">
-      <div className="resume-library__heading"><h2>简历管理</h2><div className="resume-library__export-actions"><LibraryAction disabled={exporting} icon="download" onClick={() => window.print()}>导出 PDF</LibraryAction><LibraryAction disabled={exporting} icon="image" onClick={exportPng}>{exporting ? '正在导出…' : '导出 PNG'}</LibraryAction></div></div>
+      <div className="resume-library__heading">
+        <h2>简历管理</h2>
+        <div className="resume-library__export" ref={exportAreaRef}>
+          <div className="resume-library__export-primary">
+            <LibraryAction disabled={exporting} icon="download" onClick={() => window.print()}>导出 PDF</LibraryAction>
+            <LibraryAction aria-expanded={exportMenuOpen} aria-haspopup="menu" aria-label="更多导出格式" className="resume-library__export-toggle" disabled={exporting} icon="chevronDown" onClick={() => setExportMenuOpen((open) => !open)} />
+          </div>
+          {exportMenuOpen && (
+            <div className="resume-library__export-menu" role="menu">
+              <LibraryAction disabled={exporting} icon="image" onClick={() => { setExportMenuOpen(false); void exportPng(); }} role="menuitem">{exporting ? '正在导出…' : '导出 PNG'}</LibraryAction>
+              <LibraryAction disabled={exporting} icon="download" onClick={() => { setExportMenuOpen(false); exportMarkdown(); }} role="menuitem">导出 Markdown</LibraryAction>
+            </div>
+          )}
+        </div>
+      </div>
       <label className="editor-field" htmlFor="resume-title"><span>简历名称</span><input id="resume-title" onChange={(event) => onChange({ ...document, title: event.target.value })} value={document.title} /></label>
       <div className="resume-library__actions">
-        <LibraryAction disabled={autosave.status === 'saving' || deleting} icon="copy" onClick={() => { onSelectedIdChange(null); void autosave.saveNow({ newDraft: true }); }}>新建并保存</LibraryAction>
-        <LibraryAction disabled={autosave.status === 'saving' || deleting} icon="save" onClick={() => void autosave.saveNow()}>保存更改</LibraryAction>
-        <LibraryAction disabled={deleting || selectedId === null} icon="trash" onClick={remove}>删除</LibraryAction>
+        <LibraryAction disabled={autosave.status === 'saving'} icon="copy" onClick={() => { onSelectedIdChange(null); void autosave.saveNow({ newDraft: true }); }}>新建并保存</LibraryAction>
+        <LibraryAction disabled={autosave.status === 'saving'} icon="save" onClick={() => void autosave.saveNow()}>保存更改</LibraryAction>
       </div>
       <div className="resume-library__sample">
-        <LibraryAction className="resume-library__restore" icon="restore" onClick={onRestoreSample}>恢复示例内容</LibraryAction>
-        <p>恢复后的内容会按自动保存规则写入当前草稿。</p>
+        {confirmRestore ? (
+          <>
+            <span className="resume-library__confirm-text">恢复示例会覆盖当前简历内容，确认继续？</span>
+            <div className="resume-library__confirm-actions">
+              <LibraryAction disabled={autosave.status === 'saving'} icon="restore" onClick={() => { setConfirmRestore(false); onRestoreSample(); }}>确认恢复</LibraryAction>
+              <LibraryAction icon="close" onClick={() => setConfirmRestore(false)}>取消</LibraryAction>
+            </div>
+          </>
+        ) : (
+          <>
+            <LibraryAction className="resume-library__restore" icon="restore" onClick={() => setConfirmRestore(true)}>恢复示例内容</LibraryAction>
+            <p>恢复后的内容会按自动保存规则写入当前草稿。</p>
+          </>
+        )}
       </div>
-      {loading ? <p>正在加载简历…</p> : <ul className="resume-library__list">{items.map((item) => <li key={item.id}><button aria-pressed={item.id === selectedId} onClick={() => select(item)} type="button"><span className="resume-library__draft-title">{item.title}</span><span className="resume-library__draft-template">{templateName(item.templateId)}</span></button></li>)}</ul>}
+      {loading ? <p>正在加载简历…</p> : <ul className="resume-library__list">{items.map((item) => <li key={item.id}>{pendingDeleteId === item.id ? (
+        <div className="resume-library__confirm">
+          <span className="resume-library__confirm-text">删除「{item.title}」？</span>
+          <div className="resume-library__confirm-actions">
+            <LibraryAction disabled={deleting} icon="trash" onClick={() => void remove(item.id)}>{deleting ? '删除中…' : '确认删除'}</LibraryAction>
+            <LibraryAction disabled={deleting} icon="close" onClick={() => setPendingDeleteId(null)}>取消</LibraryAction>
+          </div>
+        </div>
+      ) : (
+        <div className="resume-library__draft">
+          <button aria-pressed={item.id === selectedId} onClick={() => select(item)} type="button"><span className="resume-library__draft-title">{item.title}</span><span className="resume-library__draft-meta"><span className="resume-library__draft-template">{templateName(item.templateId)}</span>{formatDateTime(item.updatedAt) && <span className="resume-library__draft-time">{formatDateTime(item.updatedAt)}</span>}</span></button>
+          <button aria-label={`删除草稿：${item.title}`} className="resume-library__draft-delete" onClick={() => setPendingDeleteId(item.id)} title={`删除草稿：${item.title}`} type="button"><LibraryIcon name="trash" /></button>
+        </div>
+      )}</li>)}</ul>}
       {autosave.status === 'dirty' && <p className="resume-library__status" aria-live="polite">待保存</p>}
       {autosave.status === 'saving' && <p className="resume-library__status" aria-live="polite">正在保存…</p>}
       {autosave.status === 'saved' && <p className="resume-library__status" aria-live="polite">已保存</p>}

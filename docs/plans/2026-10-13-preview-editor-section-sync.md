@@ -16,13 +16,13 @@
 - 不涉及后端。**不修改任何 `backend/**` 文件**，因此 `go test ./...` 门禁不适用。
 - 不改 `ResumeDocument` schema（`schemaVersion: 2` 保持不变），不新增依赖。
 - **必须保留现有的 `data-resume-section={section.type}` 属性**。`registry.test.tsx`、`ResumeSections.test.tsx` 多处依赖该选择器，替换会打破现有测试。新增 id 属性必须与它并存。
-- 提交信息使用中文 tag：`feat:` / `fix:` / `refactor:` / `test:` / `docs:`（见 `AGSIN.md`）。
+- 提交信息使用中文 tag：`feat:` / `fix:` / `refactor:` / `test:` / `docs:`（见 `../../AGENTS.md`）。
 - 测试命令：`cd frontend && npx vitest run`；构建校验：`cd frontend && npm run build`。
 - **测试里用 `fireEvent`（来自 `@testing-library/react`），不要用 `@testing-library/user-event`——该包未安装，且不得新增依赖。**
 - **vitest 没开 `globals`，所以 RTL 的自动 cleanup 不生效。** 每个新增/修改的测试文件都要显式写 `afterEach(cleanup)`，否则 DOM 会在用例间累积导致莫名其妙的失败。仓库既有测试文件都是这么做的，沿用即可。
 - **任何新组件的 props 必须在 Interfaces 与测试代码中保持一致。** 写测试时逐个核对必填 prop，不要凭直觉省略。
 - 代码风格沿用现有前端：单引号、无分号结尾、2 空格缩进、JSX 属性按字母序（现有代码普遍如此）。
-- 无障碍要求（`AGSIN.md`）：按钮必须有 `aria-label`、键盘焦点样式、足够点击面积。
+- 无障碍要求（`../../AGENTS.md`）：按钮必须有 `aria-label`、键盘焦点样式、足够点击面积。
 - **不要把定位控件做成覆盖区块的透明遮罩**——那会拦截预览正文的文字选中与项目链接点击。只包裹标题文本。
 
 ---
@@ -568,7 +568,7 @@ describe('全部模板的条目定位不变量', () => {
 });
 ```
 
-> 「专业技能」「荣誉奖项」**不在**这个不变量里：设计文档已明确这两类只提供区块级定位（chip / `<li>` 点击区域过小，违反 `AGSIN.md`）。
+> 「专业技能」「荣誉奖项」**不在**这个不变量里：设计文档已明确这两类只提供区块级定位（chip / `<li>` 点击区域过小，违反 `../../AGENTS.md`）。
 
 Run: `cd frontend && npx vitest run src/templates/registry.test.tsx`
 Expected: FAIL，6 个自带 `item` 槽的模板报缺失。

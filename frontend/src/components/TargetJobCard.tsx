@@ -144,7 +144,9 @@ export function TargetJobCard({ targetJob, targetJobId, targetJobStatus, onChang
   return (
     <section aria-labelledby={headingId} className="target-job-card">
       <div className="target-job-card__heading">
-        <div className="target-job-card__icon" aria-hidden="true">◎</div>
+        <div className="target-job-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5" /><circle cx="12" cy="12" r="2.5" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" /></svg>
+        </div>
         <div>
           <p className="target-job-card__eyebrow">AI WRITING CONTEXT</p>
           <h2 id={headingId}>目标岗位</h2>
@@ -154,7 +156,10 @@ export function TargetJobCard({ targetJob, targetJobId, targetJobStatus, onChang
       {bound ? (
         <div className="target-job-card__bound">
           <div className="target-job-card__current-row">
-            <strong>当前：{targetJob ? targetJobName(targetJob) : `目标岗位 #${boundId}`}</strong>
+            <div className="target-job-card__current">
+              <span className="target-job-card__current-label">当前</span>
+              <strong>{targetJob ? targetJobName(targetJob) : `目标岗位 #${boundId}`}</strong>
+            </div>
             <button onClick={() => setConfirmation('change')} ref={primaryActionRef} type="button">更换目标岗位</button>
           </div>
           <div className="target-job-card__requirements">
@@ -176,10 +181,15 @@ export function TargetJobCard({ targetJob, targetJobId, targetJobStatus, onChang
             {detailStatus === 'loading' ? <p aria-live="polite" className="target-jobs__status" role="status">正在加载目标岗位详情…</p> : null}
             {detailStatus === 'error' ? <p className="target-jobs__error" role="alert">无法加载目标岗位详情，当前绑定仍会保留。</p> : null}
           </div>
-          {onStartInterview && targetJob ? (
-            <button className="target-job-card__interview" onClick={() => onStartInterview(targetJob)} type="button">开始 AI 面试</button>
-          ) : null}
-          <button className="target-job-card__clear" onClick={() => setConfirmation('clear')} type="button">清除目标岗位绑定</button>
+          <div className="target-job-card__actions">
+            {onStartInterview && targetJob ? (
+              <button className="target-job-card__interview" onClick={() => onStartInterview(targetJob)} type="button">开始 AI 面试</button>
+            ) : null}
+            <button className="target-job-card__clear" onClick={() => setConfirmation('clear')} type="button">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 7h14M10 11v5M14 11v5M8 7l1-2h6l1 2M7 7l.8 12h8.4L17 7" /></svg>
+              清除目标岗位绑定
+            </button>
+          </div>
         </div>
       ) : (
         <div className="target-job-card__empty">

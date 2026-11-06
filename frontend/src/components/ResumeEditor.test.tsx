@@ -255,7 +255,7 @@ describe('ResumeEditor', () => {
     fireEvent.click(await screen.findByRole('button', { name: '选择：字节跳动 · 高级后端工程师' }));
 
     expect(latestDocument(onChange)).toEqual(expect.objectContaining({ targetJobId: 7 }));
-    expect(await screen.findByText('当前：字节跳动 · 高级后端工程师')).toBeInTheDocument();
+    expect(await screen.findByText('字节跳动 · 高级后端工程师')).toBeInTheDocument();
     expect(getTargetJobMock).toHaveBeenCalledWith(7);
   });
 
@@ -339,13 +339,13 @@ describe('ResumeEditor', () => {
       resumeId={42}
     />);
 
-    expect(await screen.findByText('当前：目标岗位 #7')).toBeInTheDocument();
+    expect(await screen.findByText('目标岗位 #7')).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('无法加载目标岗位详情');
     expect(screen.getByRole('button', { name: '更换目标岗位' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '清除目标岗位绑定' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '重新加载目标岗位详情' }));
-    expect(await screen.findByText('当前：字节跳动 · 高级后端工程师')).toBeInTheDocument();
+    expect(await screen.findByText('字节跳动 · 高级后端工程师')).toBeInTheDocument();
     expect(getTargetJobMock).toHaveBeenCalledTimes(2);
     expect(getTargetJobMock).toHaveBeenNthCalledWith(2, 7);
 

@@ -58,7 +58,7 @@ const visibleSections = sampleSections.filter((section) => section.visible);
  * 按钮断言，不会像写死类型列表那样静默漏掉。
  *
  * 唯一的例外是「个人总结」「专业技能」「荣誉奖项」按设计决策只提供区块级定位：总结是单个 textarea，
- * 技能与荣誉渲染为内联 chip / `<li>`，点击区域过小，套按钮会违反 AGSIN.md 的可用性约束。
+ * 技能与荣誉渲染为内联 chip / `<li>`，点击区域过小，套按钮会违反 AGENTS.md 的可用性约束。
  */
 const SECTION_LEVEL_ONLY_TYPES: ReadonlySet<ResumeSection['type']> = new Set(['summary', 'skills', 'honours']);
 type ItemSection = Extract<ResumeSection, { content: { items: unknown[] } }>;
